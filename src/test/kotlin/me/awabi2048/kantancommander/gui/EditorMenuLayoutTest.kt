@@ -181,11 +181,9 @@ class EditorMenuLayoutTest {
     @Test
     fun `temporary variable layouts provide presentation for every temporary type`() {
         val expectedKeys = mapOf(
-            ValueType.NUMBER to setOf("name", "tempType", "value"),
+            ValueType.NUMBER to setOf("name", "tempType", "changeMode", "value"),
             ValueType.STRING to setOf("name", "tempType", "value"),
-            ValueType.BOOLEAN to setOf("name", "tempType", "value"),
             ValueType.LOCATION to setOf("name", "tempType", "location"),
-            ValueType.VECTOR to setOf("name", "tempType", "x", "y", "z"),
             ValueType.ITEM to setOf("name", "tempType", "item"),
             ValueType.BLOCK to setOf("name", "tempType", "block"),
             ValueType.ENTITY to setOf("name", "tempType", "entity"),
@@ -199,5 +197,14 @@ class EditorMenuLayoutTest {
 
             assertEquals(keys, fields.map(EditorField::key).toSet(), "temporary type=$type")
         }
+
+        val randomNumber = CommandType.TEMP_SET.newNode().apply {
+            params["tempType"] = ValueType.NUMBER.name
+            params["changeMode"] = me.awabi2048.kantancommander.model.VariableChangeMode.RANDOM.name
+        }
+        assertEquals(
+            setOf("name", "tempType", "changeMode", "range"),
+            EditorMenuLayout.fields(CommandType.TEMP_SET, randomNumber).map(EditorField::key).toSet(),
+        )
     }
 }

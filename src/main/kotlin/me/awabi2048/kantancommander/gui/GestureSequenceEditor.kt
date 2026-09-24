@@ -40,6 +40,7 @@ import me.awabi2048.kantancommander.execution.ExecutionFinishStatus
 import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
 import me.awabi2048.kantancommander.execution.NodeExecutionOutcome
+import me.awabi2048.kantancommander.execution.generateRandomRangeValue
 import me.awabi2048.kantancommander.error.displayKey
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.gui.declarative.DeclarativeUpper
@@ -98,6 +99,7 @@ import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.toggleControlBlockState
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerKind
+import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.applyCalledDisk
@@ -203,6 +205,10 @@ data class GestureEditorState(
     var diskCallArgsPage: Int = 0,
     /** issue #7: イベント種別の選択子画面のページ番号です。 */
     var triggerEventPage: Int = 0,
+    /** 起動方法の選択画面で確定前に選択している候補です。 */
+    var pendingTriggerKind: TriggerKind? = null,
+    /** イベント選択画面で確定前に選択している候補です。 */
+    var pendingTriggerEvent: EventTriggerKind? = null,
     /** issue #8: ディスク設定の引数ページ番号です。 */
     var diskSettingsArgsPage: Int = 0,
     /** テスト実行中だけ共有する表示・復元状態です。 */
@@ -226,7 +232,7 @@ enum class GestureLowerMode {
     /**
      * issue #7: イベント種別の選択子画面です。
      *
-     * 初期10種から一つを選び、選択時に起動方法として確定します。
+     * 初期10種をページ表示し、同じ候補の再クリックで起動方法として確定します。
      */
     TRIGGER_EVENT,
     /**
@@ -4281,9 +4287,13 @@ class GestureSequenceEditor(
      * issue #7 の起動方法の種別選択子画面へ遷移します。
      *
      * 種別選択はDialogの追加操作ではなく、GestureGUI上の独立した設定画面として扱います。
-     * タイマーは確定後に間隔入力へ進み、信号・イベントは選択時に即時確定します。
+     * 初回クリックで候補を選択し、タイマーは再クリックで間隔入力へ、イベントは
+     * イベント選択へ進み、信号は再クリックで確定します。
      */
     private fun openTriggerKindSelection(player: Player) {
+        val current = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
+        state.pendingTriggerKind = current?.kind
+        state.pendingTriggerEvent = current?.event
         state.lowerMode = GestureLowerMode.TRIGGER_KIND
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) {
@@ -4308,6 +4318,8 @@ class GestureSequenceEditor(
             false
         }
         if (!opened) {
+            state.pendingTriggerKind = null
+            state.pendingTriggerEvent = null
             state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
         }
@@ -4461,13 +4473,25 @@ class GestureSequenceEditor(
 
     /** 起動方法の種別選択から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
     private fun closeTriggerKindSelection(player: Player) {
+        state.pendingTriggerKind = null
+        state.pendingTriggerEvent = null
         state.lowerMode = GestureLowerMode.SETTINGS
         updateLower(player)
     }
 
     /** 起動方法の種別選択からイベント種別の選択へ進みます。子画面の内容だけを差し替えます。 */
     private fun openTriggerEventSelection(player: Player) {
-        state.triggerEventPage = 0
+        val currentEvent = plugin.scripts.load(state.scriptId)?.effectiveTrigger()?.event
+        state.pendingTriggerEvent = state.pendingTriggerEvent ?: currentEvent
+        // 開くたびに先頭へ戻すと、イベント詳細から戻った時に候補位置が飛びます。
+        // 既存選択がある場合だけ、その候補を含むページを明示的に開きます。
+        state.pendingTriggerEvent?.let { selected ->
+            val selectedIndex = EventTriggerKind.entries.indexOf(selected)
+            if (selectedIndex >= 0) {
+                state.triggerEventPage = selectedIndex /
+                    me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
+            }
+        }
         state.lowerMode = GestureLowerMode.TRIGGER_EVENT
         updateLower(player)
     }
@@ -4500,6 +4524,8 @@ class GestureSequenceEditor(
             )
             return false
         }
+        state.pendingTriggerKind = null
+        state.pendingTriggerEvent = null
         state.lowerMode = GestureLowerMode.SETTINGS
         updateUpperIfNeeded(player)
         updateLower(player)
@@ -4574,7 +4600,7 @@ class GestureSequenceEditor(
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
         val argument = node.declaredArguments().firstOrNull { it.name == name } ?: return
         observedRevision = script.revision
-        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING)
         val inputId = "value"
         if (complex) {
             val spec = CommandDialogSpecs.variableName
@@ -4979,7 +5005,8 @@ class GestureSequenceEditor(
     /**
      * 一覧から選んだ変数の値を編集します。型は定義側を正とし、変更しません。
      *
-     * スカラー3型はDialogで編集します。複合6型の値は変数操作コマンドの型別設定で
+     * 数値・文字列はDialogで編集します。位置・アイテム・ブロック・エンティティは
+     * 変数操作コマンドの型別設定で
      * 編集するため、一覧からは案内のみ表示します。
      */
     private fun showWorldVariableValueDialog(player: Player, name: String) {
@@ -4988,39 +5015,73 @@ class GestureSequenceEditor(
         val type = plugin.variables.definitions(worldId)[name]?.type ?: current.type
         // 型ごとの長さ・有限値・参照記法の検証は、Inventory/Gestureで分岐させず
         // 共通Specへ集約します。画面側はDialogの表示と保存だけを担当します。
-        val spec = CommandDialogSpecs.worldVariableValue(type)
+        val currentMode = VariableChangeMode.ASSIGN
+        val spec = CommandDialogSpecs.worldVariableValue(type, currentMode)
         if (spec == null) {
             player.sendMessage(KcI18n.text(player, CommandDialogSpecs.worldVariableValueBody(type)))
             return
+        }
+        val inputs = buildList<MenuDialogInput> {
+            if (type == ValueType.NUMBER) {
+                add(
+                    MenuDialogInput.SingleOption(
+                        id = "changeMode",
+                        label = Component.text(
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODE),
+                        ),
+                        options = listOf(
+                            MenuDialogInput.SingleOption.Option(
+                                VariableChangeMode.ASSIGN.name,
+                                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN)),
+                                initial = true,
+                            ),
+                            MenuDialogInput.SingleOption.Option(
+                                VariableChangeMode.RANDOM.name,
+                                Component.text(
+                                    KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM,
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            }
+            add(CommandDialogSpecs.input(player, "value", VariableTemplate.stringify(current), spec))
         }
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
             body = listOf(KcI18n.component(player, CommandDialogSpecs.worldVariableValueBody(type))),
-            inputs = listOf(CommandDialogSpecs.input(player, "value", VariableTemplate.stringify(current), spec)),
+            inputs = inputs,
             afterSubmit = { scheduleWorldVariableListRefresh(player, "値保存") },
         ) { response ->
             val raw = response.textValue("value")
-            val validationError = spec.validateInput(raw)
+            val changeMode = if (type == ValueType.NUMBER) {
+                runCatching { VariableChangeMode.valueOf(response.selectedValue("changeMode")) }
+                    .getOrDefault(VariableChangeMode.ASSIGN)
+            } else {
+                VariableChangeMode.ASSIGN
+            }
+            val activeSpec = CommandDialogSpecs.worldVariableValue(type, changeMode) ?: spec
+            val validationError = activeSpec.validateInput(raw)
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
             val value = when (type) {
-                ValueType.NUMBER -> TypedValue(
-                    ValueType.NUMBER,
-                    numberValue = CommandValueRules.parseFiniteDouble(raw),
-                ).takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
-                    player,
-                    CommandDialogSpecs.worldVariableValueInvalid(ValueType.NUMBER),
-                )
+                ValueType.NUMBER -> {
+                    val numericValue = when (changeMode) {
+                        VariableChangeMode.ASSIGN -> CommandValueRules.parseFiniteDouble(raw)
+                        VariableChangeMode.RANDOM -> generateRandomRangeValue(raw, kotlin.random.Random.Default)?.numberValue
+                        else -> null
+                    }
+                    TypedValue(ValueType.NUMBER, numberValue = numericValue)
+                        .takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
+                        player,
+                        CommandDialogSpecs.worldVariableValueInvalid(ValueType.NUMBER),
+                    )
+                }
                 ValueType.STRING -> TypedValue(ValueType.STRING, stringValue = raw)
-                ValueType.BOOLEAN -> TypedValue(
-                    ValueType.BOOLEAN,
-                    booleanValue = raw.trim().lowercase().toBooleanStrictOrNull(),
-                ).takeIf { it.booleanValue != null } ?: return@showInputDialog KcI18n.text(
-                    player,
-                    CommandDialogSpecs.worldVariableValueInvalid(ValueType.BOOLEAN),
-                )
                 ValueType.LOCATION,
-                ValueType.VECTOR,
                 ValueType.ITEM,
                 ValueType.BLOCK,
                 ValueType.ENTITY,
@@ -8375,23 +8436,35 @@ class GestureSequenceEditor(
                 val kind = runCatching {
                     TriggerKind.valueOf(context.elementId.removePrefix("lower-trigger-kind:"))
                 }.getOrNull() ?: return
+                if (state.pendingTriggerKind != kind) {
+                    state.pendingTriggerKind = kind
+                    state.pendingTriggerEvent = null
+                    updateLower(player)
+                    return
+                }
                 when (kind) {
                     TriggerKind.TIMER -> showTriggerIntervalDialog(player)
                     TriggerKind.REDSTONE -> saveTrigger(player, ScriptTrigger(TriggerKind.REDSTONE))
                     TriggerKind.EVENT -> openTriggerEventSelection(player)
                 }
             }
-            // issue #7: イベント種別の選択です。選択時に起動方法として確定します。
+            // issue #7: イベント候補を初回クリックで選択し、再クリックで確定します。
             context.elementId.startsWith("lower-trigger-event:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val event = runCatching {
                     EventTriggerKind.valueOf(context.elementId.removePrefix("lower-trigger-event:"))
                 }.getOrNull() ?: return
+                if (state.pendingTriggerEvent != event) {
+                    state.pendingTriggerEvent = event
+                    updateLower(player)
+                    return
+                }
                 saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event))
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_EVENT &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                openTriggerKindSelection(player)
+                state.lowerMode = GestureLowerMode.TRIGGER_KIND
+                updateLower(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_KIND &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -8420,8 +8493,10 @@ class GestureSequenceEditor(
             // issue #7: イベント種別の選択子画面のページ移動です。
             context.elementId.startsWith("lower-trigger-event-page:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                state.triggerEventPage =
-                    context.elementId.removePrefix("lower-trigger-event-page:").toIntOrNull() ?: return
+                val requestedPage = context.elementId.removePrefix("lower-trigger-event-page:").toIntOrNull() ?: return
+                val lastPage = (EventTriggerKind.entries.size - 1) /
+                    me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
+                state.triggerEventPage = requestedPage.coerceIn(0, lastPage)
                 updateLower(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.DISK_CALL_SETTINGS &&

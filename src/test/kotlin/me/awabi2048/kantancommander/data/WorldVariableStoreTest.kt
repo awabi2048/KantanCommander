@@ -105,6 +105,7 @@ class WorldVariableStoreTest {
                 "text_value": {"type":"TEXT","textValue":"hello"},
                 "CURRENT_LOOP_COUNT": {"type":"NUMBER","numberValue":99},
                 "new_flag": {"type":"BOOLEAN","booleanValue":true},
+                "old_vector": {"type":"VECTOR","x":1,"y":2,"z":3},
                 "old_position": {"type":"POSITION","x":1,"y":2,"z":3}
               },
               "values": {
@@ -112,6 +113,7 @@ class WorldVariableStoreTest {
                 "text_value": {"type":"TEXT","textValue":"world"},
                 "current_loop_count": {"type":"NUMBER","numberValue":99},
                 "new_flag": {"type":"BOOLEAN","booleanValue":false},
+                "old_vector": {"type":"VECTOR","x":1,"y":2,"z":3},
                 "old_position": {"type":"POSITION","x":1,"y":2,"z":3}
               }
             }
@@ -121,14 +123,15 @@ class WorldVariableStoreTest {
         val store = WorldVariableStore(directory)
         assertEquals(4.0, store.get(world, "integer_value")?.numberValue)
         assertEquals("world", store.get(world, "text_value")?.stringValue)
-        // #2: BOOLEAN は永続型として採用するため移行します。
-        assertEquals(false, store.get(world, "new_flag")?.booleanValue)
-        // POSITION は廃止型のため破棄します。
+        // 廃止したBOOLEAN／VECTORと旧POSITIONは定義・値ともに破棄します。
+        assertNull(store.get(world, "new_flag"))
+        assertNull(store.get(world, "old_vector"))
         assertNull(store.get(world, "old_position"))
         assertTrue(store.definitions(world).keys.none { it.equals("current_loop_count", ignoreCase = true) })
         assertEquals(ValueType.NUMBER, store.definitions(world)["integer_value"]?.type)
         assertEquals(ValueType.STRING, store.definitions(world)["text_value"]?.type)
-        assertEquals(ValueType.BOOLEAN, store.definitions(world)["new_flag"]?.type)
+        assertTrue("new_flag" !in store.definitions(world))
+        assertTrue("old_vector" !in store.definitions(world))
     }
 
     @Test

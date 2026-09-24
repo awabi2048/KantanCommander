@@ -217,9 +217,7 @@ class WorldVariableStore(
                     addProperty("stringValue", raw.asString)
                 }
             }
-            // #2 で BOOLEAN と複合型を永続化します。旧保存に有効な旧値は存在しないため、
-            // 新形式の構造検査に通るものだけを採用し、通らないものは破棄します。
-            "BOOLEAN", "LOCATION", "VECTOR", "ITEM", "BLOCK", "ENTITY", "SOUND", "EFFECT" -> {
+            "LOCATION", "ITEM", "BLOCK", "ENTITY", "SOUND", "EFFECT" -> {
                 val converted = JsonObject().apply {
                     addProperty("type", type)
                     source.entrySet()
@@ -231,6 +229,10 @@ class WorldVariableStore(
                     warnDropped(file, section, name, "値の構造が型と一致しません")
                     null
                 } else converted
+            }
+            "BOOLEAN", "VECTOR" -> {
+                warnDropped(file, section, name, "廃止された型 $type です")
+                null
             }
             "POSITION" -> {
                 warnDropped(file, section, name, "廃止された型 $type です")

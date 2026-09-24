@@ -951,20 +951,31 @@ internal object CommandDialogSpecs {
     /**
      * 一覧から編集するワールド内変数の値入力仕様です。
      *
-     * スカラー3型は型ごとの入力境界をここへ集約します。複合6型の値は変数操作
+     * 数値・文字列は型ごとの入力境界をここへ集約します。位置・アイテム・ブロック・
+     * エンティティの値は変数操作
      * コマンドの型別設定で編集するため、一覧Dialogでは案内のみ返します。
      */
-    fun worldVariableValue(type: ValueType): Spec? = when (type) {
+    fun worldVariableValue(
+        type: ValueType,
+        changeMode: VariableChangeMode? = null,
+    ): Spec? = when (type) {
         ValueType.NUMBER -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-            32,
+            64,
             validate = { raw ->
-                if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                val valid = when (changeMode) {
+                    VariableChangeMode.RANDOM -> CommandValueRules.parseNumericRange(raw) != null
+                    VariableChangeMode.ASSIGN -> CommandValueRules.parseFiniteDouble(raw) != null
+                    null -> CommandValueRules.parseFiniteDouble(raw) != null ||
+                        CommandValueRules.parseNumericRange(raw) != null
+                    else -> false
+                }
+                if (!valid) {
                     worldVariableValueInvalid(ValueType.NUMBER)
                 } else null
             },
             required = true,
-            format = InputFormat.NUMBER,
+            format = InputFormat.ANY_STRING,
         )
         ValueType.STRING -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
@@ -979,19 +990,7 @@ internal object CommandDialogSpecs {
             required = false,
             format = InputFormat.ANY_STRING,
         )
-        ValueType.BOOLEAN -> Spec(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-            8,
-            validate = { raw ->
-                if (raw.trim().lowercase() != "true" && raw.trim().lowercase() != "false") {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
-                } else null
-            },
-            required = true,
-            format = InputFormat.ANY_STRING,
-        )
         ValueType.LOCATION,
-        ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
         ValueType.ENTITY,
@@ -1002,9 +1001,7 @@ internal object CommandDialogSpecs {
     fun worldVariableValueBody(type: ValueType): LocalizationKey<String> = when (type) {
         ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY
         ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY
-        ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_BODY
         ValueType.LOCATION,
-        ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
         ValueType.ENTITY,
@@ -1015,9 +1012,7 @@ internal object CommandDialogSpecs {
     fun worldVariableValueInvalid(type: ValueType): LocalizationKey<String> = when (type) {
         ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID
         ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID
-        ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
         ValueType.LOCATION,
-        ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
         ValueType.ENTITY,
@@ -1098,31 +1093,17 @@ internal object CommandDialogSpecs {
         format = InputFormat.ANY_STRING,
     )
 
-    /** 一時変数 BOOLEAN の値入力です。true／false のリテラルを受け付けます。 */
-    val tempBooleanValue = Spec(
-        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-        8,
+    /** 数値乱数を `min..max` 形式で指定する共通入力です。 */
+    val randomRange = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
+        64,
         validate = { raw ->
-            val normalized = raw.trim().lowercase()
-            if (normalized != "true" && normalized != "false") {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
-            } else null
-        },
-        required = true,
-        format = InputFormat.ANY_STRING,
-    )
-
-    /** issue #3 の乱数範囲入力です。有限doubleを受け付けます。大小関係は検証層で確認します。 */
-    val randomBound = Spec(
-        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-        32,
-        validate = { raw ->
-            if (CommandValueRules.parseFiniteDouble(raw) == null) {
+            if (CommandValueRules.parseNumericRange(raw) == null) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
             } else null
         },
         required = true,
-        format = InputFormat.NUMBER,
+        format = InputFormat.ANY_STRING,
     )
 
     /** 一時位置の座標入力です。数値リテラルまたは単一変数参照を受け付けます。 */
@@ -1219,8 +1200,8 @@ internal object CommandDialogSpecs {
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "source" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "propertySource" && node.type == CommandType.VARIABLE) return variableName
-        if ((fieldKey == "randomMin" || fieldKey == "randomMax") && node.type == CommandType.VARIABLE) {
-            return randomBound
+        if (fieldKey == "range" && (node.type == CommandType.VARIABLE || node.type == CommandType.TEMP_SET)) {
+            return randomRange
         }
         if (fieldKey == "value" && node.type == CommandType.VARIABLE) {
             val type = runCatching { ValueType.valueOf(node.string("type")) }
@@ -1244,17 +1225,10 @@ internal object CommandDialogSpecs {
                 "value" -> return when (tempType) {
                     ValueType.NUMBER -> tempNumberValue
                     ValueType.STRING -> tempStringValue
-                    ValueType.BOOLEAN -> tempBooleanValue
                     else -> null
                 }
                 "x", "y", "z" -> return tempCoordinate
                 "entityId" -> return tempEntityId
-                "volume" -> return field("volume")
-                "pitch" -> return field("pitch")
-                "level" -> return field("level")
-                "seconds" -> return field("seconds")
-                "sound" -> return field("sound")
-                "effect" -> return field("effect")
                 "item" -> return field("item")
                 "block" -> return block
             }
@@ -1845,15 +1819,6 @@ internal object CommandDialogSpecs {
                     } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                     type == ValueType.STRING ->
                         if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
-                    type == ValueType.BOOLEAN -> {
-                        val normalized = raw.trim().lowercase()
-                        if (normalized == "true" || normalized == "false") null
-                        else if (VariableTemplate.hasMalformedReference(raw) ||
-                            TemporaryTemplate.hasMalformedReference(raw)
-                        ) {
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                        } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
-                    }
                     else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 }
             },

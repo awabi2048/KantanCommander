@@ -191,13 +191,13 @@ class ReturnConsistencyTest {
     @Test
     fun `world sourced callee return keeps world resolution`() {        // WORLD参照の返り値は永続定義表で解決し、無関係な引数宣言に引きずられません。
         val caller = callerScript(
-            receiverType = ValueType.BOOLEAN,
+            receiverType = ValueType.STRING,
             declared = "total:NUMBER",
             argValue = "1",
             callee = calleeReturning(VariableScope.WORLD, "flag"),
         )
         val definitions = mapOf(
-            "flag" to TypedValue(ValueType.BOOLEAN, booleanValue = true),
+            "flag" to TypedValue(ValueType.STRING, stringValue = "ready"),
         )
 
         assertFalse(

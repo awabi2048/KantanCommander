@@ -37,8 +37,30 @@ class EntityDataSchemaTest {
         val ids = EntityDataSchema.propertiesFor(EntityType.PLAYER).map { it.id }
         assertTrue(ids.contains("ai"))
         assertTrue(ids.contains("silent"))
+        assertTrue(ids.contains(EntityDataSchema.PROPERTY_ALLOW_FLIGHT))
         assertFalse(ids.contains("armor_stand_arms"))
         assertFalse(ids.contains("rabbit_type"))
+    }
+
+    @Test
+    fun `flight permission is a player-only boolean property`() {
+        val definition = EntityDataSchema.definition(EntityDataSchema.PROPERTY_ALLOW_FLIGHT)
+        assertNotNull(definition)
+        assertEquals(EntityPropertyValueKind.BOOLEAN, definition!!.valueKind)
+        assertEquals(setOf(EntityType.PLAYER.name), definition.entityTypes)
+        assertEquals(
+            EntityPropertySupport.STATICALLY_SUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.PLAYER, EntityDataSchema.PROPERTY_ALLOW_FLIGHT),
+        )
+        assertEquals(
+            EntityPropertySupport.STATICALLY_UNSUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.ZOMBIE, EntityDataSchema.PROPERTY_ALLOW_FLIGHT),
+        )
+        assertEquals(
+            EntityPropertyValue.BooleanValue(true),
+            EntityDataSchema.parse(EntityDataSchema.PROPERTY_ALLOW_FLIGHT, "true"),
+        )
+        assertNull(EntityDataSchema.parse(EntityDataSchema.PROPERTY_ALLOW_FLIGHT, "yes"))
     }
 
     @Test

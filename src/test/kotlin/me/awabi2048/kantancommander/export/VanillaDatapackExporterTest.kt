@@ -1777,7 +1777,7 @@ class VanillaDatapackExporterTest {
                     params["operator"] = ""
                     params["right"] = ""
                 },
-                mapOf("flag" to ValueType.BOOLEAN),
+                mapOf("flag" to ValueType.STRING),
             ),
         )
         assertTrue(direct.errors.any { it.contains("直接条件は完全バニラ出力に未対応") })

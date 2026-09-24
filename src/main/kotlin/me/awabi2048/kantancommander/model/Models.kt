@@ -87,11 +87,10 @@ data class DiskArgument(
  * issue #8 の「値を返す」ノードの値型を推論します。
  *
  * 変数由来の場合は呼び出し側の定義表で解決するため、ここではリテラルの
- * 推論だけを行います。真偽値リテラル・数値リテラル以外は文字列とします。
+ * 推論だけを行います。数値リテラル以外は文字列とします。
  */
 fun inferLiteralType(raw: String): ValueType {
     val normalized = raw.trim().lowercase()
-    if (normalized == "true" || normalized == "false") return ValueType.BOOLEAN
     if (raw.trim().toDoubleOrNull()?.isFinite() == true) return ValueType.NUMBER
     return ValueType.STRING
 }
@@ -779,10 +778,8 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
 fun ValueType.displayKey(): LocalizationKey<String> = when (this) {
     ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
     ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_BOOLEAN
     ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
-    ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
-    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
     // issue #35-3: 固定実体の表示キーは撤去したため、汎用のエンティティ表示を使う。
     ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY
@@ -1068,7 +1065,7 @@ enum class CommandType(
      * 切り替えます。旧ノードに scope がない場合は WORLD として読み替えます。
      * #3 の値生成方法は changeMode（ASSIGN／CALCULATE／PROPERTY／RANDOM）で
      * 切り替え、PROPERTY は propertySource＋property 欄、RANDOM は
-     * randomMin／randomMax 欄を使います。source は COPY 時の複写元変数名です。
+     * `min..max` 形式の range 欄を使います。source は COPY 時の複写元変数名です。
      */
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REDSTONE, mapOf(
         "scope" to VariableScope.WORLD.name,
@@ -1080,14 +1077,15 @@ enum class CommandType(
         "source" to "",
         "propertySource" to "",
         "property" to "",
-        "randomMin" to "1.0",
-        "randomMax" to "6.0",
+        "range" to "1..6",
     )),
     /** 一時変数を設定します。再設定は上書きとして扱います。 */
     TEMP_SET(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET_DESCRIPTION, Material.REPEATER, mapOf(
         "name" to "",
         "tempType" to ValueType.NUMBER.name,
+        "changeMode" to VariableChangeMode.ASSIGN.name,
         "value" to "0.0",
+        "range" to "1..6",
     )),
     MERGE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE_DESCRIPTION, Material.HOPPER, emptyMap()),
     FOR_START(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START_DESCRIPTION, Material.REPEATER, mapOf(

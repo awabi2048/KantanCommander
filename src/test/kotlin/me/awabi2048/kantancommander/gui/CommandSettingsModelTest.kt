@@ -149,7 +149,7 @@ class CommandSettingsModelTest {
     fun `temporary value fields follow the selected type`() {
         val node = CommandType.TEMP_SET.newNode()
 
-        assertEquals(listOf("name", "tempType", "value"), CommandSettingsModel.visibleFields(node).map { it.key })
+        assertEquals(listOf("name", "tempType", "changeMode", "value"), CommandSettingsModel.visibleFields(node).map { it.key })
         node.params["tempType"] = ValueType.LOCATION.name
         assertEquals(listOf("name", "tempType", "location"), CommandSettingsModel.visibleFields(node).map { it.key })
     }

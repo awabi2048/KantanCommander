@@ -40,15 +40,10 @@ object EntityVariableCodec {
         val payload: String = when (value.type) {
             ValueType.NUMBER -> value.numberValue.toString()
             ValueType.STRING -> base64(value.stringValue.orEmpty())
-            ValueType.BOOLEAN -> value.booleanValue.toString()
             ValueType.LOCATION -> {
                 val location = value.location ?: return null
                 listOf(location.x, location.y, location.z, location.yaw, location.pitch)
                     .joinToString(",")
-            }
-            ValueType.VECTOR -> {
-                val vector = value.vector ?: return null
-                listOf(vector.x, vector.y, vector.z).joinToString(",")
             }
             ValueType.ITEM -> listOf(
                 value.item.orEmpty(),
@@ -71,11 +66,6 @@ object EntityVariableCodec {
         val value: TypedValue = when (type) {
             ValueType.NUMBER -> TypedValue(type, numberValue = payload.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null)
             ValueType.STRING -> TypedValue(type, stringValue = unbase64(payload) ?: return null)
-            ValueType.BOOLEAN -> when (payload) {
-                "true" -> TypedValue(type, booleanValue = true)
-                "false" -> TypedValue(type, booleanValue = false)
-                else -> return null
-            }
             ValueType.LOCATION -> {
                 val parts = payload.split(',')
                 if (parts.size != 5) return null
@@ -84,12 +74,6 @@ object EntityVariableCodec {
                     type,
                     location = SavedLocation(numbers[0], numbers[1], numbers[2], numbers[3].toFloat(), numbers[4].toFloat()),
                 )
-            }
-            ValueType.VECTOR -> {
-                val parts = payload.split(',')
-                if (parts.size != 3) return null
-                val numbers = parts.map { it.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null }
-                TypedValue(type, vector = SavedVector(numbers[0], numbers[1], numbers[2]))
             }
             ValueType.ITEM -> {
                 val parts = payload.split(',')

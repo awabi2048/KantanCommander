@@ -21,6 +21,7 @@ import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.EventTriggerListener
+import me.awabi2048.kantancommander.execution.PlayerFlightPermissionService
 import me.awabi2048.kantancommander.execution.ParticleQuotaService
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.execution.TestExecutionCoordinator
@@ -56,7 +57,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "b75c08492cb5224833d6b0d40e842d2767fb03f7fec44143891eca268514588f"
+    "317884492fdeb2392926e3a69e0ec2055ad14efaae6478aa10357b87eede4c66"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -123,6 +124,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     private lateinit var triggerListener: RedstoneTriggerListener
     private lateinit var eventTriggerListener: EventTriggerListener
+    internal lateinit var playerFlightPermissions: PlayerFlightPermissionService
     private var worldEditSync: WorldEditControlBlockSyncListener? = null
     private var standaloneExportContributor: KantanStandaloneExportContributor? = null
 
@@ -306,6 +308,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         operationMenu = me.awabi2048.kantancommander.operationtool.OperationToolMenu(this)
         triggerListener = RedstoneTriggerListener(this)
         eventTriggerListener = EventTriggerListener(this)
+        playerFlightPermissions = PlayerFlightPermissionService(this)
 
         getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this, itemGrantService))
         registerEvents()
@@ -321,6 +324,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     override fun onDisable() {
+        runCatching { if (::playerFlightPermissions.isInitialized) playerFlightPermissions.clear() }
         runCatching { worldEditSync?.stopSweep() }
         worldEditSync = null
         runCatching { if (::testExecution.isInitialized) testExecution.shutdown() }
@@ -346,6 +350,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(operationTool, this)
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(eventTriggerListener, this)
+        pm.registerEvents(playerFlightPermissions, this)
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(EntityVariableLifecycleListener(this), this)

@@ -81,6 +81,21 @@ object CommandValueRules {
     fun parseFiniteDouble(raw: String): Double? =
         raw.trim().toDoubleOrNull()?.takeIf(Double::isFinite)
 
+    /** `min..max` 形式の数値Rangeです。整数判定は生成側が端点から行います。 */
+    data class NumericRange(val min: Double, val max: Double)
+
+    /** 乱数の共通記法を検証して分解します。余分な区切り・非有限値・逆順は拒否します。 */
+    fun parseNumericRange(raw: String): NumericRange? {
+        val normalized = raw.trim()
+        if (normalized.contains("...")) return null
+        val parts = normalized.split("..")
+        if (parts.size != 2) return null
+        val min = parseFiniteDouble(parts[0]) ?: return null
+        val max = parseFiniteDouble(parts[1]) ?: return null
+        if (min > max) return null
+        return NumericRange(min, max)
+    }
+
     /** 秒数がMinecraftのtick境界（0.05秒）の整数倍かを10進数として判定します。 */
     fun isTickAlignedSeconds(raw: String): Boolean = runCatching {
         BigDecimal(raw.trim()).remainder(TICK_SECONDS_DECIMAL).compareTo(BigDecimal.ZERO) == 0

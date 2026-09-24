@@ -18,9 +18,7 @@ import java.util.UUID
 enum class ValueType {
     NUMBER,
     STRING,
-    BOOLEAN,
     LOCATION,
-    VECTOR,
     ITEM,
     BLOCK,
     ENTITY,
@@ -44,13 +42,6 @@ enum class ValueType {
     }
 }
 
-/** VECTOR型の成分です。成分はすべて有限doubleで保持します。 */
-data class SavedVector(
-    val x: Double,
-    val y: Double,
-    val z: Double,
-)
-
 /**
  * issue #2 の共通型付き値です。
  *
@@ -63,11 +54,8 @@ data class TypedValue(
     val type: ValueType,
     val numberValue: Double? = null,
     val stringValue: String? = null,
-    val booleanValue: Boolean? = null,
     /** LOCATION型の解決済み座標・向きです。位置と向きを分離して保持しません。 */
     val location: SavedLocation? = null,
-    /** VECTOR型の成分です。 */
-    val vector: SavedVector? = null,
     /** アイテム型の素材IDと実体（Base64）です。 */
     val item: String? = null,
     val itemData: String? = null,
@@ -89,13 +77,9 @@ data class TypedValue(
         ValueType.STRING -> stringValue != null &&
             stringValue.length <= CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH &&
             isClearExcept("stringValue")
-        ValueType.BOOLEAN -> booleanValue != null && isClearExcept("booleanValue")
         ValueType.LOCATION -> location != null &&
             location.x.isFinite() && location.y.isFinite() && location.z.isFinite() &&
             isClearExcept("location")
-        ValueType.VECTOR -> vector != null &&
-            vector.x.isFinite() && vector.y.isFinite() && vector.z.isFinite() &&
-            isClearExcept("vector")
         ValueType.ITEM -> item != null && (amount == null || amount > 0) && isClearExcept("item", "itemData", "amount")
         ValueType.BLOCK -> block != null && isClearExcept("block")
         // ENTITY は定義時点で実体がなくても保持します。死亡・別ワールド・未ロードは
@@ -107,9 +91,7 @@ data class TypedValue(
         val kept = keep.toSet()
         if ("numberValue" !in kept && numberValue != null) return false
         if ("stringValue" !in kept && stringValue != null) return false
-        if ("booleanValue" !in kept && booleanValue != null) return false
         if ("location" !in kept && location != null) return false
-        if ("vector" !in kept && vector != null) return false
         if ("item" !in kept && item != null) return false
         if ("itemData" !in kept && itemData != null) return false
         if ("amount" !in kept && amount != null) return false
@@ -122,15 +104,13 @@ data class TypedValue(
         /**
          * 型だけの定義で使う空値です。利用者が設定した初期値ではありません。
          *
-         * スカラー3型と座標系はゼロ値、素材系は代表値、ENTITY は未解決（null）の
+         * 数値・文字列は型既定の空値、位置はゼロ座標、素材系は代表値、ENTITY は未解決（null）の
          * まま保持します。GUIの作成フローは定義直後に実値の設定へ進みます。
          */
         fun empty(type: ValueType): TypedValue = when (type) {
             ValueType.NUMBER -> TypedValue(type, numberValue = 0.0)
             ValueType.STRING -> TypedValue(type, stringValue = "")
-            ValueType.BOOLEAN -> TypedValue(type, booleanValue = false)
             ValueType.LOCATION -> TypedValue(type, location = SavedLocation(0.0, 0.0, 0.0))
-            ValueType.VECTOR -> TypedValue(type, vector = SavedVector(0.0, 0.0, 0.0))
             ValueType.ITEM -> TypedValue(type, item = "STONE")
             ValueType.BLOCK -> TypedValue(type, block = "STONE")
             ValueType.ENTITY -> TypedValue(type)

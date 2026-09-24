@@ -234,6 +234,15 @@ internal fun generateRandomBoundsValue(
     return TypedValue(ValueType.NUMBER, numberValue = value)
 }
 
+/** ワールド変数と実行内変数で共通の `min..max` Range 記法を乱数へ変換します。 */
+internal fun generateRandomRangeValue(
+    rawRange: String,
+    random: kotlin.random.Random,
+): TypedValue? {
+    val range = CommandValueRules.parseNumericRange(rawRange) ?: return null
+    return generateRandomBoundsValue(range.min.toString(), range.max.toString(), random)
+}
+
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private val timedActionBar = TimedActionBarService(plugin)
     private val systemEntityRegistry
@@ -1069,14 +1078,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         when (argument.type) {
             ValueType.NUMBER -> TypedValue(argument.type, numberValue = resolveNumber(raw, session) ?: error("number is invalid"))
             ValueType.STRING -> TypedValue(argument.type, stringValue = resolveText(raw, session) ?: error("string is invalid"))
-            ValueType.BOOLEAN -> TypedValue(
-                argument.type,
-                booleanValue = resolveText(raw, session)?.trim()?.lowercase()?.let {
-                    if (it == "true") true else if (it == "false") false else null
-                } ?: error("boolean is invalid"),
-            )
             ValueType.LOCATION,
-            ValueType.VECTOR,
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
@@ -1106,12 +1108,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             when (me.awabi2048.kantancommander.model.inferLiteralType(raw)) {
                 ValueType.NUMBER -> TypedValue(ValueType.NUMBER, numberValue = resolveNumber(raw, session) ?: error("number is invalid"))
                 ValueType.STRING -> TypedValue(ValueType.STRING, stringValue = resolveText(raw, session) ?: error("string is invalid"))
-                ValueType.BOOLEAN -> TypedValue(
-                    ValueType.BOOLEAN,
-                    booleanValue = resolveText(raw, session)?.trim()?.lowercase()?.let {
-                        if (it == "true") true else if (it == "false") false else null
-                    } ?: error("boolean is invalid"),
-                )
                 else -> error("unsupported literal type")
             }
         }
@@ -1528,8 +1524,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 return@forEach
             }
             val success = when (parsed) {
-                is EntityPropertyValue.BooleanValue ->
+                is EntityPropertyValue.BooleanValue -> if (propertyId == EntityDataSchema.PROPERTY_ALLOW_FLIGHT && target is Player) {
+                    plugin.playerFlightPermissions.apply(target, parsed.value)
+                } else {
                     EntityDataSchema.applyBoolean(target, propertyId, parsed.value)
+                }
                 is EntityPropertyValue.EnumValue ->
                     EntityDataSchema.applyEnum(target, propertyId, parsed.choiceId)
                 is EntityPropertyValue.TextValue -> applyTextProperty(target, propertyId, resolvedText.orEmpty())
@@ -1569,6 +1568,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 resolveText(parsed.text, session) ?: return false
             } else null
             if (!me.awabi2048.kantancommander.model.EntityDataSchema.supports(entity, propertyId)) return false
+            // 飛行許可は既存プレイヤーに対するワールド限定操作であり、召喚時設定には使いません。
+            if (propertyId == me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_ALLOW_FLIGHT) return false
             val success = when (parsed) {
                 is me.awabi2048.kantancommander.model.EntityPropertyValue.BooleanValue ->
                     me.awabi2048.kantancommander.model.EntityDataSchema.applyBoolean(entity, propertyId, parsed.value)
@@ -2897,10 +2898,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
         }
         val operator = node.string("operator")
-        // issue #5: Boolean値を直接条件として利用します。`== true` と同じ契約です。
         if (operator.isBlank()) {
-            if (left.type != ValueType.BOOLEAN) return ConditionEvaluation.INVALID
-            return if (left.booleanValue == true) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
+            return ConditionEvaluation.INVALID
         }
         if (operator !in me.awabi2048.kantancommander.model.ConditionComparison.ALL) {
             return ConditionEvaluation.INVALID
@@ -2987,15 +2986,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): TypedValue? = when (type) {
         ValueType.NUMBER -> resolveNumber(raw, session)?.let { TypedValue(type, numberValue = it) }
         ValueType.STRING -> resolveText(raw, session)?.let { TypedValue(type, stringValue = it) }
-        ValueType.BOOLEAN -> resolveText(raw, session)
-            ?.trim()?.lowercase()
-            ?.let { if (it == "true") true else if (it == "false") false else null }
-            ?.let { TypedValue(type, booleanValue = it) }
         ValueType.ENTITY -> raw.trim().takeIf(String::isNotBlank)?.let {
             runCatching { TypedValue(type, entityId = java.util.UUID.fromString(it)) }.getOrNull()
         }
         ValueType.LOCATION,
-        ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
         -> null
@@ -3222,10 +3216,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     node.string("property"),
                 ) { uuid -> plugin.server.getEntity(uuid) } ?: error("property is unavailable")
             }
-            VariableChangeMode.RANDOM -> generateRandomValue(
-                node.string("randomMin"),
-                node.string("randomMax"),
-            ) ?: error("random range is invalid")
+            VariableChangeMode.RANDOM -> generateRandomValue(node.string("range"))
+                ?: error("random range is invalid")
         }
     }.getOrNull()
 
@@ -3260,8 +3252,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 一様乱数を、それ以外は実数の一様乱数を返します。範囲不正・非有限値は
      * 失敗として扱います。
      */
-    private fun generateRandomValue(rawMin: String, rawMax: String): TypedValue? =
-        generateRandomBoundsValue(rawMin, rawMax, Random)
+    private fun generateRandomValue(rawRange: String): TypedValue? =
+        generateRandomRangeValue(rawRange, Random)
 
     /**
      * WORLD scope を共通store契約へ接続します。
@@ -3304,7 +3296,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val type = ValueType.parse(
             node.string("tempType", ValueType.NUMBER.name),
         ) ?: return false
-        val value = resolveNodeValue(type, node, session) ?: return false
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+            .getOrDefault(VariableChangeMode.ASSIGN)
+        val value = when (mode) {
+            VariableChangeMode.ASSIGN -> resolveNodeValue(type, node, session)
+            VariableChangeMode.RANDOM -> if (type == ValueType.NUMBER) generateRandomValue(node.string("range")) else null
+            else -> null
+        } ?: return false
         session.executionVariables.set(name, value)
         true
     }.getOrDefault(false)
@@ -3312,7 +3310,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /**
      * issue #2 の型別値組み立てです。
      *
-     * NUMBER・STRING・BOOLEAN・VECTOR は値欄から、複合6型は型ごとの共通設定から
+     * NUMBER・STRING は値欄から、複合型は型ごとの共通設定から
      * 解決済み値を保持します。Bukkit／Paper の実体は保持せず、再解決可能な
      * 表現（UUID・座標・素材名等）だけを使います。失敗は null で返します。
      */
@@ -3330,18 +3328,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     }
                     TypedValue(type, stringValue = text)
                 }
-                ValueType.BOOLEAN -> TypedValue(
-                    type,
-                    booleanValue = parseBooleanInput(node.string("value")) ?: error("boolean must be true or false"),
-                )
-                ValueType.VECTOR -> TypedValue(
-                    type,
-                    vector = me.awabi2048.kantancommander.model.SavedVector(
-                        x = resolveNumber(node.string("x"), session)?.takeIf(Double::isFinite) ?: error("invalid x"),
-                        y = resolveNumber(node.string("y"), session)?.takeIf(Double::isFinite) ?: error("invalid y"),
-                        z = resolveNumber(node.string("z"), session)?.takeIf(Double::isFinite) ?: error("invalid z"),
-                    ),
-                )
                 ValueType.LOCATION -> {
                 // 新形式は通常コマンドと同じPositionSpec/FacingSpecから解決します。
                 // 旧POSITIONのx/y/z形式は読み込み済みデータを壊さないため、この実行境界
@@ -3400,12 +3386,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }.getOrNull()
 
     /** 真偽値入力を解釈します。受付は大小無視の true／false のみです。 */
-    private fun parseBooleanInput(raw: String): Boolean? = when (raw.trim().lowercase()) {
-        "true" -> true
-        "false" -> false
-        else -> null
-    }
-
     private fun compareVariable(value: TypedValue?, comparisonValue: Double, operator: String): Boolean {
         val actual = value?.takeIf { it.type == ValueType.NUMBER }?.numberValue ?: return false
         val comparison = actual.compareTo(comparisonValue)
@@ -4173,7 +4153,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         fun scalarReferencesAvailable(raw: String): Boolean =
             TemporaryTemplate.references(raw).all { name ->
                 val value = session.executionVariables.get(TemporaryTemplate.normalized(name))
-                value != null && value.type in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+                value != null && value.type in setOf(ValueType.NUMBER, ValueType.STRING)
             }
 
         // テキスト／数値欄に現れる `%{name}%` はスカラーだけを許可します。
@@ -4263,7 +4243,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             if (it.isFinite() && it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
         }
         ValueType.STRING -> value.stringValue
-        ValueType.BOOLEAN -> value.booleanValue?.toString()
         else -> null
     }
 

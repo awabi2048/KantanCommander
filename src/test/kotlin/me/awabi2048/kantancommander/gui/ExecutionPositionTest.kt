@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.gui
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ValueType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -101,5 +102,33 @@ class ExecutionPositionTest {
         CommandSettingsModel.setPositionSpec(node, CommandSettingRole.SUMMON_POSITION, PositionSpec(PositionKind.DISK))
         assertEquals(PositionKind.DISK, node.executionPositionSpec?.kind)
         assertEquals(PositionKind.DISK, node.summonPositionSpec?.kind)
+    }
+
+    @Test
+    fun `generic position settings keep their own roles separate from execution position`() {
+        val particle = CommandType.PARTICLE.newNode()
+        val particlePosition = CommandSettingsModel.descriptor(particle, "position")
+        assertEquals(CommandSettingRole.PARTICLE_POSITION, particlePosition.role)
+        CommandSettingsModel.setPositionSpec(
+            particle,
+            requireNotNull(particlePosition.role),
+            PositionSpec(PositionKind.COORDINATES, x = 2.0, y = 3.0, z = 4.0),
+        )
+        assertEquals(PositionKind.COORDINATES, particle.particlePositionSpec?.kind)
+        assertNull(particle.executionPositionSpec)
+
+        val temporaryLocation = CommandType.TEMP_SET.newNode().apply {
+            params["tempType"] = ValueType.LOCATION.name
+        }
+        val location = CommandSettingsModel.descriptor(temporaryLocation, "location")
+        assertEquals(CommandSettingEditor.LOCATION, location.editor)
+        assertEquals(CommandSettingRole.TEMPORARY_LOCATION, location.role)
+        CommandSettingsModel.setPositionSpec(
+            temporaryLocation,
+            CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+            PositionSpec(PositionKind.COORDINATES, x = 7.0, y = 8.0, z = 9.0),
+        )
+        assertEquals(PositionKind.COORDINATES, temporaryLocation.temporaryLocationPositionSpec?.kind)
+        assertNull(temporaryLocation.executionPositionSpec)
     }
 }

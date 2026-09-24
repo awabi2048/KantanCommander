@@ -2025,16 +2025,8 @@ object ExecutableScriptValidator {
         }
         val hasTables = variableDefinitions != null || temporaryDefinitions != null
         val operator = node.string("operator")
-        // issue #5: Boolean値を直接条件として利用できます。演算子・右辺なしで
-        // 左辺の真偽を判定し、内部で `== true` へ読み替えるのと同じ契約です。
         if (operator.isBlank()) {
-            if (scope != VariableScope.ENTITY && hasTables && definedType == null) {
-                errors += nodeError(node, path, setOf("condition"), "比較する変数が未定義です: $leftName")
-                return
-            }
-            if (definedType != null && definedType != ValueType.BOOLEAN) {
-                errors += nodeError(node, path, setOf("condition"), "直接条件はBOOLEAN型の変数に指定してください")
-            }
+            errors += nodeError(node, path, setOf("condition"), "条件の比較方法を選択してください")
             return
         }
         if (operator !in me.awabi2048.kantancommander.model.ConditionComparison.ALL) {
@@ -2218,16 +2210,8 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("changeMode"), "数値変数以外へ乱数を適用できません")
                     return
                 }
-                val min = node.string("randomMin").toDoubleOrNull()?.takeIf(Double::isFinite)
-                val max = node.string("randomMax").toDoubleOrNull()?.takeIf(Double::isFinite)
-                if (min == null) {
-                    errors += nodeError(node, path, setOf("randomMin"), "乱数の最小値が不正です")
-                }
-                if (max == null) {
-                    errors += nodeError(node, path, setOf("randomMax"), "乱数の最大値が不正です")
-                }
-                if (min != null && max != null && min > max) {
-                    errors += nodeError(node, path, setOf("randomMin"), "乱数の最小値は最大値を超えられません")
+                if (CommandValueRules.parseNumericRange(node.string("range")) == null) {
+                    errors += nodeError(node, path, setOf("range"), "乱数範囲を min..max 形式で指定してください")
                 }
             }
         }
@@ -2353,17 +2337,7 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の文字列が不正です")
                 }
             }
-            ValueType.BOOLEAN -> {
-                val normalized = raw.trim().lowercase()
-                val template = VariableTemplate.references(raw).isNotEmpty() || TemporaryTemplate.references(raw).isNotEmpty()
-                if ((normalized != "true" && normalized != "false" && !template) ||
-                    VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)
-                ) {
-                    errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} は true／false で指定します")
-                }
-            }
             ValueType.LOCATION,
-            ValueType.VECTOR,
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
@@ -2737,6 +2711,20 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("tempType"), "一時変数の型が不正です")
             return
         }
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+            .getOrDefault(VariableChangeMode.ASSIGN)
+        if (mode == VariableChangeMode.RANDOM) {
+            if (type != ValueType.NUMBER) {
+                errors += nodeError(node, path, setOf("changeMode"), "乱数は数値型の一時変数にだけ指定できます")
+            } else if (CommandValueRules.parseNumericRange(node.string("range")) == null) {
+                errors += nodeError(node, path, setOf("range"), "乱数範囲を min..max 形式で指定してください")
+            }
+            return
+        }
+        if (mode != VariableChangeMode.ASSIGN) {
+            errors += nodeError(node, path, setOf("changeMode"), "一時変数の値指定方法が不正です")
+            return
+        }
         validateTypedNodeValue(node, type, path, errors, null, temporaryDefinitions)
     }
 
@@ -2744,7 +2732,7 @@ object ExecutableScriptValidator {
      * issue #2 の型別値検証です。
      *
      * 一時変数の設定と変数操作コマンド（DEFINE／SET／CHANGE値）で共有します。
-     * NUMBER・STRING・BOOLEAN・VECTOR は値欄から、複合5型は型ごとの共通設定から
+     * NUMBER・STRING は値欄から、複合型は型ごとの共通設定から
      * 検証します。実行時の [SequenceExecutor.resolveNodeValue] と同じ入力を
      * 受け付けることが契約です。
      */
@@ -2763,22 +2751,6 @@ object ExecutableScriptValidator {
             ValueType.STRING -> validateTemplate(
                 node.string("value"), node, path, "value", errors, worldDefinitions, temporaries = temporaryDefinitions,
             )
-            ValueType.BOOLEAN -> {
-                val raw = node.string("value").trim().lowercase()
-                if (raw != "true" && raw != "false") {
-                    errors += nodeError(node, path, setOf("value"), "真偽値は true または false で指定します")
-                }
-            }
-            ValueType.VECTOR -> {
-                listOf("x" to node.string("x"), "y" to node.string("y"), "z" to node.string("z"))
-                    .forEach { (field, raw) ->
-                        if (raw.isBlank() || resolvedDouble(raw, worldDefinitions, temporaryDefinitions) == null &&
-                            !deferNumericValidation(raw, worldDefinitions, temporaryDefinitions)
-                        ) {
-                            errors += nodeError(node, path, setOf(field), "ベクトルの$field が不正です")
-                        }
-                    }
-            }
             ValueType.LOCATION -> {
                 // 新形式では位置と向きをそれぞれ既存の共通Specで保持します。
                 // 片方だけ設定されたLOCATIONは実行時に暗黙補完せず、親欄を未完了として

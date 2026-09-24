@@ -10,7 +10,7 @@ import java.util.UUID
 /**
  * issue #5 の型付き条件比較テストです。
  *
- * 左辺・演算子・右辺の共通モデルで NUMBER／STRING／BOOLEAN と複合値述語
+ * 左辺・演算子・右辺の共通モデルで NUMBER／STRING と複合値述語
  * （ENTITY同一性）を検証します。正常な不一致と解決失敗・型不一致の区別は
  * 実行層の ConditionEvaluation で扱い、ここでは比較契約を固定します。
  */
@@ -42,16 +42,6 @@ class ConditionComparisonTest {
     }
 
     @Test
-    fun `booleans compare with equality only`() {
-        val yes = TypedValue(ValueType.BOOLEAN, booleanValue = true)
-        val no = TypedValue(ValueType.BOOLEAN, booleanValue = false)
-        assertEquals(true, ConditionComparison.compare(yes, "==", TypedValue(ValueType.BOOLEAN, booleanValue = true)))
-        assertEquals(true, ConditionComparison.compare(yes, "!=", no))
-        assertEquals(false, ConditionComparison.compare(yes, "==", no))
-        assertNull(ConditionComparison.compare(yes, ">", no))
-    }
-
-    @Test
     fun `entities compare by identity`() {
         val id = UUID.randomUUID()
         val left = TypedValue(ValueType.ENTITY, entityId = id)
@@ -73,7 +63,6 @@ class ConditionComparisonTest {
     fun `operators are published per type`() {
         assertTrue(ConditionComparison.operatorsFor(ValueType.NUMBER).containsAll(listOf("==", "!=", ">", ">=", "<", "<=")))
         assertEquals(setOf("==", "!=", "contains"), ConditionComparison.operatorsFor(ValueType.STRING))
-        assertEquals(setOf("==", "!="), ConditionComparison.operatorsFor(ValueType.BOOLEAN))
         assertEquals(
             setOf("==", "!=", "in_region", "not_in_region"),
             ConditionComparison.operatorsFor(ValueType.ENTITY),
@@ -82,7 +71,6 @@ class ConditionComparisonTest {
             setOf("in_region", "not_in_region"),
             ConditionComparison.operatorsFor(ValueType.LOCATION),
         )
-        assertTrue(ConditionComparison.operatorsFor(ValueType.VECTOR).isEmpty())
         assertTrue(ConditionComparison.ALL.contains("contains"))
         assertTrue(ConditionComparison.ALL.containsAll(listOf("in_region", "not_in_region")))
         assertTrue(ConditionComparison.isRegionPredicate("in_region"))

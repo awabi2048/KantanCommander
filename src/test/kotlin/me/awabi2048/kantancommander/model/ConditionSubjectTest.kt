@@ -123,7 +123,7 @@ class ConditionSubjectTest {
     }
 
     @Test
-    fun `boolean direct conditions skip operators and right values`() {
+    fun `value conditions require a comparison operator`() {
         fun valueNode(configure: CommandNode.() -> Unit): DiskScript {
             val script = DiskScript(name = "direct-subject", owner = UUID.randomUUID())
             GraphEditor.append(script.graph, CommandType.CONDITION).apply {
@@ -132,59 +132,43 @@ class ConditionSubjectTest {
             }
             return script
         }
-        val definitions = mapOf(
-            "flag" to TypedValue(ValueType.BOOLEAN, booleanValue = true),
-            "counter" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
-        )
+        val definitions = mapOf("counter" to TypedValue(ValueType.NUMBER, numberValue = 1.0))
 
-        // BOOLEAN変数の直接条件は検証を通ります（`== true` と同じ契約）。
         val direct = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "flag"
-            params["operator"] = ""
-            params["right"] = ""
-        }
-        assertFalse(
-            ExecutableScriptValidator.validate(direct, variableDefinitions = definitions)
-                .any { it.nodeId != null },
-        )
-
-        // 非BOOLEAN変数の直接条件は拒否します。
-        val nonBoolean = valueNode {
             params["leftScope"] = "WORLD"
             params["leftName"] = "counter"
             params["operator"] = ""
             params["right"] = ""
         }
         assertTrue(
-            ExecutableScriptValidator.validate(nonBoolean, variableDefinitions = definitions)
-                .any { it.message.contains("直接条件はBOOLEAN") },
+            ExecutableScriptValidator.validate(direct, variableDefinitions = definitions)
+                .any { it.message.contains("比較方法を選択") },
         )
 
-        // 未定義変数の直接条件は拒否します。
+        // 演算子を指定した場合は、未定義の左辺を従来どおり検出します。
         val missing = valueNode {
             params["leftScope"] = "WORLD"
             params["leftName"] = "ghost"
-            params["operator"] = ""
-            params["right"] = ""
+            params["operator"] = "=="
+            params["right"] = "1"
         }
         assertTrue(
             ExecutableScriptValidator.validate(missing, variableDefinitions = definitions)
                 .any { it.message.contains("未定義") },
         )
 
-        // EXECUTION scope は引数定義の型で判定します。
+        // EXECUTION scope でも演算子なしの真偽値条件は認めません。
         val execution = valueNode {
             params["leftScope"] = "EXECUTION"
             params["leftName"] = "ready"
             params["operator"] = ""
             params["right"] = ""
         }.apply {
-            arguments = listOf(me.awabi2048.kantancommander.model.DiskArgument("ready", ValueType.BOOLEAN))
+            arguments = listOf(me.awabi2048.kantancommander.model.DiskArgument("ready", ValueType.NUMBER))
         }
-        assertFalse(
+        assertTrue(
             ExecutableScriptValidator.validate(execution, variableDefinitions = definitions)
-                .any { it.nodeId != null },
+                .any { it.message.contains("比較方法を選択") },
         )
     }
 

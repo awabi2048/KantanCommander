@@ -31,10 +31,8 @@ object ConditionComparison {
     fun operatorsFor(type: ValueType): Set<String> = when (type) {
         ValueType.NUMBER -> setOf(EQUAL, NOT_EQUAL, GREATER, GREATER_OR_EQUAL, LESS, LESS_OR_EQUAL)
         ValueType.STRING -> setOf(EQUAL, NOT_EQUAL, CONTAINS)
-        ValueType.BOOLEAN -> setOf(EQUAL, NOT_EQUAL)
         ValueType.ENTITY -> setOf(EQUAL, NOT_EQUAL, IN_REGION, NOT_IN_REGION)
         ValueType.LOCATION -> setOf(IN_REGION, NOT_IN_REGION)
-        ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
         -> emptySet()
@@ -77,15 +75,6 @@ object ConditionComparison {
                     else -> null
                 }
             }
-            ValueType.BOOLEAN -> {
-                val actual = left.booleanValue ?: return null
-                val expected = right.booleanValue ?: return null
-                when (operator) {
-                    EQUAL -> actual == expected
-                    NOT_EQUAL -> actual != expected
-                    else -> null
-                }
-            }
             ValueType.ENTITY -> {
                 when (operator) {
                     EQUAL -> left.entityId == right.entityId
@@ -94,7 +83,6 @@ object ConditionComparison {
                 }
             }
             ValueType.LOCATION,
-            ValueType.VECTOR,
             ValueType.ITEM,
             ValueType.BLOCK,
             -> null

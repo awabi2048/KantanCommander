@@ -50,9 +50,9 @@ class TypedVariableValidationTest {
         val fresh = scriptWith {
             params["scope"] = "WORLD"
             params["name"] = "fresh"
-            params["type"] = ValueType.BOOLEAN.name
+            params["type"] = ValueType.STRING.name
             params["operation"] = VariableOperation.DEFINE.name
-            params["value"] = "true"
+            params["value"] = "hello"
         }
         assertFalse(
             ExecutableScriptValidator.validate(fresh, variableDefinitions = definitions)
@@ -223,32 +223,28 @@ class TypedVariableValidationTest {
     }
 
     @Test
-    fun `boolean and vector values are validated by shape`() {
+    fun `removed boolean and vector types are rejected`() {
         val definitions = emptyMap<String, TypedValue>()
-        val badBoolean = scriptWith {
+        val removedBoolean = scriptWith {
             params["scope"] = "WORLD"
             params["name"] = "flag"
-            params["type"] = ValueType.BOOLEAN.name
+            params["type"] = "BOOLEAN"
             params["operation"] = VariableOperation.DEFINE.name
-            params["value"] = "yes"
         }
         assertTrue(
-            ExecutableScriptValidator.validate(badBoolean, variableDefinitions = definitions)
-                .any { it.fieldKeys == setOf("value") },
+            ExecutableScriptValidator.validate(removedBoolean, variableDefinitions = definitions)
+                .any { it.fieldKeys == setOf("type") },
         )
 
-        val badVector = scriptWith {
+        val removedVector = scriptWith {
             params["scope"] = "WORLD"
             params["name"] = "direction"
-            params["type"] = ValueType.VECTOR.name
+            params["type"] = "VECTOR"
             params["operation"] = VariableOperation.DEFINE.name
-            params["x"] = "1"
-            params["y"] = "oops"
-            params["z"] = "3"
         }
         assertTrue(
-            ExecutableScriptValidator.validate(badVector, variableDefinitions = definitions)
-                .any { it.fieldKeys == setOf("y") },
+            ExecutableScriptValidator.validate(removedVector, variableDefinitions = definitions)
+                .any { it.fieldKeys == setOf("type") },
         )
     }
 
@@ -321,8 +317,7 @@ class TypedVariableValidationTest {
             params["name"] = "roll"
             params["operation"] = VariableOperation.DEFINE.name
             params["changeMode"] = "RANDOM"
-            params["randomMin"] = "1"
-            params["randomMax"] = "6"
+            params["range"] = "1..6"
         }
         assertFalse(
             ExecutableScriptValidator.validate(valid, variableDefinitions = definitions)
@@ -334,12 +329,11 @@ class TypedVariableValidationTest {
             params["name"] = "roll"
             params["operation"] = VariableOperation.DEFINE.name
             params["changeMode"] = "RANDOM"
-            params["randomMin"] = "6"
-            params["randomMax"] = "1"
+            params["range"] = "6..1"
         }
         assertTrue(
             ExecutableScriptValidator.validate(inverted, variableDefinitions = definitions)
-                .any { it.message.contains("最大値を超えられません") },
+                .any { it.fieldKeys == setOf("range") },
         )
 
         val nonNumeric = scriptWith {
@@ -347,8 +341,7 @@ class TypedVariableValidationTest {
             params["name"] = "label"
             params["operation"] = VariableOperation.CHANGE.name
             params["changeMode"] = "RANDOM"
-            params["randomMin"] = "1"
-            params["randomMax"] = "6"
+            params["range"] = "1..6"
         }
         assertTrue(
             ExecutableScriptValidator.validate(nonNumeric, variableDefinitions = definitions)

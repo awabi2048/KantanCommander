@@ -38,6 +38,8 @@ class TriggerChoiceDocumentTest {
         },
         backLabel = Component.text("back"),
         backBackground = blockData(),
+        selectionLabel = "trigger",
+        selectionValue = Component.text("selected"),
     )
 
     @Test

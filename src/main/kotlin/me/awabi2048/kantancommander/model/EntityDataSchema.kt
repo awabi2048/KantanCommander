@@ -16,6 +16,7 @@ import org.bukkit.entity.Cat
 import org.bukkit.entity.Creeper
 import org.bukkit.entity.Entity
 import org.bukkit.entity.EntityType
+import org.bukkit.entity.Player
 import org.bukkit.entity.Fox
 import org.bukkit.entity.Frog
 import org.bukkit.entity.Horse
@@ -131,6 +132,7 @@ object EntityDataSchema {
     const val PROPERTY_INVULNERABLE = "invulnerable"
     const val PROPERTY_GRAVITY = "gravity"
     const val PROPERTY_GLOWING = "glowing"
+    const val PROPERTY_ALLOW_FLIGHT = "allow_flight"
     const val PROPERTY_PERSISTENT = "persistent"
     const val PROPERTY_CUSTOM_NAME = "custom_name"
     const val PROPERTY_ARMOR_STAND_ARMS = "armor_stand_arms"
@@ -603,6 +605,12 @@ object EntityDataSchema {
             optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_PERSISTENT,
         ),
         EntityPropertyDefinition(
+            PROPERTY_ALLOW_FLIGHT, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.PLAYER.name),
+            optionKey = com.awabi2048.ccsystem.api.localization.generated.ChanponEnvironmentKeys
+                .CHANPON_ENVIRONMENT_FLIGHT_DISPLAY,
+        ),
+        EntityPropertyDefinition(
             PROPERTY_CUSTOM_NAME, EntityPropertyValueKind.TEXT, entityTypes = null,
             optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_CUSTOM_NAME,
         ),
@@ -1019,6 +1027,7 @@ object EntityDataSchema {
         // 種別集合だけでは表現できない能力横断項目は、実体の型で最終判定します。
         return when (propertyId) {
             PROPERTY_AGEABLE_BABY -> entity is Ageable && entity !is Zombie
+            PROPERTY_ALLOW_FLIGHT -> entity is Player
             PROPERTY_ZOMBIE_BABY -> entity is Zombie
             PROPERTY_SITTABLE_SITTING -> entity is Sittable
             PROPERTY_COLLAR_COLOR -> entity is CollarColorable
@@ -1055,6 +1064,7 @@ object EntityDataSchema {
         PROPERTY_INVULNERABLE -> entity.setInvulnerable(value).let { true }
         PROPERTY_GRAVITY -> entity.setGravity(value).let { true }
         PROPERTY_GLOWING -> entity.setGlowing(value).let { true }
+        PROPERTY_ALLOW_FLIGHT -> (entity as? Player)?.let { it.allowFlight = value; true } ?: false
         PROPERTY_PERSISTENT -> entity.setPersistent(value).let { true }
         PROPERTY_ARMOR_STAND_ARMS -> (entity as? ArmorStand)?.let { it.setArms(value); true } ?: false
         PROPERTY_ARMOR_STAND_SMALL -> (entity as? ArmorStand)?.let { it.setSmall(value); true } ?: false

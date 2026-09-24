@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -183,9 +184,10 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY,
             CommandDialogSpecs.worldVariableValueBody(ValueType.NUMBER),
         )
-        assertEquals(32, number.maxLength)
-        assertEquals(CommandDialogSpecs.InputFormat.NUMBER, number.format)
+        assertEquals(64, number.maxLength)
+        assertEquals(CommandDialogSpecs.InputFormat.ANY_STRING, number.format)
         assertNull(number.validateInput(" 1.5 "))
+        assertNull(number.validateInput("1..6"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID,
             CommandDialogSpecs.worldVariableValueInvalid(ValueType.NUMBER),
@@ -198,6 +200,16 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID,
             number.validateInput("Infinity"),
         )
+        val assigned = requireNotNull(
+            CommandDialogSpecs.worldVariableValue(ValueType.NUMBER, VariableChangeMode.ASSIGN),
+        )
+        val random = requireNotNull(
+            CommandDialogSpecs.worldVariableValue(ValueType.NUMBER, VariableChangeMode.RANDOM),
+        )
+        assertNull(assigned.validateInput("2.5"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID, assigned.validateInput("1..6"))
+        assertNull(random.validateInput("0.5..1.5"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID, random.validateInput("2.5"))
 
         val string = requireNotNull(CommandDialogSpecs.worldVariableValue(ValueType.STRING))
         assertEquals(

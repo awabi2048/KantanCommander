@@ -104,14 +104,12 @@ class KantanStandaloneExportContributor(
     }
 
     private fun validateVariable(world: String, name: String, value: TypedValue): String? {
-        // #2: 単体出力の初期値埋め込みはスカラー3型だけに対応します。複合型は
+        // #2: 単体出力の初期値埋め込みはNUMBER／STRINGだけに対応します。複合型は
         // 構造がバニラstorageへ直結しないため、明示エラーにします。
         val valid = when (value.type) {
             ValueType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
             ValueType.STRING -> value.stringValue != null && value.numberValue == null
-            ValueType.BOOLEAN -> value.booleanValue != null
             ValueType.LOCATION,
-            ValueType.VECTOR,
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
@@ -337,9 +335,7 @@ internal class PreparedKantanExport(
         return when (value.type) {
             ValueType.NUMBER -> storageSet(name, "${value.numberValue ?: 0.0}d")
             ValueType.STRING -> storageSet(name, "\"${escapeNbt(value.stringValue.orEmpty())}\"")
-            ValueType.BOOLEAN -> storageSet(name, if (value.booleanValue == true) "1b" else "0b")
             ValueType.LOCATION,
-            ValueType.VECTOR,
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,

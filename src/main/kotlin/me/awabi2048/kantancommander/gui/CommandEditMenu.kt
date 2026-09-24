@@ -2447,7 +2447,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     /** 呼び出し引数の値を編集します。型に応じて値入力または変数名入力へ進みます。 */
     private fun openDiskCallArgumentForm(player: Player, route: MenuRoute, argument: DiskArgument) {
         val current = node(route) ?: return
-        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING)
         if (complex) {
             val spec = CommandDialogSpecs.variableName
             showTextForm(
@@ -4732,15 +4732,8 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
             ) { displayLiteral(it.string("property")) },
             field(
-                "randomMin",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANDOM_MIN,
-                Material.COMPARATOR,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
-            ),
-            field(
-                "randomMax",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANDOM_MAX,
+                "range",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
                 Material.COMPARATOR,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
@@ -4771,10 +4764,10 @@ object EditorMenuLayout {
     /**
      * 「一時変数を設定」の編集項目を、一時型ごとに切り替えます。
      *
-     * NUMBER・STRING・BOOLEAN は共通値欄、VECTOR は成分欄、LOCATIONは位置・向きを
-     * 共通設定画面へ委譲し、ITEM・BLOCKはメインハンド、ENTITYは共通対象選択、
-     * SOUND・EFFECTは共通のID／数値入力仕様を使います。型自体はtempType欄で変更し、
-     * 再設定は上書きとして扱います。値欄の組み立ては変数操作コマンドと共有します。
+     * NUMBER・STRING は共通値欄、LOCATIONは位置・向きを
+     * 共通設定画面へ委譲し、ITEM・BLOCKはメインハンド、ENTITYは共通対象選択を使います。
+     * NUMBERの値指定とRange乱数は変数操作コマンドと同じchangeModeで切り替え、
+     * 型自体はtempType欄で変更します。
      */
     private fun tempSetFields(node: CommandNode): List<EditorField> = buildList {
         add(field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG))
@@ -4782,7 +4775,19 @@ object EditorMenuLayout {
             displayTemporaryType(it.string("tempType"))
         })
         val type = ValueType.parse(node.string("tempType", ValueType.NUMBER.name)) ?: ValueType.NUMBER
-        if (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN) {
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+            .getOrDefault(VariableChangeMode.ASSIGN)
+        // 乱数を選べる数値型だけで値の設定方法を表示します。
+        if (type == ValueType.NUMBER) {
+            add(field("changeMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.COMPARATOR) {
+                displayVariableChangeMode(it.string("changeMode", VariableChangeMode.ASSIGN.name))
+            })
+        }
+        if (type == ValueType.NUMBER && mode == VariableChangeMode.RANDOM) {
+            add(field("range", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, Material.COMPARATOR) {
+                displayVariableValue(it.string("range"))
+            })
+        } else if ((type == ValueType.NUMBER || type == ValueType.STRING) && mode == VariableChangeMode.ASSIGN) {
             add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
                 displayVariableValue(it.string("value"))
             })
@@ -4793,36 +4798,13 @@ object EditorMenuLayout {
     /**
      * issue #2 の型別値入力欄です。
      *
-     * 一時変数の設定と変数操作コマンドで共有します。NUMBER・STRING・BOOLEAN は
-     * 親の共通値欄を使うためここでは出しません。VECTOR は成分欄、複合6型は
+     * 一時変数の設定と変数操作コマンドで共有します。NUMBER・STRING は
+     * 親の共通値欄を使うためここでは出しません。複合型は
      * 型ごとの共通設定欄を返します。
      */
     private fun typedValueSubFields(node: CommandNode, type: ValueType): List<EditorField> = buildList {
         when (type) {
-            ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> Unit
-            ValueType.VECTOR -> {
-                add(field(
-                    "x",
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX,
-                    Material.COMPARATOR,
-                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
-                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
-                ))
-                add(field(
-                    "y",
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY,
-                    Material.COMPARATOR,
-                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
-                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
-                ))
-                add(field(
-                    "z",
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ,
-                    Material.COMPARATOR,
-                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
-                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
-                ))
-            }
+            ValueType.NUMBER, ValueType.STRING -> Unit
             ValueType.LOCATION -> add(field(
                 "location",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
@@ -4911,6 +4893,9 @@ object EditorMenuLayout {
         "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE
         "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE
         "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION
+        "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION
+        // 数値範囲も入力値の設定です。既存の共通アクション文言を使います。
+        "range" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_RANGE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE
         "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE
         else -> error("未定義のエディターフィールドです: $key")
     }
@@ -5053,10 +5038,8 @@ private fun displayCondition(node: CommandNode) = node.conditionSubject()
 private fun displayValueTypeLabel(type: ValueType): LocalizationKey<String> = when (type) {
     ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
     ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_BOOLEAN
     ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
-    ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
-    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
     // issue #35-3: 固定実体の表示キーは撤去したため、汎用のエンティティ表示を使う。
     ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY

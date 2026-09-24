@@ -483,7 +483,7 @@ object CommandSettingsModel {
             // #2: 操作内容ごとに必要な項目だけを表示します。scope・name・operation は
             // 常に表示し、type・changeMode・value・source は操作で切り替えます。
             // #3: 値生成方法（changeMode）は値を書き込む3操作で表示し、生成方法別の
-            // 項目（propertySource・property・randomMin・randomMax）は対応する
+            // 項目（propertySource・property・range）は対応する
             // 生成方法のときだけ表示します。
             // - DEFINE: 型＋初期値。COPY／DELETE 用の項目は不要です。
             // - SET: 型＋値。COPY／DELETE 用の項目は不要です。
@@ -500,10 +500,10 @@ object CommandSettingsModel {
                         VariableOperation.CHANGE -> field.key == "type" || field.key == "source"
                         VariableOperation.COPY -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
                             field.key == "propertySource" || field.key == "property" ||
-                            field.key == "randomMin" || field.key == "randomMax"
+                            field.key == "range"
                         VariableOperation.DELETE -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
                             field.key == "source" || field.key == "propertySource" || field.key == "property" ||
-                            field.key == "randomMin" || field.key == "randomMax"
+                            field.key == "range"
                     }
                 }
             }
@@ -593,6 +593,7 @@ object CommandSettingsModel {
         // 値を必要とする操作（DEFINE／SET／CHANGE）でのみ表示し、複写元は
         // COPY でのみ、型別項目は現在の型に一致するものだけ表示します。
         CommandType.VARIABLE -> isVariableFieldVisible(node, fieldKey)
+        CommandType.TEMP_SET -> isTemporaryFieldVisible(node, fieldKey)
 
         else -> true
     }
@@ -629,18 +630,37 @@ object CommandSettingsModel {
         if (fieldKey == "changeMode") return true
         // #3: 生成方法別の項目は対応する生成方法のときだけ表示します。
         if (fieldKey == "propertySource" || fieldKey == "property") return mode == VariableChangeMode.PROPERTY
-        if (fieldKey == "randomMin" || fieldKey == "randomMax") return mode == VariableChangeMode.RANDOM
+        if (fieldKey == "range") return mode == VariableChangeMode.RANDOM
         val type = ValueType.parse(node.string("type")) ?: return false
         return when (fieldKey) {
             "value" -> (mode == VariableChangeMode.ASSIGN &&
-                (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN)) ||
+                (type == ValueType.NUMBER || type == ValueType.STRING)) ||
                 (mode == VariableChangeMode.CALCULATE && type == ValueType.NUMBER)
             "location" -> mode == VariableChangeMode.ASSIGN && type == ValueType.LOCATION
-            "x", "y", "z" -> mode == VariableChangeMode.ASSIGN && type == ValueType.VECTOR
             "item" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ITEM
             "block" -> mode == VariableChangeMode.ASSIGN && type == ValueType.BLOCK
             "entity" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ENTITY
             else -> true
+        }
+    }
+
+    /** 一時変数もワールド変数と同じ値指定／Range乱数の表示規則を使います。 */
+    private fun isTemporaryFieldVisible(node: CommandNode, fieldKey: String): Boolean {
+        if (fieldKey in setOf("name", "tempType")) return true
+        val type = ValueType.parse(node.string("tempType")) ?: return false
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+            .getOrDefault(VariableChangeMode.ASSIGN)
+        if (fieldKey == "changeMode") return type == ValueType.NUMBER
+        if (fieldKey == "range") return type == ValueType.NUMBER && mode == VariableChangeMode.RANDOM
+        if (fieldKey == "value") return mode == VariableChangeMode.ASSIGN &&
+            (type == ValueType.NUMBER || type == ValueType.STRING)
+        if (mode != VariableChangeMode.ASSIGN) return false
+        return when (fieldKey) {
+            "location", "x", "y", "z", "yaw" -> type == ValueType.LOCATION
+            "entity", "entityId" -> type == ValueType.ENTITY
+            "item", "itemData" -> type == ValueType.ITEM
+            "block" -> type == ValueType.BLOCK
+            else -> false
         }
     }
 
@@ -886,7 +906,7 @@ object CommandSettingsModel {
                 "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "propertySource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "property" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
-                "randomMin", "randomMax" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                "range" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
                 "entityId", "sound", "soundParameters", "volume", "effect", "level", "seconds" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
@@ -895,8 +915,9 @@ object CommandSettingsModel {
             CommandType.TEMP_SET -> when (fieldKey) {
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
-                "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
-                "entityId", "sound", "soundParameters", "volume", "effect", "level", "seconds" ->
+                "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "range", "value", "location", "x", "y", "z", "yaw", "item", "block", "entity",
+                "entityId" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
@@ -1152,14 +1173,16 @@ object CommandSettingsModel {
             // #3: 参照元は変数名の自由入力、詳細値は候補選択、乱数範囲は数値入力です。
             "propertySource" -> text()
             "property" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_PROPERTY)
-            "randomMin", "randomMax" -> text()
+            "range" -> text()
             "location" -> CommandSettingDescriptor(CommandSettingEditor.LOCATION, CommandSettingRole.TEMPORARY_LOCATION)
             "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
             else -> text()
         }
         CommandType.TEMP_SET -> when (fieldKey) {
             "tempType" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
+            "changeMode" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_CHANGE_MODE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
+            "range" -> text()
             "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
             "location" -> CommandSettingDescriptor(CommandSettingEditor.LOCATION, CommandSettingRole.TEMPORARY_LOCATION)
             else -> text()
@@ -1345,17 +1368,20 @@ object CommandSettingsModel {
         val current = ValueType.parse(node.string(key, ValueType.NUMBER.name))
         if (current != type) {
             setOf(
-                "value", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
+                "value", "range", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
                 "sound", "volume", "effect", "level", "seconds",
             ).forEach(node.params::remove)
+            // 型ごとの入力を切り替えた後に、旧型の生成方法だけが残る状態を防ぎます。
+            node.params["changeMode"] = VariableChangeMode.ASSIGN.name
             node.temporaryEntityTargetSpec = null
             node.temporaryLocationPositionSpec = null
             node.temporaryLocationFacingSpec = null
             node.clearConfigured(
-                "value", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
+                "value", "range", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
                 "sound", "volume", "effect", "level", "seconds", "entity", "location",
                 "locationPosition", "locationFacing",
             )
+            node.markConfigured("changeMode")
         }
         node.params[key] = type.name
         node.markConfigured(key)
@@ -2074,13 +2100,10 @@ object CommandSettingsModel {
      * issue #8 の呼び出し引数のリテラルが型に適合するかを判定します。
      *
      * 検証層と同じ規則であり、両GUIの入力検証で共有します。複合型は変数指定だけを
-     * 受け付けるため、ここではスカラー3型だけを判定します。
+     * 受け付けるため、ここでは数値リテラルだけを特別扱いします。
      */
     fun isCallArgumentLiteralValid(type: ValueType, raw: String): Boolean = when (type) {
         ValueType.NUMBER -> CommandValueRules.parseFiniteDouble(raw) != null ||
-            VariableTemplate.isSingleReference(raw) ||
-            TemporaryTemplate.isSingleReference(raw)
-        ValueType.BOOLEAN -> raw.trim().lowercase() in setOf("true", "false") ||
             VariableTemplate.isSingleReference(raw) ||
             TemporaryTemplate.isSingleReference(raw)
         else -> !VariableTemplate.hasMalformedReference(raw) &&

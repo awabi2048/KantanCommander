@@ -1101,15 +1101,19 @@ class GestureLowerPanel(
     /**
      * issue #7 の起動方法の種別選択子画面を生成します。
      *
-     * 現在の起動方法を選択表示し、選択時に即時確定します。タイマーは確定後に
-     * 間隔入力へ進み、信号・イベントはそのまま保存します。
+     * 現在の起動方法を選択表示します。初回クリックは選択だけを行い、再クリックで
+     * タイマーは間隔入力へ、イベントはイベント選択へ進み、信号は確定します。
      */
     fun buildTriggerKindChild(
         state: GestureEditorState,
         player: Player,
     ): GestureGuiView {
-        val current = state.scriptId
-            .let { plugin.scripts.load(it)?.effectiveTrigger()?.kind }
+        val script = plugin.scripts.load(state.scriptId)
+        val currentTrigger = script?.effectiveTrigger()
+        val current = state.pendingTriggerKind ?: currentTrigger?.kind
+        val selectionSummary = currentTrigger
+            ?.takeIf { it.kind == current }
+            ?.let { Component.text(TriggerDisplay.summary(player, it)) }
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.kindDocument(
                 me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
@@ -1130,6 +1134,12 @@ class GestureLowerPanel(
                     },
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                    selectionLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
+                    selectionValue = Component.text(
+                        current?.let { TriggerDisplay.kindName(player, it) }
+                            ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                    ),
+                    selectionSummary = selectionSummary,
                 ),
             ),
             GestureLowerMode.TRIGGER_KIND,
@@ -1223,14 +1233,14 @@ class GestureLowerPanel(
     /**
      * issue #7 のイベント種別の選択子画面を生成します。
      *
-     * 初期10種から一つを選び、選択時に起動方法として確定します。
+     * 初期10種をページ表示し、同じ候補の再クリックで起動方法として確定します。
      */
     fun buildTriggerEventChild(
         state: GestureEditorState,
         player: Player,
     ): GestureGuiView {
-        val current = state.scriptId
-            .let { plugin.scripts.load(it)?.effectiveTrigger()?.event }
+        val current = state.pendingTriggerEvent
+            ?: plugin.scripts.load(state.scriptId)?.effectiveTrigger()?.event
         val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
         val total = EventTriggerKind.entries.size
         val pageCount = ((total + pageSize - 1) / pageSize).coerceAtLeast(1)
@@ -1259,6 +1269,11 @@ class GestureLowerPanel(
                     pageCount = pageCount,
                     pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
                     pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    selectionLabel = TriggerDisplay.kindName(player, TriggerKind.EVENT),
+                    selectionValue = Component.text(
+                        current?.let { TriggerDisplay.eventName(player, it) }
+                            ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                    ),
                 ),
             ),
             GestureLowerMode.TRIGGER_EVENT,
@@ -3096,10 +3111,8 @@ class GestureLowerPanel(
             when (runCatching { ValueType.valueOf(suffix) }.getOrNull()) {
                 ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_DECIMAL
                 ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_TEXT
-                ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_BOOLEAN
                 ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_POSITION
                 ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_ENTITY
-                ValueType.VECTOR,
                 ValueType.ITEM,
                 ValueType.BLOCK,
                 null -> null
@@ -4130,9 +4143,10 @@ class GestureLowerPanel(
             }
         }
         GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
-            // #3: 値生成方法は型で出し分けます。計算式と乱数はNUMBERだけ、
-            // 代入と詳細値取得は全型で提供します。
-            val type = ValueType.parse(node.string("type")) ?: ValueType.NUMBER
+            // 一時変数とワールド変数で値指定／乱数の選択を共通化します。
+            val type = ValueType.parse(
+                node.string(if (node.type == CommandType.TEMP_SET) "tempType" else "type"),
+            ) ?: ValueType.NUMBER
             val current = node.string("changeMode", "ASSIGN")
             fun choice(mode: VariableChangeMode, label: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>) =
                 SettingChoice(
@@ -4142,12 +4156,14 @@ class GestureLowerPanel(
                 )
             buildList {
                 add(choice(VariableChangeMode.ASSIGN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN))
-                if (type == ValueType.NUMBER) {
-                    add(choice(VariableChangeMode.CALCULATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE))
-                }
-                add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
-                if (type == ValueType.NUMBER) {
+                if (node.type == CommandType.TEMP_SET && type == ValueType.NUMBER) {
                     add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                } else if (node.type == CommandType.VARIABLE && type == ValueType.NUMBER) {
+                    add(choice(VariableChangeMode.CALCULATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE))
+                    add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
+                    add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                } else if (node.type == CommandType.VARIABLE) {
+                    add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
                 }
             }
         }

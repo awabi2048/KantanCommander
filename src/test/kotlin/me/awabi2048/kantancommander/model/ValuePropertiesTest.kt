@@ -28,10 +28,6 @@ class ValuePropertiesTest {
             ValueProperties.forSource(ValueType.LOCATION).map { it.id }.toSet(),
         )
         assertEquals(
-            setOf("x", "y", "z"),
-            ValueProperties.forSource(ValueType.VECTOR).map { it.id }.toSet(),
-        )
-        assertEquals(
             setOf("type", "amount"),
             ValueProperties.forSource(ValueType.ITEM).map { it.id }.toSet(),
         )
@@ -43,7 +39,7 @@ class ValuePropertiesTest {
     }
 
     @Test
-    fun `location vector item and block properties resolve without a server`() {
+    fun `location item and block properties resolve without a server`() {
         val location = TypedValue(ValueType.LOCATION, location = SavedLocation(1.0, 2.0, 3.0, 90f, 45f))
         assertEquals(1.0, ValueProperties.resolve(location, "x") { null }?.numberValue)
         assertEquals(2.0, ValueProperties.resolve(location, "y") { null }?.numberValue)
@@ -51,10 +47,8 @@ class ValuePropertiesTest {
         assertEquals(90.0, ValueProperties.resolve(location, "yaw") { null }?.numberValue)
         assertEquals(45.0, ValueProperties.resolve(location, "pitch") { null }?.numberValue)
 
-        val vector = TypedValue(ValueType.VECTOR, vector = SavedVector(4.0, 5.0, 6.0))
-        assertEquals(4.0, ValueProperties.resolve(vector, "x") { null }?.numberValue)
-        // 型外の詳細値は取得しません。
-        assertNull(ValueProperties.resolve(vector, "yaw") { null })
+        // 座標成分は独立したベクトル値ではなく位置値から取得します。
+        assertNull(ValueProperties.resolve(location, "unknown") { null })
         assertNull(ValueProperties.resolve(location, "amount") { null })
         assertNull(ValueProperties.resolve(location, "unknown") { null })
 

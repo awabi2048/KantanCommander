@@ -25,13 +25,11 @@ import java.util.UUID
  */
 class EntityVariablesTest {
     @Test
-    fun `codec round trips every value type`() {
+    fun `codec round trips every supported value type`() {
         val values = listOf(
             TypedValue(ValueType.NUMBER, numberValue = 1.5),
             TypedValue(ValueType.STRING, stringValue = "a:b,c|d"),
-            TypedValue(ValueType.BOOLEAN, booleanValue = true),
             TypedValue(ValueType.LOCATION, location = SavedLocation(1.0, 2.0, 3.0, 90f, 45f)),
-            TypedValue(ValueType.VECTOR, vector = SavedVector(1.0, 2.0, 3.0)),
             TypedValue(ValueType.ITEM, item = "STONE", itemData = "e30=", amount = 3),
             TypedValue(ValueType.ITEM, item = "STONE", amount = 1),
             TypedValue(ValueType.BLOCK, block = "STONE"),

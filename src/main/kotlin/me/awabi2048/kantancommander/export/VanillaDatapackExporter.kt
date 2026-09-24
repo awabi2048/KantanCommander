@@ -299,12 +299,12 @@ class VanillaDatapackExporter(
                     ) {
                         errors += "${script.id}/${node.id}: 詳細値取得・乱数は完全バニラ出力に未対応です"
                     }
-                    // #2: 単体出力の初期値埋め込みとWORLD代入はスカラー3型だけに対応します。
+                    // #2: 単体出力の初期値埋め込みとWORLD代入は数値・文字列に対応します。
                     // 複合型のWORLD変数はバニラstorageへ直結しないため明示エラーにします。
                     // EXECUTION scope の複合値は一時storage compoundで扱うため対象外です。
                     if (scope != VariableScope.EXECUTION &&
                         type != null &&
-                        type != ValueType.NUMBER && type != ValueType.STRING && type != ValueType.BOOLEAN
+                        type != ValueType.NUMBER && type != ValueType.STRING
                     ) {
                         errors += "${script.id}/${node.id}: 複合型の変数は完全バニラ出力に未対応です"
                     }
@@ -1188,18 +1188,6 @@ class VanillaDatapackExporter(
             ValueType.STRING ->
                 directReference(node.string("value"))
                     ?: "data modify storage kantan:variables $destination set value \"${escape(node.string("value"))}\""
-            ValueType.BOOLEAN ->
-                directReference(node.string("value"))
-                    ?: "data modify storage kantan:variables $destination set value ${
-                        when (node.string("value").trim().lowercase()) {
-                            "true" -> "1b"
-                            "false" -> "0b"
-                            else -> error("boolean must be true or false")
-                        }
-                    }"
-            ValueType.VECTOR ->
-                "data modify storage kantan:variables $destination set value " +
-                    "{x:${number(node.string("x"))},y:${number(node.string("y"))},z:${number(node.string("z"))}}"
             ValueType.LOCATION -> {
                 val position = node.temporaryLocationPositionSpec
                 val facing = node.temporaryLocationFacingSpec
@@ -2139,14 +2127,7 @@ class VanillaDatapackExporter(
                 "data modify storage kantan:variables $storagePath set value ${raw}d"
             ValueType.STRING ->
                 "data modify storage kantan:variables $storagePath set value \"${escape(raw)}\""
-            ValueType.BOOLEAN ->
-                when (raw.trim().lowercase()) {
-                    "true" -> "data modify storage kantan:variables $storagePath set value 1b"
-                    "false" -> "data modify storage kantan:variables $storagePath set value 0b"
-                    else -> return null
-                }
             ValueType.LOCATION,
-            ValueType.VECTOR,
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
@@ -2195,12 +2176,6 @@ class VanillaDatapackExporter(
                 "data modify storage kantan:variables $destination set value ${raw}d"
             ValueType.STRING ->
                 "data modify storage kantan:variables $destination set value \"${escape(raw)}\""
-            ValueType.BOOLEAN ->
-                when (raw.trim().lowercase()) {
-                    "true" -> "data modify storage kantan:variables $destination set value 1b"
-                    "false" -> "data modify storage kantan:variables $destination set value 0b"
-                    else -> null
-                }
             else -> null
         }
     }

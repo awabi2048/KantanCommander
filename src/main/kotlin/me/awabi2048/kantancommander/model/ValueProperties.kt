@@ -14,7 +14,6 @@ import java.util.UUID
  * 初期対応一覧（#3）:
  * - ENTITY: name／type／health／location
  * - LOCATION: x／y／z／yaw／pitch
- * - VECTOR: x／y／z
  * - ITEM: type／amount
  * - BLOCK: type
  */
@@ -34,9 +33,9 @@ object ValueProperties {
         PropertyDef("type", setOf(ValueType.ENTITY, ValueType.ITEM, ValueType.BLOCK), ValueType.STRING),
         PropertyDef("health", setOf(ValueType.ENTITY), ValueType.NUMBER),
         PropertyDef("location", setOf(ValueType.ENTITY), ValueType.LOCATION),
-        PropertyDef("x", setOf(ValueType.LOCATION, ValueType.VECTOR), ValueType.NUMBER),
-        PropertyDef("y", setOf(ValueType.LOCATION, ValueType.VECTOR), ValueType.NUMBER),
-        PropertyDef("z", setOf(ValueType.LOCATION, ValueType.VECTOR), ValueType.NUMBER),
+        PropertyDef("x", setOf(ValueType.LOCATION), ValueType.NUMBER),
+        PropertyDef("y", setOf(ValueType.LOCATION), ValueType.NUMBER),
+        PropertyDef("z", setOf(ValueType.LOCATION), ValueType.NUMBER),
         PropertyDef("yaw", setOf(ValueType.LOCATION), ValueType.NUMBER),
         PropertyDef("pitch", setOf(ValueType.LOCATION), ValueType.NUMBER),
         PropertyDef("amount", setOf(ValueType.ITEM), ValueType.NUMBER),
@@ -90,18 +89,9 @@ object ValueProperties {
                     location = SavedLocation(location.x, location.y, location.z, location.yaw, location.pitch),
                 )
             }
-            "x" -> TypedValue(
-                ValueType.NUMBER,
-                numberValue = source.location?.x ?: source.vector?.x ?: return null,
-            )
-            "y" -> TypedValue(
-                ValueType.NUMBER,
-                numberValue = source.location?.y ?: source.vector?.y ?: return null,
-            )
-            "z" -> TypedValue(
-                ValueType.NUMBER,
-                numberValue = source.location?.z ?: source.vector?.z ?: return null,
-            )
+            "x" -> TypedValue(ValueType.NUMBER, numberValue = source.location?.x ?: return null)
+            "y" -> TypedValue(ValueType.NUMBER, numberValue = source.location?.y ?: return null)
+            "z" -> TypedValue(ValueType.NUMBER, numberValue = source.location?.z ?: return null)
             "yaw" -> TypedValue(
                 ValueType.NUMBER,
                 numberValue = source.location?.yaw?.toDouble() ?: return null,
