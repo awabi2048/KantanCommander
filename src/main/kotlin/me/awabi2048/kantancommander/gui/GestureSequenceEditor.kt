@@ -371,8 +371,8 @@ private data class ViewportMetrics(
 /**
  * ジェスチャーエディターの主要コントローラー。
  * 上部ビューポートと下部パネルをジェスチャーGUIセッションとして管理します。
- * 下部の一覧・型選択・削除確認はSETTING_CHILD_SCREEN_ID、その他のCONFIRMは
- * 専用の子画面へ切り替え、親画面の操作領域と混在させません。
+ * 下部の一覧・型選択・削除確認は設定経路に応じた子画面へ配置し、その他のCONFIRMも
+ * 専用の子画面へ切り替えて、親画面の操作領域と混在させません。
  */
 class GestureSequenceEditor(
     private val plugin: KantanCommanderPlugin,
@@ -1627,6 +1627,7 @@ class GestureSequenceEditor(
         val ownerId = ownerIdFor(player)
         if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
         val settingChildWasOpen = settingChildOpen(ownerId)
+        val parentId = if (settingChildWasOpen) currentSettingChildScreenId() else lowerPanel.LOWER_SCREEN_ID
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
         // 確認画面も下部画面の子画面です。openChild前の親ビューからハイライトを
@@ -1647,7 +1648,7 @@ class GestureSequenceEditor(
                     // 個別設定中の確認は、その子画面のさらに前面に置きます。
                     // 親IDを固定すると子画面を飛び越えて重なり、キャンセル後に
                     // どの表示を復元すべきか失われるためです。
-                    parentScreenId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID,
+                    parentScreenId = parentId,
                     overlayMaterial = Material.RED_STAINED_GLASS,
                     animated = false,
                 ),
@@ -1668,6 +1669,10 @@ class GestureSequenceEditor(
 
     private fun settingChildOpen(ownerId: UUID): Boolean =
         api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.SETTING_CHILD_SCREEN_ID) == true
+
+    /** 現在の設定フレームに対応する、物理子画面のIDです。 */
+    private fun currentSettingChildScreenId(): String =
+        lowerPanel.settingChildScreenIdForRoute(state.settingRoute.size)
 
     /**
      * 下部画面へ子画面を積み、子画面生成後に親ビューのハイライトを一括解除します。
@@ -1693,25 +1698,46 @@ class GestureSequenceEditor(
     private fun ensureSettingChild(player: Player, parentView: GestureGuiView? = null) {
         state.lowerMode = GestureLowerMode.SETTING_CHOICES
         val ownerId = ownerIdFor(player)
-        if (settingChildOpen(ownerId)) {
+        val childDepth = GestureSettingChildScreenIds.depthForRouteSize(state.settingRoute.size)
+        val childScreenId = lowerPanel.settingChildScreenIdForDepth(childDepth)
+        val existingChildIds = api.snapshot(ownerId)?.childScreenIds.orEmpty()
+        if (childScreenId in existingChildIds) {
             updateLower(player)
+            return
+        }
+        val parentScreenId = if (childDepth == 1) {
+            lowerPanel.LOWER_SCREEN_ID
+        } else {
+            lowerPanel.settingChildScreenIdForDepth(childDepth - 1)
+        }
+        if (childDepth > 1 && parentScreenId !in existingChildIds) {
+            // 祖先子画面が先に閉じられた場合、その先だけは積めません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            resetSettingChildFailure(player, ownerId)
             return
         }
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
-        val effectiveParentView = parentView ?: lowerPanel.build(
-            state,
-            owner,
-            attention,
-            suppressHighlight = true,
-        )
+        val effectiveParentView = parentView ?: if (childDepth == 1) {
+            lowerPanel.build(
+                state,
+                owner,
+                attention,
+                suppressHighlight = true,
+            )
+        } else {
+            // 深い画面の親ビューはpushSettingFrameで遷移前に構築して渡します。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            resetSettingChildFailure(player, ownerId)
+            return
+        }
         val opened = runCatching {
             openChildAndSuppressParentHighlight(
                 ownerId,
                 effectiveParentView,
                 lowerPanel.buildSettingChild(state, owner, attention),
                 GestureGuiChildOptions(
-                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    parentScreenId = parentScreenId,
                     overlayMaterial = Material.GRAY_STAINED_GLASS,
                     animated = false,
                 ),
@@ -1724,10 +1750,18 @@ class GestureSequenceEditor(
         if (!opened) {
             // セッションが終了している／子深度上限に達している等の場合は、
             // 孤立した設定状態を残さず通常の設定画面へ戻します。
-            clearSettingState()
-            state.lowerMode = GestureLowerMode.SETTINGS
-            updateLower(player)
+            resetSettingChildFailure(player, ownerId)
         }
+    }
+
+    /** 入れ子の子画面を作れなかった場合は、古い子画面も閉じて設定のルートへ戻します。 */
+    private fun resetSettingChildFailure(player: Player, ownerId: UUID) {
+        if (settingChildOpen(ownerId)) {
+            api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+        }
+        clearSettingState()
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateLower(player)
     }
 
     /** 個別設定子画面を閉じて親の設定一覧へ戻します。 */
@@ -3000,12 +3034,13 @@ class GestureSequenceEditor(
         state.settingTreePath = path.selectAtDepth(state.settingRoute.size - 1, nodeId)
     }
 
-    /** 設定木を一段戻します。ルートへ戻る時だけ物理子画面を閉じます。 */
+    /** 設定木を一段戻し、対応する物理子画面も一段だけ閉じます。 */
     private fun popSettingFrame(player: Player): Boolean {
         if (state.settingRoute.size <= 1) {
             closeSettingChild(player)
             return false
         }
+        val poppedChildScreenId = currentSettingChildScreenId()
         state.settingRoute = state.settingRoute.dropLast(1)
         val frame = state.settingRoute.last()
         val path = state.settingTreePath?.leaveChild()?.nodeIds.orEmpty()
@@ -3017,6 +3052,7 @@ class GestureSequenceEditor(
             }
             state.lowerMode = GestureLowerMode.SETTINGS
         } else {
+            api.closeChild(ownerIdFor(player), poppedChildScreenId)
             state.lowerMode = GestureLowerMode.SETTING_CHOICES
         }
         updateLower(player)
@@ -3587,7 +3623,7 @@ class GestureSequenceEditor(
         val ownerId = ownerIdFor(player)
         if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
         val settingChildWasOpen = settingChildOpen(ownerId)
-        val parentId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val parentId = if (settingChildWasOpen) currentSettingChildScreenId() else lowerPanel.LOWER_SCREEN_ID
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
         val parentView = if (settingChildWasOpen) {
@@ -3621,7 +3657,7 @@ class GestureSequenceEditor(
         if (!opened) {
             state.confirmKind = GestureConfirmKind.DELETE
             clearPendingOverwriteState()
-            state.lowerMode = if (parentId == lowerPanel.SETTING_CHILD_SCREEN_ID) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
+            state.lowerMode = if (settingChildWasOpen) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
             updateLower(player)
         }
     }
@@ -3634,7 +3670,7 @@ class GestureSequenceEditor(
         val ownerId = ownerIdFor(player)
         if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
         val settingChildWasOpen = settingChildOpen(ownerId)
-        val parentId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val parentId = if (settingChildWasOpen) currentSettingChildScreenId() else lowerPanel.LOWER_SCREEN_ID
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
         val parentView = if (settingChildWasOpen) {
@@ -3667,7 +3703,7 @@ class GestureSequenceEditor(
         if (!opened) {
             state.confirmKind = GestureConfirmKind.DELETE
             clearPendingOverwriteState()
-            state.lowerMode = if (parentId == lowerPanel.SETTING_CHILD_SCREEN_ID) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
+            state.lowerMode = if (settingChildWasOpen) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
             updateLower(player)
         }
     }
@@ -3681,7 +3717,7 @@ class GestureSequenceEditor(
         val ownerId = ownerIdFor(player)
         if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
         val settingChildWasOpen = settingChildOpen(ownerId)
-        val parentId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val parentId = if (settingChildWasOpen) currentSettingChildScreenId() else lowerPanel.LOWER_SCREEN_ID
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
         val parentView = if (settingChildWasOpen) {
@@ -3716,7 +3752,7 @@ class GestureSequenceEditor(
         if (!opened) {
             state.confirmKind = GestureConfirmKind.DELETE
             clearPendingOverwriteState()
-            state.lowerMode = if (parentId == lowerPanel.SETTING_CHILD_SCREEN_ID) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
+            state.lowerMode = if (settingChildWasOpen) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
             updateLower(player)
         }
     }

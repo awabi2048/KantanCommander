@@ -133,12 +133,19 @@ class GestureLowerPanel(
 ) {
     val LOWER_SCREEN_ID = "gesture-editor-lower"
     /** 個別設定専用。親の下部画面へモーダルに重ねます。 */
-    val SETTING_CHILD_SCREEN_ID = "gesture-editor-setting-child"
+    val SETTING_CHILD_SCREEN_ID = GestureSettingChildScreenIds.ROOT
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
     val TEST_CONFIRM_SCREEN_ID = "gesture-editor-test-confirm"
 
     /** 子画面の面積を親の50%にするための縦横縮尺です。宣言実装と共有します。 */
     internal val SETTING_CHILD_SCALE = sqrt(0.5)
+
+    /** 設定木の経路長に対応する物理子画面IDです。ルート画面のIDは既存値を維持します。 */
+    fun settingChildScreenIdForRoute(routeSize: Int): String =
+        GestureSettingChildScreenIds.forRouteSize(routeSize)
+
+    fun settingChildScreenIdForDepth(depth: Int): String =
+        GestureSettingChildScreenIds.forDepth(depth)
 
     fun build(
         state: GestureEditorState,
@@ -300,15 +307,24 @@ class GestureLowerPanel(
         val node = context?.let { script?.graph?.nodes?.get(it.nodeId) }
         val fieldKey = state.settingFieldKey
         val screen = state.settingScreen
+        val childScreenId = settingChildScreenIdForRoute(state.settingRoute.size)
         val noFields = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS))
         val backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK))
         if (context == null || node == null || fieldKey == null || screen == null) {
-            return finishSettingChoicesChildHtml(noFieldsHint = noFields, backLabel = backLabel)
+            return finishSettingChoicesChildHtml(
+                noFieldsHint = noFields,
+                backLabel = backLabel,
+                childScreenId = childScreenId,
+            )
         }
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
         val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
         if (field == null) {
-            return finishSettingChoicesChildHtml(noFieldsHint = noFields, backLabel = backLabel)
+            return finishSettingChoicesChildHtml(
+                noFieldsHint = noFields,
+                backLabel = backLabel,
+                childScreenId = childScreenId,
+            )
         }
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = if (CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)) {
@@ -319,7 +335,7 @@ class GestureLowerPanel(
         val pathLast = state.settingTreePath?.nodeIds?.lastOrNull()
         // タグ一覧はワールド変数子画面と同型の専用描画を使います。
         if (screen == GestureSettingScreen.ENTITY_TAG_LIST) {
-            return buildEntityTagListChild(state, player)
+            return buildEntityTagListChild(state, player, childScreenId)
         }
         // スポーン種別の子画面では移動先選択の再掲ではなく、メンバー／ゲストの2択を示します。
         val choices = if (screen == GestureSettingScreen.POSITION &&
@@ -359,13 +375,17 @@ class GestureLowerPanel(
             !detailHint.isNullOrBlank() -> Component.text(detailHint, NamedTextColor.GRAY)
             else -> null
         }
-        // 子画面は2列×4行までを上から流し、下端のページャーと戻る操作へ固定領域を残します。
-        val pageSize = CHILD_SETTING_CHOICE_PAGE_SIZE
-        val pageCount = (choices.size + pageSize - 1) / pageSize
-        val page = state.settingChoicePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-        val pageChoices = choices.drop(page * pageSize).take(pageSize)
-        val rowCount = (pageChoices.size + 1) / 2
-        val cards = pageChoices.mapIndexed { index, choice ->
+        // HTML側でも候補の意味的な上下揃えを保ち、戻る操作の領域を先に予約します。
+        // 下揃え候補はページを移動しても常に見えるため、詳細への経路を失いません。
+        val topChoices = choices.filterNot { it.bottomAligned }
+        val bottomChoices = choices.filter { it.bottomAligned }
+        val page = GestureSettingChildLayoutPolicy.plan(
+            topChoiceCount = topChoices.size,
+            bottomChoiceCount = bottomChoices.size,
+            requestedPage = state.settingChoicePage,
+        )
+        val pageChoices = topChoices.subList(page.topStart, page.topEndExclusive)
+        val topCards = pageChoices.mapIndexed { index, choice ->
             val row = index / 2
             settingChoiceCard(
                 choice = choice,
@@ -374,11 +394,27 @@ class GestureLowerPanel(
                 child = true,
                 suppressHighlight = suppressHighlight,
                 cx = if (index % 2 == 0) -0.53 else 0.53,
-                cy = CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH,
+                cy = GestureSettingChildLayoutPolicy.topY(row),
                 row = row,
-                rowCount = rowCount,
+                rowCount = page.topRowCount,
                 choicesInRowGroup = pageChoices.size,
                 visualIndex = index,
+            )
+        }
+        val bottomCards = bottomChoices.mapIndexed { index, choice ->
+            val row = index / 2
+            settingChoiceCard(
+                choice = choice,
+                fieldKey = fieldKey,
+                player = player,
+                child = true,
+                suppressHighlight = suppressHighlight,
+                cx = if (index % 2 == 0) -0.53 else 0.53,
+                cy = GestureSettingChildLayoutPolicy.bottomY(row, page.bottomRowCount),
+                row = row,
+                rowCount = page.bottomRowCount,
+                choicesInRowGroup = bottomChoices.size,
+                visualIndex = topCards.size + index,
             )
         }
         return finishSettingChoicesChildHtml(
@@ -387,9 +423,10 @@ class GestureLowerPanel(
             backLabel = backLabel,
             description = Component.text(fieldDescription(player, field), NamedTextColor.GRAY),
             detail = detail,
-            cards = cards,
-            page = page,
-            pageCount = pageCount,
+            cards = topCards + bottomCards,
+            page = page.index,
+            pageCount = page.count,
+            childScreenId = childScreenId,
         )
     }
 
@@ -407,6 +444,7 @@ class GestureLowerPanel(
         cards: List<SettingsChoiceCard> = emptyList(),
         page: Int = 0,
         pageCount: Int = 1,
+        childScreenId: String = SETTING_CHILD_SCREEN_ID,
     ): GestureGuiView {
         val panel = GestureGuiPanel()
         val frame = contentFrame(panel)
@@ -591,7 +629,13 @@ class GestureLowerPanel(
                 plugin.logger.fine("[KantanCommander][SettingChoicesHtml] $diagnostics")
             },
         )
-        return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
+        return view(
+            GestureLowerMode.SETTING_CHOICES,
+            compiled.elements,
+            compiled.visuals,
+            child = true,
+            childScreenId = childScreenId,
+        )
     }
 
     private fun absoluteStyle(frame: ContentFrame, cx: Double, cy: Double, width: Double, height: Double): String =
@@ -786,6 +830,7 @@ class GestureLowerPanel(
     fun buildEntityTagListChild(
         state: GestureEditorState,
         player: Player,
+        childScreenId: String = settingChildScreenIdForRoute(state.settingRoute.size),
     ): GestureGuiView {
         val context = state.settingContext
         val node = context?.let { plugin.scripts.load(it.scriptId)?.graph?.nodes?.get(it.nodeId) }
@@ -848,6 +893,7 @@ class GestureLowerPanel(
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                 ),
             ),
+            childScreenId = childScreenId,
         )
     }
 
@@ -859,7 +905,11 @@ class GestureLowerPanel(
             }
 
     /** タグ一覧子画面の宣言区画を解決・変換し、既存の子画面定義へ載せます。 */
-    private fun finishTagListChild(document: GestureGuiDocument, tag: String = "[DeclarativeTagList]"): GestureGuiView {
+    private fun finishTagListChild(
+        document: GestureGuiDocument,
+        tag: String = "[DeclarativeTagList]",
+        childScreenId: String = SETTING_CHILD_SCREEN_ID,
+    ): GestureGuiView {
         val compiled = KantanLayoutBridge.compile(
             document,
             onAction,
@@ -867,7 +917,13 @@ class GestureLowerPanel(
                 plugin.logger.fine("[KantanCommander]$tag $diagnostics")
             },
         )
-        return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
+        return view(
+            GestureLowerMode.SETTING_CHOICES,
+            compiled.elements,
+            compiled.visuals,
+            child = true,
+            childScreenId = childScreenId,
+        )
     }
 
     /**
@@ -5249,12 +5305,13 @@ class GestureLowerPanel(
         elements: List<GestureGuiElement>,
         visuals: List<GestureGuiVisual>,
         child: Boolean = false,
+        childScreenId: String? = null,
     ): GestureGuiView = GestureGuiView(
         GestureGuiScreenDefinition(
             when {
                 mode == GestureLowerMode.CONFIRM -> CONFIRM_SCREEN_ID
                 mode == GestureLowerMode.TEST_CONFIRM -> TEST_CONFIRM_SCREEN_ID
-                child -> SETTING_CHILD_SCREEN_ID
+                child -> childScreenId ?: SETTING_CHILD_SCREEN_ID
                 else -> LOWER_SCREEN_ID
             },
             elements,
@@ -5502,7 +5559,6 @@ class GestureLowerPanel(
         const val CHILD_FOOTER_Y = -0.43
         const val CHILD_BACK_Y = -0.43
         const val CHILD_PAGER_Y = -0.34
-        const val CHILD_SETTING_CHOICE_PAGE_SIZE = 8
         const val CHILD_BACK_WIDTH = 1.70
         // ワールド内変数の各列は「値編集カード＋削除ボタン」で構成し、列全体の幅を
         // 既存の0.92へ固定します。ボタンの位置は一覧と確認画面で共通にします。
