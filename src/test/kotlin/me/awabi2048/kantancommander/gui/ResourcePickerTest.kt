@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
  * issue #28 の候補選択子画面の回帰テストです。
  *
  * Registry由来の一覧取得は [CommandDialogSpecs.registeredIds] を正本とし、
- * ここでは種別対応・プリセット名・ページング・アイコン解決を固定します。
+ * ここでは種別対応・コマンドID表示・ページング・アイコン解決を固定します。
  * サーバーなしでも検証できる範囲に留めます。
  */
 class ResourcePickerTest {
@@ -32,12 +32,16 @@ class ResourcePickerTest {
     }
 
     @Test
-    fun `particle and sound presets have independent localized names and command ids`() {
-        listOf(GestureResourcePickerKind.PARTICLE, GestureResourcePickerKind.SOUND).forEach { kind ->
-            val ids = ResourcePresets.ids(kind)
-            val nameKeys = ids.mapNotNull { ResourcePresets.nameKey(kind, it) }
-            assertEquals(ids.size, nameKeys.size, kind.name)
-            assertEquals(nameKeys.size, nameKeys.distinct().size, kind.name)
+    fun `preset display contains only command ids`() {
+        GestureResourcePickerKind.entries.forEach { kind ->
+            ResourcePresets.ids(kind).forEach { id ->
+                val expected = if (kind == GestureResourcePickerKind.PARTICLE) {
+                    ResourcePicker.particleDisplayId(id)
+                } else {
+                    id
+                }
+                assertEquals(expected, ResourcePresetDisplay.commandId(kind, id))
+            }
         }
         assertEquals("sound", ResourcePicker.valueFieldKey("soundSetting"))
         assertEquals(
@@ -64,13 +68,6 @@ class ResourcePickerTest {
         assertTrue(ResourcePicker.pageItems(ids, -1).isEmpty())
         assertEquals("minecraft:mob1", ResourcePicker.pageItems(ids, 0).first())
         assertEquals("minecraft:mob25", ResourcePicker.pageItems(ids, 1).first())
-    }
-
-    @Test
-    fun `display names are human readable`() {
-        assertEquals("Cow", ResourcePicker.displayName(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:cow"))
-        assertEquals("Zombified Piglin", ResourcePicker.displayName(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:zombified_piglin"))
-        assertEquals("Flame", ResourcePicker.displayName(GestureResourcePickerKind.PARTICLE, "FLAME"))
     }
 
     @Test

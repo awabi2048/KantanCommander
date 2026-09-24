@@ -240,12 +240,9 @@ class GestureLowerPanel(
                 cy = topY - row * pitchY,
                 w = cellW,
                 h = cellH,
-                // 1行目は内部IDと独立した表示名、2行目は実際のコマンド用IDです。
-                hover = multiLineHoverComponents(
-                    listOf(
-                        ResourcePresetDisplay.nameComponent(player, kind, id),
-                        Component.text(ResourcePresetDisplay.commandId(kind, id)),
-                    ),
+                // 翻訳名は表示せず、実際に指定するコマンド用IDだけを1行で示します。
+                hover = singleLineHover(
+                    ResourcePresetDisplay.commandId(kind, id),
                     x = HOVER_SLOT_X,
                     y = hoverY,
                 ),
