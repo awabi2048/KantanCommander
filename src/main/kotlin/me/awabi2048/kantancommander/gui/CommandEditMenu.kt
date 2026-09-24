@@ -3961,7 +3961,16 @@ sealed interface DisplayValue {
     data class Location(
         val position: DisplayValue?,
         val facing: DisplayValue?,
-    ) : DisplayValue
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> = buildList {
+            position?.let {
+                add(TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION), it.render(player)))
+            }
+            facing?.let {
+                add(TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING), it.render(player)))
+            }
+        }
+    }
 
     /** 効果音の操作・対象・位置を、一つの設定欄で現在値として表示します。 */
     data class SoundTargetPosition(
@@ -4035,31 +4044,24 @@ sealed interface DisplayValue {
         )
     }
 
-    /** 図形設定の形状と主要寸法を、一つの設定欄で現在値として表示します。 */
+    /** 図形設定の現在値欄には、表示幅へ収まる形状名だけを表示します。 */
     data class GeometrySettings(
         val shape: ParticleShape,
-        val summary: String,
     ) : DisplayValue
+
+    // 複合値を単行へ変換する経路でも、内部Mapの「項目=値 / 項目=値」を露出させません。
+    fun readableRows(player: Player): String = rows(player).orEmpty().joinToString("、") {
+        "${it.label}：${it.value}"
+    }
 
     fun render(player: Player): String = when (this) {
         is Literal -> value
         is Localized -> KcI18n.text(player, key)
         is EntityTypeName -> rawId
-        is Timing -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
-        is Duration -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
-        is ParticleParameters -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
-        is SoundTargetPosition -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
-        is SoundSetting -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
-        is ParticleDisplay -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
-        is GeometrySettings -> "${KcI18n.text(player, geometryShapeKey(shape))} $summary".trim()
-        is Location -> buildList {
-            position?.let {
-                add("${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION)}=${it.render(player)}")
-            }
-            facing?.let {
-                add("${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING)}=${it.render(player)}")
-            }
-        }.joinToString(" / ").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+        is Timing, is Duration, is ParticleParameters, is SoundTargetPosition,
+        is SoundSetting, is ParticleDisplay -> readableRows(player)
+        is GeometrySettings -> KcI18n.text(player, geometryShapeKey(shape))
+        is Location -> readableRows(player).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
     }
 
     /**
@@ -4070,7 +4072,9 @@ sealed interface DisplayValue {
      */
     fun rows(player: Player): List<TimingRow>? = when (this) {
         is Timing -> rows(player)
+        is Duration -> rows(player)
         is ParticleParameters -> rows(player)
+        is Location -> rows(player).takeIf { it.isNotEmpty() }
         is SoundTargetPosition -> rows(player)
         is SoundSetting -> rows(player)
         is ParticleDisplay -> rows(player)
@@ -4980,21 +4984,11 @@ private fun displayParticle(node: CommandNode): DisplayValue {
     return displayLiteral(if (data == null) particle else "$particle + $data")
 }
 
-/** 図形設定の形状と主要寸法を、一つの設定欄で現在値として表示します。 */
+/** 図形設定の寸法は詳細設定へ集約し、狭い現在値欄には形状名だけを表示します。 */
 private fun displayGeometrySettings(node: CommandNode): DisplayValue {
     val shape = ParticleGeometry.shape(node)
-    if (shape == ParticleShape.POINT_SCATTER) return displayUnset()
-    fun param(key: String): String = node.string(key, node.type.defaults[key].orEmpty())
-    val summary = when (shape) {
-        ParticleShape.LINE -> ""
-        ParticleShape.CIRCLE -> "r=${param(ParticleGeometry.PARAM_RADIUS)}"
-        ParticleShape.ARC -> "r=${param(ParticleGeometry.PARAM_RADIUS)} ${param(ParticleGeometry.PARAM_START_ANGLE)}-${param(ParticleGeometry.PARAM_END_ANGLE)}"
-        ParticleShape.BOX -> ""
-        ParticleShape.SPHERE -> "r=${param(ParticleGeometry.PARAM_RADIUS)}"
-        ParticleShape.HELIX -> "r=${param(ParticleGeometry.PARAM_RADIUS)} h=${param(ParticleGeometry.PARAM_HEIGHT)} x${param(ParticleGeometry.PARAM_TURNS)}"
-        ParticleShape.POINT_SCATTER -> ""
-    }
-    return DisplayValue.GeometrySettings(shape, summary)
+    // 寸法は専用の詳細設定で確認できるため、幅の狭い現在値欄には形状名だけを表示します。
+    return if (shape == ParticleShape.POINT_SCATTER) displayUnset() else DisplayValue.GeometrySettings(shape)
 }
 
 /** 花火の中身を、素材IDと設定済み状態で表示します。 */

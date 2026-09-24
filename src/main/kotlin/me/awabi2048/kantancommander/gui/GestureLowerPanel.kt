@@ -1674,15 +1674,7 @@ class GestureLowerPanel(
             ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
         val displayLabel = KcI18n.text(player, field.label)
         val displayValue = field.value(node)
-        val compositeRows = when (displayValue) {
-            is DisplayValue.Timing -> displayValue.rows(player)
-            is DisplayValue.Duration -> displayValue.rows(player)
-            is DisplayValue.ParticleParameters -> displayValue.rows(player)
-            is DisplayValue.SoundTargetPosition -> displayValue.rows(player)
-            is DisplayValue.SoundSetting -> displayValue.rows(player)
-            is DisplayValue.ParticleDisplay -> displayValue.rows(player)
-            else -> null
-        }
+        val compositeRows = displayValue.rows(player)
         val compositeLayout = compositeRows?.let {
             GestureSettingValueLayout.calculate(
                 rowCount = it.size,
