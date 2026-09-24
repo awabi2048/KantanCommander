@@ -3968,18 +3968,19 @@ class GestureSequenceEditor(
         val (fieldKey, id) = InlineResourcePicker.parsePick(elementId) ?: return
         if (ResourcePicker.kindForFieldKey(fieldKey) == null) return
         if (id.isBlank()) return
+        val valueFieldKey = ResourcePicker.valueFieldKey(fieldKey)
         val settingContext = state.settingContext ?: return
         val script = plugin.scripts.load(settingContext.scriptId) ?: return
         observedRevision = script.revision
         val node = script.graph.nodes[settingContext.nodeId] ?: return
-        if (CommandSettingsModel.supportsTemporaryValueReference(node, fieldKey) &&
-            CommandSettingsModel.temporaryValueSource(node, fieldKey) != CommandValueSource.LITERAL
+        if (CommandSettingsModel.supportsTemporaryValueReference(node, valueFieldKey) &&
+            CommandSettingsModel.temporaryValueSource(node, valueFieldKey) != CommandValueSource.LITERAL
         ) return
-        val normalized = CommandDialogSpecs.normalize(fieldKey, id)
-        val spec = CommandDialogSpecs.field(node, fieldKey)
+        val normalized = CommandDialogSpecs.normalize(valueFieldKey, id)
+        val spec = CommandDialogSpecs.field(node, valueFieldKey)
         if (spec != null && spec.validateInput(normalized) != null) return
         if (!updateSettingNode(player, settingContext, configuredFields = setOf(fieldKey)) {
-                CommandSettingsModel.setParameter(it, fieldKey, normalized)
+                CommandSettingsModel.setParameter(it, valueFieldKey, normalized)
             }) return
     }
 
@@ -5375,8 +5376,8 @@ class GestureSequenceEditor(
      * 効果音設定の束ね値（ID・音量・ピッチ／ID・カテゴリ）を一括検証して保存します。
      *
      * Inventory GUIのshowSoundSettingFormと同じ入力欄・検証を使い、操作ごとの
-     * 入力欄集合もCommandDialogSpecsへ一元化します。サウンド欄だけは候補表示に
-     * 対応し、クエリにはサウンド欄の現在値だけを使います。
+     * 入力欄集合もCommandDialogSpecsへ一元化します。定型プリセットはGesture GUIへ集約し、
+     * Dialogには入力文字列で絞り込んだ候補だけを提示します。
      */
     private fun showSoundSettingDialog(
         player: Player,
@@ -5391,7 +5392,7 @@ class GestureSequenceEditor(
         val pending = pendingSoundDialogValues.remove(player.uniqueId).orEmpty()
         // 候補の確定はサウンド欄だけを置き換え、他の欄は入力途中の
         // 値を維持して同じダイアログへ戻します。即時保存はしません。
-        fun presetButton(candidate: String) = MenuDialogButton(
+        fun candidateButton(candidate: String) = MenuDialogButton(
             Component.text(candidate),
             MenuDialogHandler { target, response ->
                 if (target.uniqueId != player.uniqueId ||
@@ -5406,12 +5407,7 @@ class GestureSequenceEditor(
                 MenuActionResult.Success(MenuUpdate.None)
             },
         )
-        val candidateButtons = soundCandidates.take(12).map(::presetButton)
-        // 検索候補がないときは、使用頻度の高いプリセット24件を並べます。
-        // プリセット外のIDはテキスト入力と候補検索で指定します。
-        val presetButtons = if (soundCandidates.isEmpty()) {
-            ResourcePresets.ids(GestureResourcePickerKind.SOUND).map(::presetButton)
-        } else emptyList()
+        val candidateButtons = soundCandidates.take(12).map(::candidateButton)
         val candidateFooterActions = listOf(MenuDialogButton(
             KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
             MenuDialogHandler { target, response ->
@@ -5444,7 +5440,7 @@ class GestureSequenceEditor(
                     it.copy(initial = pending[it.id] ?: it.initial).toMenuInput(player)
                 }
             },
-            additionalActions = presetButtons + candidateButtons,
+            additionalActions = candidateButtons,
             footerActions = candidateFooterActions,
             multiActionWithoutExit = true,
             columns = 3,

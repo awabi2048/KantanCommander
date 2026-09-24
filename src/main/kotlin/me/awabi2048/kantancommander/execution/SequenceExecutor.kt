@@ -3554,7 +3554,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val detail = when (context?.position?.kind) {
             PositionKind.TARGET -> "探索基準位置にTARGETは使えません"
             PositionKind.TEMPORARY ->
-                "探索基準の一時変数位置を解決できません: ${context?.position?.tempName.orEmpty()}"
+                "探索基準の一時変数位置を解決できません: ${context.position.tempName.orEmpty()}"
             else -> "探索基準位置を解決できません: ${context?.position?.kind?.name ?: "未設定"}"
         }
         return if (failure.unresolved) {

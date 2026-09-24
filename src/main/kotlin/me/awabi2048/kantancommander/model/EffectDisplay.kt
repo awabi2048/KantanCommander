@@ -12,6 +12,14 @@ import org.bukkit.NamespacedKey
  * ID解決には使いません。
  */
 object EffectDisplay {
+    /** 種別IDに対応する表示名だけを返し、IDとは別の行へ表示できるようにします。 */
+    fun componentFor(rawId: String): Component {
+        val raw = rawId.trim()
+        if (raw.isEmpty()) return Component.text(raw)
+        val key = NamespacedKey.fromString(raw) ?: return Component.text(raw)
+        return Component.translatable("effect.${key.namespace}.${key.key}")
+    }
+
     /**
      * 種別IDに対応する「表示名（ID）」形式の表示用Componentを返します。
      *
@@ -21,8 +29,7 @@ object EffectDisplay {
     fun labeledFor(rawId: String): Component {
         val raw = rawId.trim()
         if (raw.isEmpty()) return Component.text(raw)
-        val key = NamespacedKey.fromString(raw) ?: return Component.text(raw)
-        return Component.translatable("effect.${key.namespace}.${key.key}")
+        return componentFor(raw)
             .append(Component.text("（$raw）"))
     }
 }

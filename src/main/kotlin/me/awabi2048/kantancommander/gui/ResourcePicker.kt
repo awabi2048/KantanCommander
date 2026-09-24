@@ -1,7 +1,14 @@
 package me.awabi2048.kantancommander.gui
 
+import com.awabi2048.ccsystem.api.localization.LocalizationKey
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.model.EffectDisplay
+import me.awabi2048.kantancommander.model.EntityTypeDisplay
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.util.KcI18n
+import net.kyori.adventure.text.Component
 import org.bukkit.Material
+import org.bukkit.entity.Player
 
 /**
  * issue #28 のID候補選択の種別です。
@@ -37,9 +44,16 @@ object ResourcePicker {
         // v17改名キーを使います。一時対象指定の "entity" は一覧選択を使いません。
         "summonEntity", "entityType" -> GestureResourcePickerKind.ENTITY_TYPE
         ParticleSettings.PARAM_PARTICLE -> GestureResourcePickerKind.PARTICLE
-        "sound" -> GestureResourcePickerKind.SOUND
+        // PLAY_SOUNDは保存パラメータ "sound" を、GUI上の一括設定欄から操作します。
+        "sound", "soundSetting" -> GestureResourcePickerKind.SOUND
         "effect" -> GestureResourcePickerKind.EFFECT
         else -> null
+    }
+
+    /** GUIの集約欄と、候補の実保存先を対応付けます。 */
+    fun valueFieldKey(fieldKey: String): String = when (fieldKey) {
+        "soundSetting" -> "sound"
+        else -> fieldKey
     }
 
     /** 候補IDの表示名です。ホバーにNamespaced IDと併せて表示します。 */
@@ -227,6 +241,71 @@ object ResourcePresets {
         "minecraft:weather.thunder",
     )
 
+    /** 保存用Enum名から表示文言を推測せず、種類ごとに翻訳キーを対応付けます。 */
+    private val PARTICLE_NAME_KEYS: Map<String, LocalizationKey<String>> = mapOf(
+        "FLAME" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_FLAME,
+        "SMOKE" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_SMOKE,
+        "LARGE_SMOKE" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_LARGE_SMOKE,
+        "HEART" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_HEART,
+        "NOTE" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_NOTE,
+        "PORTAL" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_PORTAL,
+        "ENCHANT" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_ENCHANT,
+        "CRIT" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_CRIT,
+        "CLOUD" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_CLOUD,
+        "DUST" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_DUST,
+        "FIREWORK" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_FIREWORK,
+        "TOTEM_OF_UNDYING" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_TOTEM_OF_UNDYING,
+        "SOUL" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_SOUL,
+        "DRAGON_BREATH" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_DRAGON_BREATH,
+        "HAPPY_VILLAGER" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_HAPPY_VILLAGER,
+        "WITCH" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_WITCH,
+        "POOF" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_POOF,
+        "EXPLOSION" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_EXPLOSION,
+        "BUBBLE" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_BUBBLE,
+        "SPLASH" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_SPLASH,
+        "LAVA" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_LAVA,
+        "END_ROD" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_END_ROD,
+        "SWEEP_ATTACK" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_SWEEP_ATTACK,
+        "SONIC_BOOM" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_PARTICLE_SONIC_BOOM,
+    )
+
+    /** 効果音の表示名も、内部のサウンドイベントIDとは独立して管理します。 */
+    private val SOUND_NAME_KEYS: Map<String, LocalizationKey<String>> = mapOf(
+        "minecraft:block.note_block.harp" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_NOTE_BLOCK_HARP,
+        "minecraft:block.note_block.pling" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_NOTE_BLOCK_PLING,
+        "minecraft:block.note_block.bell" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_NOTE_BLOCK_BELL,
+        "minecraft:entity.player.levelup" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_PLAYER_LEVELUP,
+        "minecraft:entity.experience_orb.pickup" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_EXPERIENCE_ORB_PICKUP,
+        "minecraft:entity.firework_rocket.launch" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_FIREWORK_ROCKET_LAUNCH,
+        "minecraft:entity.firework_rocket.blast" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_FIREWORK_ROCKET_BLAST,
+        "minecraft:entity.generic.explode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_GENERIC_EXPLODE,
+        "minecraft:entity.lightning_bolt.thunder" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_LIGHTNING_BOLT_THUNDER,
+        "minecraft:block.anvil.land" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_ANVIL_LAND,
+        "minecraft:block.chest.open" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_CHEST_OPEN,
+        "minecraft:block.portal.travel" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_PORTAL_TRAVEL,
+        "minecraft:entity.ender_dragon.growl" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_ENDER_DRAGON_GROWL,
+        "minecraft:entity.wither.spawn" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_WITHER_SPAWN,
+        "minecraft:block.beacon.activate" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_BEACON_ACTIVATE,
+        "minecraft:weather.rain" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_WEATHER_RAIN,
+        "minecraft:entity.arrow.shoot" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_ARROW_SHOOT,
+        "minecraft:block.chest.close" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_CHEST_CLOSE,
+        "minecraft:entity.tnt.primed" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_TNT_PRIMED,
+        "minecraft:block.portal.trigger" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_PORTAL_TRIGGER,
+        "minecraft:entity.ender_pearl.throw" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_ENDER_PEARL_THROW,
+        "minecraft:block.note_block.bass" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_BLOCK_NOTE_BLOCK_BASS,
+        "minecraft:entity.firework_rocket.twinkle" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_ENTITY_FIREWORK_ROCKET_TWINKLE,
+        "minecraft:weather.thunder" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_RESOURCE_PRESET_SOUND_WEATHER_THUNDER,
+    )
+
+    /** この資源種別が独自の翻訳名を持つ場合、その型付きキーを返します。 */
+    fun nameKey(kind: GestureResourcePickerKind, id: String): LocalizationKey<String>? = when (kind) {
+        GestureResourcePickerKind.PARTICLE -> PARTICLE_NAME_KEYS[id]
+        GestureResourcePickerKind.SOUND -> SOUND_NAME_KEYS[id]
+        GestureResourcePickerKind.ENTITY_TYPE,
+        GestureResourcePickerKind.EFFECT,
+        -> null
+    }
+
     /** 種別ごとのプリセットID一覧を返します。順序は表示順です。 */
     fun ids(kind: GestureResourcePickerKind): List<String> = when (kind) {
         GestureResourcePickerKind.ENTITY_TYPE -> ENTITY_TYPE_IDS
@@ -254,6 +333,26 @@ object ResourcePresets {
             }
         }
     }
+}
+
+/** 人向け名称とコマンド用IDを別々の表示行へ解決します。 */
+object ResourcePresetDisplay {
+    fun nameComponent(player: Player, kind: GestureResourcePickerKind, id: String): Component = when (kind) {
+        GestureResourcePickerKind.ENTITY_TYPE -> EntityTypeDisplay.componentFor(id)
+        GestureResourcePickerKind.EFFECT -> EffectDisplay.componentFor(id)
+        GestureResourcePickerKind.PARTICLE,
+        GestureResourcePickerKind.SOUND,
+        -> {
+            val key = requireNotNull(ResourcePresets.nameKey(kind, id)) {
+                "プリセット表示名が未定義です: kind=${kind.name} id=$id"
+            }
+            KcI18n.component(player, key)
+        }
+    }
+
+    /** パーティクルはEnum名を保存しつつ、表示2行目をバニラコマンドIDにします。 */
+    fun commandId(kind: GestureResourcePickerKind, id: String): String =
+        if (kind == GestureResourcePickerKind.PARTICLE) ResourcePicker.particleDisplayId(id) else id
 }
 
 /**

@@ -213,7 +213,8 @@ class GestureLowerPanel(
         pitchY: Double = INLINE_RESOURCE_GRID_PITCH_Y,
     ) {
         val ids = ResourcePresets.ids(kind)
-        val currentRaw = CommandDialogSpecs.normalize(fieldKey, node.string(fieldKey))
+        val valueFieldKey = ResourcePicker.valueFieldKey(fieldKey)
+        val currentRaw = CommandDialogSpecs.normalize(valueFieldKey, node.string(valueFieldKey))
         // プリセット外の現在値は入力カード側を選択済みにします。
         val isCurrentPreset = ResourcePresets.isPreset(kind, currentRaw)
         // グリッド全体を1マス高さの半分だけ上げ、最底辺を詰めます。
@@ -222,8 +223,8 @@ class GestureLowerPanel(
         // ホバー文言は一覧の上側へ、1マス高さの1/3＋1/2だけ上げた位置へ表示します。
         val hoverY = topY + cellH * 2 / 3 + INLINE_RESOURCE_HOVER_ABOVE_GAP
         val cards = ids.mapIndexed { index, id ->
-            val selected = CommandDialogSpecs.normalize(fieldKey, id) == currentRaw ||
-                id == node.string(fieldKey)
+            val selected = CommandDialogSpecs.normalize(valueFieldKey, id) == currentRaw ||
+                id == node.string(valueFieldKey)
             val col = index % columns
             val row = index / columns
             me.awabi2048.kantancommander.gui.declarative.ResourcePickerCard(
@@ -239,38 +240,15 @@ class GestureLowerPanel(
                 cy = topY - row * pitchY,
                 w = cellW,
                 h = cellH,
-                // IDと表示名の示し方は種別ごとに固定します。パーティクルと
-                // 効果音はminecraft形式のID1行、召喚と効果は「表示名（ID）」1行です。
-                hover = when (kind) {
-                    GestureResourcePickerKind.ENTITY_TYPE ->
-                        multiLineHoverComponents(
-                            listOf(
-                                me.awabi2048.kantancommander.model.EntityTypeDisplay.labeledFor(id),
-                            ),
-                            x = HOVER_SLOT_X,
-                            y = hoverY,
-                        )
-                    GestureResourcePickerKind.EFFECT ->
-                        multiLineHoverComponents(
-                            listOf(
-                                me.awabi2048.kantancommander.model.EffectDisplay.labeledFor(id),
-                            ),
-                            x = HOVER_SLOT_X,
-                            y = hoverY,
-                        )
-                    GestureResourcePickerKind.PARTICLE ->
-                        multiLineHover(
-                            listOf(ResourcePicker.particleDisplayId(id)),
-                            x = HOVER_SLOT_X,
-                            y = hoverY,
-                        )
-                    GestureResourcePickerKind.SOUND ->
-                        multiLineHover(
-                            listOf(id),
-                            x = HOVER_SLOT_X,
-                            y = hoverY,
-                        )
-                },
+                // 1行目は内部IDと独立した表示名、2行目は実際のコマンド用IDです。
+                hover = multiLineHoverComponents(
+                    listOf(
+                        ResourcePresetDisplay.nameComponent(player, kind, id),
+                        Component.text(ResourcePresetDisplay.commandId(kind, id)),
+                    ),
+                    x = HOVER_SLOT_X,
+                    y = hoverY,
+                ),
                 visualIndex = index,
             )
         }
@@ -4428,7 +4406,7 @@ class GestureLowerPanel(
             children += SettingChoice(
                 "$idPrefix:region-anchor:${kind.name}",
                 KcI18n.text(player, CommandSettingsModel.regionAnchorNameKey(kind)),
-                selected = anchor == kind && active != null,
+                selected = anchor == kind,
             )
         }
         children += SettingChoice(
@@ -4445,7 +4423,7 @@ class GestureLowerPanel(
                 labeled(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION_COORDINATES,
-                    active?.anchor?.position?.let { position ->
+                    active.anchor.position?.let { position ->
                         listOf(position.x, position.y, position.z).joinToString(" / ") { value ->
                             value?.let {
                                 if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
@@ -4461,13 +4439,13 @@ class GestureLowerPanel(
                 labeled(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_TEMPORARY,
-                    active?.anchor?.tempName,
+                    active.anchor.tempName,
                 ),
             )
         }
         if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.TARGET_ENTITY) {
             children += embeddedTargetPresetChoices(
-                active?.anchor?.target,
+                active.anchor.target,
                 player,
                 "$idPrefix:region-target-preset",
                 null,
