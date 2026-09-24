@@ -65,6 +65,46 @@ class GestureSettingTreeTest {
     }
 
     @Test
+    fun `interaction mode separates selection from detail navigation`() {
+        assertSame(
+            GestureSettingSelectionAction.ENTER_CHILD,
+            settingSelectionAction(
+                wasSelected = false,
+                interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
+            ),
+        )
+        assertSame(
+            GestureSettingSelectionAction.STAY_ON_FRAME,
+            settingSelectionAction(
+                wasSelected = true,
+                interactionMode = GestureSettingInteractionMode.SELECT,
+            ),
+        )
+        assertSame(
+            GestureSettingSelectionAction.STAY_ON_FRAME,
+            settingSelectionAction(
+                wasSelected = false,
+                interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
+            ),
+        )
+        assertSame(
+            GestureSettingSelectionAction.ENTER_CHILD,
+            settingSelectionAction(
+                wasSelected = true,
+                interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
+            ),
+        )
+        assertEquals(
+            GestureSettingInteractionMode.SELECT_AND_DETAILS,
+            GestureSettingTreeNode(
+                "branch",
+                "選択して詳細",
+                children = listOf(GestureSettingTreeNode("leaf", "候補")),
+            ).effectiveInteractionMode,
+        )
+    }
+
+    @Test
     fun `path selection applies exclusively within the current choices`() {
         val preset = GestureSettingTreeNode("target-preset:NEARBY_PLAYERS", "周囲", selected = true)
         val detail = GestureSettingTreeNode("target-detail", "詳細")
@@ -88,14 +128,13 @@ class GestureSettingTreeTest {
             screen,
         )
 
-        // 表示対象タブは常時、対象選択が唯一の掘り下げのため直行します。
+        // 表示対象タブは経由画面を使わず、対象選択そのものを親画面へ配置します。
         val particle = CommandType.PARTICLE.newNode()
-        val particleDirect = requireNotNull(
-            shortCircuitTargetFrame(particle, frame("particleDisplay", GestureSettingScreen.PARTICLE_DISPLAY)),
+        assertSame(GestureSettingScreen.TARGET, gestureSettingScreenFor(CommandSettingEditor.PARTICLE_DISPLAY))
+        assertEquals(
+            CommandSettingRole.NODE_TARGET,
+            CommandSettingsModel.descriptor(particle, "particleDisplay").role,
         )
-        assertSame(GestureSettingScreen.TARGET, particleDirect.screen)
-        assertEquals(CommandSettingRole.NODE_TARGET, particleDirect.context.role)
-        assertEquals("particleDisplay", particleDirect.fieldKey)
 
         // 停止操作時は対象だけのため直行し、再生操作時は通常遷移します。
         val stopped = CommandType.PLAY_SOUND.newNode()
@@ -207,6 +246,40 @@ class GestureSettingTreeTest {
             net.kyori.adventure.text.format.NamedTextColor.GRAY,
             GestureSettingVisualPolicy.settingChoiceTextColor(
                 GestureSettingTreeNode("disabled", "無効", enabled = false),
+            ),
+        )
+        assertEquals(
+            org.bukkit.Material.LIGHT_BLUE_CONCRETE,
+            GestureSettingVisualPolicy.choiceOutlineMaterial(
+                GestureSettingTreeNode(
+                    "filter:configured",
+                    "設定済みの複数選択",
+                    selectionMode = GestureSettingSelectionMode.MULTIPLE,
+                    valueState = GestureSettingValueState.CONFIGURED,
+                ),
+            ),
+        )
+        assertEquals(
+            null,
+            GestureSettingVisualPolicy.choiceOutlineMaterial(
+                GestureSettingTreeNode(
+                    "choice:configured",
+                    "設定済みの択一",
+                    selectionMode = GestureSettingSelectionMode.EXCLUSIVE,
+                    valueState = GestureSettingValueState.CONFIGURED,
+                ),
+            ),
+        )
+        assertEquals(
+            org.bukkit.Material.WHITE_CONCRETE,
+            GestureSettingVisualPolicy.choiceOutlineMaterial(
+                GestureSettingTreeNode(
+                    "filter:selected",
+                    "現在選択中",
+                    selected = true,
+                    selectionMode = GestureSettingSelectionMode.MULTIPLE,
+                    valueState = GestureSettingValueState.CONFIGURED,
+                ),
             ),
         )
     }

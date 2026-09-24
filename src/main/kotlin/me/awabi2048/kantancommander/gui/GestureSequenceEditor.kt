@@ -326,7 +326,6 @@ enum class GestureSettingScreen {
     SOUND_SCOPE,
     SOUND_OPERATION,
     SOUND_TARGET_POSITION,
-    PARTICLE_DISPLAY,
     PARTICLE_GEOMETRY,
     BLOCK_OPERATION,
     /** issue #11: 建造物名・回転・反転の選択画面です。 */
@@ -2991,7 +2990,12 @@ class GestureSequenceEditor(
     }
 
     /** 直下ノードの選択を経路へ記録し、同じ項目の再クリックを判定可能にします。 */
-    private fun rememberSettingNode(nodeId: String) {
+    private fun rememberSettingNode(
+        nodeId: String,
+        interactionMode: GestureSettingInteractionMode? = null,
+    ) {
+        // 詳細だけを開く項目は選択状態へ投影しません。
+        if (interactionMode == GestureSettingInteractionMode.DETAILS_ONLY) return
         val path = state.settingTreePath ?: return
         state.settingTreePath = path.selectAtDepth(state.settingRoute.size - 1, nodeId)
     }
@@ -6670,8 +6674,8 @@ class GestureSequenceEditor(
                         return
                     }
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
+                    val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    rememberSettingNode(encoded, interactionMode)
                     if (isDestinationEntityPreset) {
                         val targetPreset = if (preset == SettingPresets.PositionPreset.NEARBY_PLAYERS) {
                             SettingPresets.TargetPreset.NEARBY_PLAYERS
@@ -6729,7 +6733,7 @@ class GestureSequenceEditor(
                         openPositionCoordinateDialog(player, settingContext, fieldKey)
                         return
                     }
-                    if (settingSelectionAction(wasSelected, hasChildren) ==
+                    if (settingSelectionAction(wasSelected, interactionMode) ==
                         GestureSettingSelectionAction.ENTER_CHILD
                     ) {
                         pushSettingFrame(
@@ -6986,8 +6990,8 @@ class GestureSequenceEditor(
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
                     val matched = SettingPresets.matchFacingPreset(current) == preset
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
+                    val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    rememberSettingNode(encoded, interactionMode)
                     if ((matched || wasSelected) && preset == SettingPresets.FacingPreset.COORDINATES) {
                         showCoordinateSettingDialog(
                             player,
@@ -7039,7 +7043,7 @@ class GestureSequenceEditor(
                         }
                         return
                     }
-                    if (settingSelectionAction(wasSelected, hasChildren) ==
+                    if (settingSelectionAction(wasSelected, interactionMode) ==
                         GestureSettingSelectionAction.ENTER_CHILD
                     ) {
                         pushSettingFrame(
@@ -7264,9 +7268,9 @@ class GestureSequenceEditor(
                 when (encoded) {
                     "condition-target" -> {
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                        rememberSettingNode(encoded)
-                        when (settingSelectionAction(wasSelected, hasChildren)) {
+                        val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                        rememberSettingNode(encoded, interactionMode)
+                        when (settingSelectionAction(wasSelected, interactionMode)) {
                             GestureSettingSelectionAction.ENTER_CHILD -> {
                                 pushSettingFrame(
                                     player,
@@ -7283,9 +7287,9 @@ class GestureSequenceEditor(
                     }
                     "condition-position" -> {
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                        rememberSettingNode(encoded)
-                        when (settingSelectionAction(wasSelected, hasChildren)) {
+                        val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                        rememberSettingNode(encoded, interactionMode)
+                        when (settingSelectionAction(wasSelected, interactionMode)) {
                             GestureSettingSelectionAction.ENTER_CHILD -> {
                                 pushSettingFrame(
                                     player,
@@ -7470,9 +7474,9 @@ class GestureSequenceEditor(
                 // 直前のクリック記憶は遷移専用であり、選択表示とは分離します。
                 val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
                 if (value == "attribute") {
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
-                    if (settingSelectionAction(consecutive, hasChildren) !=
+                    val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    rememberSettingNode(encoded, interactionMode)
+                    if (settingSelectionAction(consecutive, interactionMode) !=
                         GestureSettingSelectionAction.ENTER_CHILD
                     ) {
                         showSettingScreen()
@@ -7490,15 +7494,15 @@ class GestureSequenceEditor(
                     return
                 }
                 if (value == "tag") {
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
+                    val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    rememberSettingNode(encoded, interactionMode)
                     if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
                         }) {
                         showSettingScreen()
                         return
                     }
-                    if (settingSelectionAction(consecutive, hasChildren) !=
+                    if (settingSelectionAction(consecutive, interactionMode) !=
                         GestureSettingSelectionAction.ENTER_CHILD
                     ) {
                         showSettingScreen()
@@ -7520,8 +7524,8 @@ class GestureSequenceEditor(
                 val propertyId = value.removePrefix("property:")
                 val definition = EntityDataSchema.definition(propertyId) ?: return
                 val previous = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
-                val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                rememberSettingNode(encoded)
+                val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                rememberSettingNode(encoded, interactionMode)
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
                         // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
@@ -7539,7 +7543,7 @@ class GestureSequenceEditor(
                                 }) showSettingScreen()
                         }
                         EntityPropertyValueKind.ENUM -> {
-                            if (settingSelectionAction(consecutive, hasChildren) !=
+                            if (settingSelectionAction(consecutive, interactionMode) !=
                                 GestureSettingSelectionAction.ENTER_CHILD
                             ) {
                                 showSettingScreen()
@@ -7749,9 +7753,9 @@ class GestureSequenceEditor(
             GestureSettingScreen.SOUND_TARGET_POSITION -> when (encoded) {
                 "sound-target" -> {
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
-                    when (settingSelectionAction(wasSelected, hasChildren)) {
+                    val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    rememberSettingNode(encoded, interactionMode)
+                    when (settingSelectionAction(wasSelected, interactionMode)) {
                         GestureSettingSelectionAction.ENTER_CHILD -> {
                             pushSettingFrame(
                                 player,
@@ -7768,9 +7772,9 @@ class GestureSequenceEditor(
                 }
                 "sound-position" -> {
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
-                    when (settingSelectionAction(wasSelected, hasChildren)) {
+                    val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    rememberSettingNode(encoded, interactionMode)
+                    when (settingSelectionAction(wasSelected, interactionMode)) {
                         GestureSettingSelectionAction.ENTER_CHILD -> {
                             pushSettingFrame(
                                 player,
@@ -7785,11 +7789,6 @@ class GestureSequenceEditor(
                         GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
                     }
                 }
-            }
-            GestureSettingScreen.PARTICLE_DISPLAY -> {
-                // 表示対象タブは対象画面へ直行するため、この画面には到達しません。
-                // 経路開始時の shortCircuitTargetFrame が対象画面へ置き換えます。
-                showSettingScreen()
             }
             GestureSettingScreen.PARTICLE_GEOMETRY -> when {
                 group == "shape" -> {

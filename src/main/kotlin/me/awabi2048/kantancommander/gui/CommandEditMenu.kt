@@ -424,7 +424,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }
                         if (field == "particleDisplay" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY)) {
                             return@MenuActionHandler MenuActionResult.Success(
-                                MenuUpdate.Navigate(choiceRoute(context.route, PARTICLE_DISPLAY_ID))
+                                // 対象だけの中間画面を挟まず、対象選択へ直接進みます。
+                                MenuUpdate.Navigate(targetRoute(context.route, "node_target"))
                             )
                         }
                         if (field == "particle" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY)) {
@@ -1256,19 +1257,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
-                    },
-                ),
-            )
-        )
-        runtime.register(
-            InventoryMenuDefinition(
-                SequenceEditorMenu.OWNER,
-                PARTICLE_DISPLAY_ID,
-                renderer = { renderParticleDisplay(it.player, it.route) },
-                actions = mapOf(
-                    "back" to back(),
-                    "target" to MenuActionHandler { context ->
-                        MenuActionResult.Success(MenuUpdate.Navigate(targetRoute(context.route, "node_target")))
                     },
                 ),
             )
@@ -3533,31 +3521,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * 表示対象（particleDisplay）の設定画面です。
-     *
-     * #30で表示方式の選択は廃止し、対象指定だけを扱います。コマンド選択そのものが
-     * 通常表示／図形表示の選択を兼ねるため、ここで方式を切り替えません。
-     */
-    private fun renderParticleDisplay(player: Player, route: MenuRoute): InventoryMenuView {
-        val layout = ChoiceMenuLayoutPolicy.layout(1)
-        val elements = listOf(
-            choiceElement(
-                player,
-                layout.itemSlots[0],
-                Material.PLAYER_HEAD,
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
-                "target",
-            ),
-        ).toMutableList()
-        elements += backElement(player, layout.backSlot)
-        return InventoryMenuView(
-            layout.size,
-            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY)),
-            elements,
-        )
-    }
-
-    /**
      * 図形固有の詳細設定画面です。
      *
      * #30の二段階目の画面であり、選択済み形状の変更とその形状の数値を扱います。
@@ -3846,7 +3809,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val GENERIC_POSITION_ID = "generic_position"
         /** issue #29: スポーン種別2択の子画面です。選択済みの再クリックで開きます。 */
         private const val SPAWN_KIND_ID = "spawn_kind"
-        private const val PARTICLE_DISPLAY_ID = "particle_display"
         private const val GEOMETRY_SETTINGS_ID = "geometry_settings"
         private const val PARTICLE_SHAPE_ID = "particle_shape"
         /** issue #8: 呼び出し設定（引数・戻り値の受取先）の子画面です。 */

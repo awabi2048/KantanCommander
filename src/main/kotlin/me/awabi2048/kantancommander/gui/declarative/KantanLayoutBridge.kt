@@ -2,7 +2,9 @@ package me.awabi2048.kantancommander.gui.declarative
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
+import com.awabi2048.ccsystem.api.gesturegui.html.GestureGuiHtmlEnvironment
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutFacade
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiColumn
@@ -45,18 +47,60 @@ object KantanLayoutBridge {
         onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         extraActionIds: Set<String> = emptySet(),
         customRenderers: Map<String, com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomRenderer> = emptyMap(),
+        source: String? = null,
     ): Compiled {
         val actions = collectActions(document.root) + extraActionIds
-        val resolved = GestureGuiLayoutFacade.layout(document, knownActionIds = actions)
+        val resolved = GestureGuiLayoutFacade.layout(document, knownActionIds = actions, source = source)
         val handlers = actions.associateWith { onAction }
         val compiled = GestureGuiLayoutFacade.compile(
             resolved,
             screenId = "kantan-bridge",
             actionHandlers = handlers,
             customRenderers = customRenderers,
+            source = source,
         )
         // compiler の診断には解決時の診断も含まれるため、そのまま用います。
         val diagnostics = compiled.diagnostics
+        if (diagnostics.isNotEmpty()) onDiagnostics(diagnostics)
+        return Compiled(
+            elements = compiled.view.definition.elements,
+            visuals = compiled.view.visuals,
+            diagnostics = diagnostics,
+        )
+    }
+
+    /**
+     * HTMLを解析から診断付きコンパイルまで一続きで処理します。
+     *
+     * HTML画面の発生源名をLayout Engineまで渡すことで、固定配置の予約領域診断を
+     * 有効化します。解析・レイアウト・コンパイルの診断をまとめて返し、呼び出し側が
+     * 警告ログや検証結果を一つの経路で扱えるようにします。
+     */
+    fun compileHtml(
+        html: String,
+        environment: GestureGuiHtmlEnvironment,
+        onAction: (GestureGuiActionContext) -> Unit,
+        documentName: String = "kantan.html",
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        extraActionIds: Set<String> = emptySet(),
+        customRenderers: Map<String, com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomRenderer> = emptyMap(),
+    ): Compiled {
+        val parsed = GestureGuiLayoutFacade.parseHtml(html, environment, documentName, panel)
+        val actions = collectActions(parsed.document.root) + extraActionIds
+        val resolved = GestureGuiLayoutFacade.layout(
+            parsed.document,
+            knownActionIds = actions,
+            source = documentName,
+        )
+        val compiled = GestureGuiLayoutFacade.compile(
+            resolved,
+            screenId = "kantan-html-bridge",
+            actionHandlers = actions.associateWith { onAction },
+            customRenderers = customRenderers,
+            source = documentName,
+        )
+        val diagnostics = (parsed.diagnostics + compiled.diagnostics).distinct()
         if (diagnostics.isNotEmpty()) onDiagnostics(diagnostics)
         return Compiled(
             elements = compiled.view.definition.elements,

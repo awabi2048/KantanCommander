@@ -1067,12 +1067,18 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.PARTICLE -> when (fieldKey) {
-            "particleDisplay" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_DISPLAY)
+            "particleDisplay" -> CommandSettingDescriptor(
+                CommandSettingEditor.PARTICLE_DISPLAY,
+                CommandSettingRole.NODE_TARGET,
+            )
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
             else -> text()
         }
         CommandType.PARTICLE_GEOMETRY -> when (fieldKey) {
-            "particleDisplay" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_DISPLAY)
+            "particleDisplay" -> CommandSettingDescriptor(
+                CommandSettingEditor.PARTICLE_DISPLAY,
+                CommandSettingRole.NODE_TARGET,
+            )
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
             "geometryEnd" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_END)
             "geometrySettings" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_GEOMETRY)

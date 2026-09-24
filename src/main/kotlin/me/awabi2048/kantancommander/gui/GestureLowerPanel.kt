@@ -9,6 +9,9 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.html.GestureGuiHtmlEnvironment
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHover
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHoverTarget
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import me.awabi2048.kantancommander.gui.declarative.ContentFrame
@@ -91,6 +94,7 @@ import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
+import org.bukkit.block.data.BlockData
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import kotlin.math.sqrt
@@ -296,22 +300,15 @@ class GestureLowerPanel(
         val node = context?.let { script?.graph?.nodes?.get(it.nodeId) }
         val fieldKey = state.settingFieldKey
         val screen = state.settingScreen
-        val frame = contentFrame(GestureGuiPanel())
-        val nodes = mutableListOf<GestureGuiNode>()
         val noFields = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS))
         val backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK))
-        val backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE)
         if (context == null || node == null || fieldKey == null || screen == null) {
-            DeclarativeSettings.hintSection(nodes, frame, noFields, x = 0.0, y = 0.12, id = "setting-hint")
-            DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
-            return finishSettingChoicesChild(nodes)
+            return finishSettingChoicesChildHtml(noFieldsHint = noFields, backLabel = backLabel)
         }
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
         val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
         if (field == null) {
-            DeclarativeSettings.hintSection(nodes, frame, noFields, x = 0.0, y = 0.12, id = "setting-hidden")
-            DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
-            return finishSettingChoicesChild(nodes)
+            return finishSettingChoicesChildHtml(noFieldsHint = noFields, backLabel = backLabel)
         }
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = if (CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)) {
@@ -354,88 +351,259 @@ class GestureLowerPanel(
             )
         }
         val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
-        DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
-            body = Component.text(fieldDescription(player, field), NamedTextColor.GRAY),
-            detail = run {
-                val warning = attentionWarning(player, node, fieldKey, attentionFields)
-                val detailHint = selectedDetail
-                    ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
-                when {
-                    !warning.isNullOrBlank() -> DescriptionDetail(
-                        Component.text(warning, NamedTextColor.RED),
-                        CHILD_DETAIL_HINT_Y,
-                    )
-                    !detailHint.isNullOrBlank() -> DescriptionDetail(
-                        Component.text(detailHint, NamedTextColor.GRAY),
-                        CHILD_DETAIL_HINT_Y,
-                    )
-                    else -> null
-                }
-            },
-            centerX = 0.0,
-            hoverY = CHILD_HOVER_Y,
-        )
-        DeclarativeSettings.valueRowsSection(
-            nodes,
-            frame,
-            rows = listOf(SettingsValueRow("setting-header", fieldLabel, fieldValue, CHILD_HEADER_Y)),
-            labelX = -0.53,
-            valueX = 0.53,
-        )
-        val pageSize = SETTING_CHOICE_PAGE_SIZE
+        val warning = attentionWarning(player, node, fieldKey, attentionFields)
+        val detailHint = selectedDetail
+            ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
+        val detail = when {
+            !warning.isNullOrBlank() -> Component.text(warning, NamedTextColor.RED)
+            !detailHint.isNullOrBlank() -> Component.text(detailHint, NamedTextColor.GRAY)
+            else -> null
+        }
+        // 子画面は2列×4行までを上から流し、下端のページャーと戻る操作へ固定領域を残します。
+        val pageSize = CHILD_SETTING_CHOICE_PAGE_SIZE
         val pageCount = (choices.size + pageSize - 1) / pageSize
         val page = state.settingChoicePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-        appendSettingChoiceCards(
-            nodes,
-            frame,
-            choices.drop(page * pageSize).take(pageSize),
-            fieldKey,
-            player,
-            child = true,
-            suppressHighlight = suppressHighlight,
-        )
-        if (pageCount > 1) {
-            DeclarativeSettings.pagerSection(
-                nodes,
-                frame,
-                idPrefix = "setting-choice",
-                elementPrefix = "lower-setting-choice-page",
-                page = page,
-                pageCount = pageCount,
-                centerX = 0.0,
-                centerY = CHILD_PAGER_Y,
-                arrowBackgrounds = listOf(page - 1, page + 1).map { targetPage ->
-                    Bukkit.createBlockData(
-                        if (targetPage in 0 until pageCount) Material.CYAN_CONCRETE
-                        else DisabledGuiVisualPolicy.material,
-                    )
-                },
-                arrowGlyphs = listOf("◀", "▶").mapIndexed { arrowIndex, glyph ->
-                    val targetPage = if (arrowIndex == 0) page - 1 else page + 1
-                    Component.text(glyph).color(
-                        if (targetPage in 0 until pageCount) NamedTextColor.WHITE else NamedTextColor.GRAY,
-                    )
-                },
-                status = Component.text("${page + 1}/$pageCount"),
+        val pageChoices = choices.drop(page * pageSize).take(pageSize)
+        val rowCount = (pageChoices.size + 1) / 2
+        val cards = pageChoices.mapIndexed { index, choice ->
+            val row = index / 2
+            settingChoiceCard(
+                choice = choice,
+                fieldKey = fieldKey,
+                player = player,
+                child = true,
+                suppressHighlight = suppressHighlight,
+                cx = if (index % 2 == 0) -0.53 else 0.53,
+                cy = CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH,
+                row = row,
+                rowCount = rowCount,
+                choicesInRowGroup = pageChoices.size,
+                visualIndex = index,
             )
         }
-        DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
-        return finishSettingChoicesChild(nodes)
+        return finishSettingChoicesChildHtml(
+            fieldLabel = fieldLabel,
+            fieldValue = fieldValue,
+            backLabel = backLabel,
+            description = Component.text(fieldDescription(player, field), NamedTextColor.GRAY),
+            detail = detail,
+            cards = cards,
+            page = page,
+            pageCount = pageCount,
+        )
     }
 
-    /** 宣言の候補子画面を解決・変換し、既存の子画面定義へ載せます。 */
-    private fun finishSettingChoicesChild(nodes: List<GestureGuiNode>): GestureGuiView {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeSettings.document(nodes),
-            onAction,
+    /**
+     * 選択子画面をHTMLテンプレートで組み立てます。
+     * 文言Component、素材、ホバー、操作可否は環境解決へ渡し、配置と予約寸法はHTMLへ置きます。
+     */
+    private fun finishSettingChoicesChildHtml(
+        noFieldsHint: Component? = null,
+        fieldLabel: String? = null,
+        fieldValue: Component? = null,
+        backLabel: Component,
+        description: Component? = null,
+        detail: Component? = null,
+        cards: List<SettingsChoiceCard> = emptyList(),
+        page: Int = 0,
+        pageCount: Int = 1,
+    ): GestureGuiView {
+        val panel = GestureGuiPanel()
+        val frame = contentFrame(panel)
+        val components = mutableMapOf<String, Component>()
+        val backgrounds = mutableMapOf<String, BlockData>()
+        val outlines = mutableMapOf<String, BlockData>()
+        val hovers = mutableMapOf<String, GestureGuiHover>()
+        val guards = mutableMapOf<String, (Player, GestureGuiGesture) -> Boolean>()
+        val html = buildString {
+            append("<section id=\"setting-child-root\" style=\"width: 100%; height: 100%;\">")
+            fun text(
+                id: String,
+                component: Component,
+                cx: Double,
+                cy: Double,
+                width: Double,
+                height: Double,
+                size: Double,
+                lineWidth: Int,
+            ) {
+                components[id] = component
+                append("<p id=\"${htmlEscape(id)}\" style=\"${absoluteStyle(frame, cx, cy, width, height)}; font-size: $size; line-width: $lineWidth; text-align: center;\">_</p>")
+            }
+            fun button(
+                id: String,
+                label: Component,
+                background: BlockData,
+                cx: Double,
+                cy: Double,
+                width: Double,
+                height: Double,
+                textSize: Double,
+                lineWidth: Int,
+                labelDy: Double = 0.0,
+                outline: BlockData? = null,
+                hover: GestureGuiHover? = null,
+                enabled: Boolean = true,
+            ) {
+                components[id] = label
+                backgrounds[id] = background
+                outline?.let { outlines[id] = it }
+                hover?.let { hovers[id] = it }
+                if (!enabled) guards[id] = { _, _ -> false }
+                val border = if (outline == null) "" else " border: 0.06;"
+                val offset = if (labelDy == 0.0) "" else " text-offset-y: $labelDy;"
+                append("<button id=\"${htmlEscape(id)}\" action=\"${htmlEscape(id)}\" gestures=\"click\" style=\"${absoluteStyle(frame, cx, cy, width, height)}; background: ${materialName(background)}; font-size: $textSize; line-width: $lineWidth;$border$offset\">_</button>")
+            }
+
+            if (noFieldsHint != null) {
+                text("setting-hint", noFieldsHint, 0.0, 0.12, 1.0, 0.04, 0.010, 160)
+            } else {
+                val label = requireNotNull(fieldLabel)
+                val value = requireNotNull(fieldValue)
+                text("setting-header-label", Component.text(label), -0.53, CHILD_HEADER_Y, 0.86, 0.03, 0.0060, 120)
+                text("setting-header-value", value, 0.53, CHILD_HEADER_Y, 0.86, 0.03, 0.0060, 170)
+                text(
+                    SETTING_DESCRIPTION_HOVER_ID,
+                    requireNotNull(description),
+                    0.0,
+                    CHILD_HOVER_Y,
+                    1.80,
+                    0.03,
+                    DESCRIPTION_TEXT_SIZE,
+                    280,
+                )
+                detail?.let {
+                    text("setting-description-detail", it, 0.0, CHILD_DETAIL_HINT_Y, 1.80, 0.025, 0.0041, 280)
+                }
+                cards.forEach { card ->
+                    val hover = card.hover?.let { source ->
+                        DeclarativeSettings.hoverSpecOf(source).copy(
+                            replacement = if (card.replacesDescription) {
+                                GestureGuiHoverTarget.Node(SETTING_DESCRIPTION_HOVER_ID)
+                            } else {
+                                GestureGuiHoverTarget.None
+                            },
+                        )
+                    }
+                    button(
+                        id = card.elementId,
+                        label = card.label,
+                        background = card.background,
+                        cx = card.cx,
+                        cy = card.cy,
+                        width = card.w,
+                        height = card.h,
+                        textSize = card.labelSize,
+                        lineWidth = card.labelWidth,
+                        labelDy = card.labelDy,
+                        outline = card.outline,
+                        hover = hover,
+                        enabled = card.enabled,
+                    )
+                }
+            }
+
+            if (pageCount > 1) {
+                val pagerY = CHILD_FOOTER_Y
+                val arrowData = listOf(page - 1, page + 1).map { targetPage ->
+                    Bukkit.createBlockData(if (targetPage in 0 until pageCount) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material)
+                }
+                val glyphs = listOf(page - 1, page + 1).map { targetPage ->
+                    Component.text(if (targetPage < page) "◀" else "▶").color(
+                        if (targetPage in 0 until pageCount) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    )
+                }
+                val arrowCenters = listOf(-0.68, -0.12)
+                listOf(page - 1, page + 1).forEachIndexed { index, targetPage ->
+                    val actionId = if (targetPage in 0 until pageCount) {
+                        "lower-setting-choice-page:$targetPage"
+                    } else {
+                        "lower-setting-choice-page:disabled-$index"
+                    }
+                    button(
+                        id = actionId,
+                        label = glyphs[index],
+                        background = arrowData[index],
+                        cx = arrowCenters[index],
+                        cy = pagerY,
+                        width = 0.16,
+                        height = 0.10,
+                        textSize = 0.005,
+                        lineWidth = 60,
+                        enabled = targetPage in 0 until pageCount,
+                    )
+                }
+                text("setting-choice-page-status", Component.text("${page + 1}/$pageCount"), -0.40, pagerY, 0.18, 0.03, 0.004, 80)
+            }
+
+            val backX = if (pageCount > 1) 0.56 else 0.0
+            val backWidth = if (pageCount > 1) 0.78 else CHILD_BACK_WIDTH
+            button(
+                id = "lower-setting-back",
+                label = backLabel,
+                background = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                cx = backX,
+                cy = CHILD_BACK_Y,
+                width = backWidth,
+                height = 0.10,
+                textSize = 0.0048,
+                lineWidth = 100,
+            )
+            append("</section>")
+        }
+        val environment = object : GestureGuiHtmlEnvironment {
+            override fun textComponent(text: String, tag: String, classes: Set<String>, id: String?): Component =
+                id?.let(components::get) ?: Component.text(text)
+
+            override fun buttonBackground(background: String?, classes: Set<String>, id: String?): BlockData =
+                id?.let(backgrounds::get) ?: background?.let { Material.matchMaterial(it.uppercase()) }
+                    ?.let { Bukkit.createBlockData(it) }
+                ?: error("HTML setting button background is not registered: $id / $background")
+
+            override fun containerBackground(background: String, classes: Set<String>, id: String?): BlockData? = null
+
+            override fun outlineBlock(classes: Set<String>, id: String?): BlockData? = id?.let(outlines::get)
+
+            override fun blockData(material: String, classes: Set<String>, id: String?): BlockData =
+                id?.let(backgrounds::get) ?: Material.matchMaterial(material.uppercase())
+                    ?.let { Bukkit.createBlockData(it) } ?: error("unknown HTML block material: $material")
+
+            override fun itemStack(reference: String, classes: Set<String>, id: String?): ItemStack =
+                error("setting-choice HTML does not contain item references: $reference")
+
+            override fun textSize(tag: String, classes: Set<String>, id: String?): Double = 0.005
+
+            override fun hover(tag: String, classes: Set<String>, id: String?): GestureGuiHover? = id?.let(hovers::get)
+
+            override fun gestureGuard(
+                tag: String,
+                classes: Set<String>,
+                id: String?,
+            ): ((Player, GestureGuiGesture) -> Boolean)? = id?.let(guards::get)
+        }
+        val compiled = KantanLayoutBridge.compileHtml(
+            html = html,
+            environment = environment,
+            onAction = onAction,
+            documentName = "kantan/setting-choices-child.html",
+            panel = panel,
             onDiagnostics = { diagnostics ->
-                plugin.logger.fine("[KantanCommander][DeclarativeSettingChoices] $diagnostics")
+                plugin.logger.fine("[KantanCommander][SettingChoicesHtml] $diagnostics")
             },
         )
         return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
     }
+
+    private fun absoluteStyle(frame: ContentFrame, cx: Double, cy: Double, width: Double, height: Double): String =
+        "position: absolute; left: ${cx - width / 2.0 - frame.minX}; top: ${frame.maxY - cy - height / 2.0}; width: $width; height: $height"
+
+    private fun materialName(blockData: BlockData): String = blockData.material.name.lowercase()
+
+    private fun htmlEscape(value: String): String = value
+        .replace("&", "&amp;")
+        .replace("\"", "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
 
     /**
      * 親の設定候補画面の宣言実装です。旧 `buildSettingChoices(child = false)` と同じ
@@ -1464,7 +1632,9 @@ class GestureLowerPanel(
                 rowCount = it.size,
                 valueAnchorY = SETTING_VALUE_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
                 detailAnchorY = SETTING_DETAIL_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
-                rowGapRatio = TIMING_ROW_GAP_RATIO,
+                // 2行の効果音値は説明文と近いため、行間を追加せずに配置域を使います。
+                // 3行以上は既存の行間率を保ち、画面内で値と詳細を下方へ寄せます。
+                rowGapRatio = if (it.size == 2) 0.0 else TIMING_ROW_GAP_RATIO,
                 minimumDetailY = SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT +
                     SETTING_INPUT_HEIGHT / 2.0 + SETTING_DETAIL_INPUT_GAP,
             )
@@ -1636,66 +1806,86 @@ class GestureLowerPanel(
                 if (column == 0) -0.53 else 0.53
             } else if (column == 0) -0.10 else 0.67
             val cy = cyForRow(index / 2)
-            val width = if (child) CHILD_CHOICE_WIDTH else SETTING_CHOICE_WIDTH
             DeclarativeSettings.choiceCardsSection(
                 nodes,
                 frame,
-                cards = listOf(
-                    SettingsChoiceCard(
-                        elementId = "lower-setting-choice:${choice.id}",
-                        label = (choice.labelComponent ?: Component.text(choice.label))
-                            .color(GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
-                        background = Bukkit.createBlockData(settingChoiceMaterial(choice)),
-                        outline = if (suppressHighlight) {
-                            null
-                        } else {
-                            // エンティティ操作画面では設定済みを空色縁で表します。
-                            // 他機能の表示規則には波及させません。
-                            val outline = if (fieldKey == EntityDataPath.PARAM_PATH) {
-                                GestureSettingVisualPolicy.entityChoiceOutlineMaterial(
-                                    choice.selected,
-                                    choice.valueState == GestureSettingValueState.CONFIGURED,
-                                )
-                            } else {
-                                GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)
-                            }
-                            outline?.let { Bukkit.createBlockData(it) }
-                        },
-                        enabled = choice.enabled,
-                        cx = cx,
-                        cy = cy,
-                        w = width,
-                        h = SETTING_CHOICE_HEIGHT,
-                        labelDy = -0.012,
-                        labelSize = 0.0045,
-                        labelWidth = 115,
-                        hover = DisabledChoiceVisualPolicy.hoverText(
-                            enabled = choice.enabled,
-                            normal = choice.description.takeIf(String::isNotBlank)
-                                ?: choiceDescription(player, choice, fieldKey),
-                            disabled = choice.disabledHoverText,
-                        )?.let {
-                            parallelButtonHover(
-                                text = it,
-                                x = cx,
-                                y = cy,
-                                row = row,
-                                rowCount = rowCount,
-                                height = SETTING_CHOICE_HEIGHT,
-                                descriptionX = if (child) 0.0 else HOVER_SLOT_X,
-                                descriptionY = if (child) CHILD_HOVER_Y else HOVER_SLOT_Y,
-                                replacesDescription = child,
-                                parallel = choices.size > 1,
-                            )
-                        },
-                        replacesDescription = child,
-                        visualTag = "setting-choice",
-                        visualIndex = index,
-                    ),
-                ),
+                cards = listOf(settingChoiceCard(
+                    choice = choice,
+                    fieldKey = fieldKey,
+                    player = player,
+                    child = child,
+                    suppressHighlight = suppressHighlight,
+                    cx = cx,
+                    cy = cy,
+                    row = row,
+                    rowCount = rowCount,
+                    choicesInRowGroup = choices.size,
+                    visualIndex = index,
+                )),
             )
         }
     }
+
+    /** 同じ意味・色・ホバー規則をKotlin宣言とHTMLテンプレートで共有する選択カードです。 */
+    private fun settingChoiceCard(
+        choice: GestureSettingTreeNode,
+        fieldKey: String,
+        player: Player,
+        child: Boolean,
+        suppressHighlight: Boolean,
+        cx: Double,
+        cy: Double,
+        row: Int,
+        rowCount: Int,
+        choicesInRowGroup: Int,
+        visualIndex: Int,
+    ): SettingsChoiceCard = SettingsChoiceCard(
+        elementId = "lower-setting-choice:${choice.id}",
+        label = (choice.labelComponent ?: Component.text(choice.label))
+            .color(GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+        background = Bukkit.createBlockData(settingChoiceMaterial(choice)),
+        outline = if (suppressHighlight) {
+            null
+        } else {
+            // エンティティ操作画面では設定済みを空色枠で示します。
+            // 枠の描画はCC-System、状態との対応はKantanCommanderが決定します。
+            val outline = GestureSettingVisualPolicy.choiceOutlineMaterial(
+                choice,
+                highlightsConfiguredValues = fieldKey == EntityDataPath.PARAM_PATH,
+            )
+            outline?.let(Bukkit::createBlockData)
+        },
+        enabled = choice.enabled,
+        cx = cx,
+        cy = cy,
+        w = if (child) CHILD_CHOICE_WIDTH else SETTING_CHOICE_WIDTH,
+        h = SETTING_CHOICE_HEIGHT,
+        labelDy = -0.012,
+        labelSize = 0.0045,
+        labelWidth = 115,
+        hover = DisabledChoiceVisualPolicy.hoverText(
+            enabled = choice.enabled,
+            normal = choice.description.takeIf(String::isNotBlank)
+                ?: choiceDescription(player, choice, fieldKey),
+            disabled = choice.disabledHoverText,
+        )?.let {
+            parallelButtonHover(
+                text = it,
+                x = cx,
+                y = cy,
+                row = row,
+                rowCount = rowCount,
+                height = SETTING_CHOICE_HEIGHT,
+                descriptionX = if (child) 0.0 else HOVER_SLOT_X,
+                descriptionY = if (child) CHILD_HOVER_Y else HOVER_SLOT_Y,
+                replacesDescription = child,
+                parallel = choicesInRowGroup > 1,
+            )
+        },
+        replacesDescription = child,
+        visualTag = "setting-choice",
+        visualIndex = visualIndex,
+    )
 
     private fun appendSettingsInputCards(
         nodes: MutableList<GestureGuiNode>,
@@ -3582,18 +3772,20 @@ class GestureLowerPanel(
     }
 
     /** 現在の表示経路から、クリック対象が詳細子画面を持つかを判定します。 */
-    internal fun hasSettingChoiceChildren(
+    internal fun settingChoiceInteractionMode(
         state: GestureEditorState,
         player: Player,
         choiceId: String,
-    ): Boolean {
-        val context = state.settingContext ?: return false
-        val screen = state.settingScreen ?: return false
-        val fieldKey = state.settingFieldKey ?: return false
-        val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId) ?: return false
+    ): GestureSettingInteractionMode {
+        val context = state.settingContext ?: return GestureSettingInteractionMode.SELECT
+        val screen = state.settingScreen ?: return GestureSettingInteractionMode.SELECT
+        val fieldKey = state.settingFieldKey ?: return GestureSettingInteractionMode.SELECT
+        val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId)
+            ?: return GestureSettingInteractionMode.SELECT
         return settingTreeNodes(node, context, screen, fieldKey, player)
             .firstNotNullOfOrNull { it.find(choiceId) }
-            ?.hasChildren == true
+            ?.effectiveInteractionMode
+            ?: GestureSettingInteractionMode.SELECT
     }
 
     /**
@@ -3779,20 +3971,6 @@ class GestureLowerPanel(
                 )
             }
         }
-        // 表示対象は対象選択の掘り下げだけで構成します。
-        // #30で表示方式の選択は廃止し、コマンド選択そのものが通常／図形の選択を兼ねます。
-        GestureSettingScreen.PARTICLE_DISPLAY -> listOf(
-            GestureSettingTreeNode(
-                id = "particle-target",
-                label = labeled(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
-                    node.targetSpec?.kind?.let { targetKindLabel(player, it) },
-                ),
-                selected = CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET),
-                children = targetChoices(node, context.copy(role = CommandSettingRole.NODE_TARGET), player),
-            ),
-        )
         // 図形設定は、形状の択一と数値入力で構成します。
         // 数値入力はダイアログで開く葉であり、選択形状の数値だけを扱います。
         // 終点・対角点は表示位置（geometryEnd）へ分離したため、ここでは扱いません。
@@ -5320,8 +5498,11 @@ class GestureLowerPanel(
         const val CHILD_CHOICE_PITCH = 0.12
         const val CHILD_HEADER_Y = 0.36
         const val CHILD_HOVER_Y = 0.23
-        const val CHILD_DETAIL_HINT_Y = 0.14
+        const val CHILD_DETAIL_HINT_Y = 0.16
+        const val CHILD_FOOTER_Y = -0.43
+        const val CHILD_BACK_Y = -0.43
         const val CHILD_PAGER_Y = -0.34
+        const val CHILD_SETTING_CHOICE_PAGE_SIZE = 8
         const val CHILD_BACK_WIDTH = 1.70
         // ワールド内変数の各列は「値編集カード＋削除ボタン」で構成し、列全体の幅を
         // 既存の0.92へ固定します。ボタンの位置は一覧と確認画面で共通にします。

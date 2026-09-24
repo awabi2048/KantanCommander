@@ -46,9 +46,21 @@ data class GestureSettingTreeNode(
      * 位置引数の既存呼び出しを壊さないため末尾に置きます。
      */
     val labelComponent: net.kyori.adventure.text.Component? = null,
+    /**
+     * クリックの意味です。未指定なら子を持つ項目は「選択後に詳細」、葉は「選択」として扱います。
+     * 詳細だけを開く項目では DETAILS_ONLY を指定し、選択表示や選択値の変更を行いません。
+     */
+    val interactionMode: GestureSettingInteractionMode? = null,
 ) {
     val hasChildren: Boolean
         get() = children.isNotEmpty()
+
+    val effectiveInteractionMode: GestureSettingInteractionMode
+        get() = interactionMode ?: if (hasChildren) {
+            GestureSettingInteractionMode.SELECT_AND_DETAILS
+        } else {
+            GestureSettingInteractionMode.SELECT
+        }
 
     fun find(nodeId: String): GestureSettingTreeNode? {
         if (id == nodeId) return this
@@ -60,6 +72,18 @@ data class GestureSettingTreeNode(
 enum class GestureSettingSelectionMode {
     EXCLUSIVE,
     MULTIPLE,
+}
+
+/** クリック時に項目の選択状態と詳細画面をどう扱うかを表します。 */
+enum class GestureSettingInteractionMode {
+    /** 選択状態を更新し、同じ項目の再クリックで詳細へ進みます。 */
+    SELECT_AND_DETAILS,
+
+    /** 項目の選択だけを行い、子があっても詳細へは進みません。 */
+    SELECT,
+
+    /** 項目の選択状態を変えず、クリックで詳細へ進みます。 */
+    DETAILS_ONLY,
 }
 
 /** 設定値の状態。初期値と明示設定済みを色・文言へ同時に投影します。 */
@@ -122,6 +146,22 @@ internal object GestureSettingVisualPolicy {
     fun nonTabOutlineMaterial(selected: Boolean): Material? =
         if (selected) Material.WHITE_CONCRETE else null
 
+    /**
+     * 選択方式と保存状態から設定カードの枠素材を決めます。
+     * 択一カードは現在選択中だけを白枠にし、複数選択カードは各保存済み項目を
+     * 空色枠で残します。エンティティデータ画面は従来どおり設定済み値も示します。
+     */
+    fun choiceOutlineMaterial(
+        choice: GestureSettingTreeNode,
+        highlightsConfiguredValues: Boolean = false,
+    ): Material? = when {
+        choice.selected -> Material.WHITE_CONCRETE
+        choice.valueState == GestureSettingValueState.CONFIGURED &&
+            (choice.selectionMode == GestureSettingSelectionMode.MULTIPLE || highlightsConfiguredValues) ->
+            Material.LIGHT_BLUE_CONCRETE
+        else -> null
+    }
+
     /** クリック先が子画面なら§b、値入力・値変更なら§6、操作不能なら灰色です。 */
     fun settingChoiceTextColor(choice: GestureSettingTreeNode): NamedTextColor = when {
         !choice.enabled -> DisabledChoiceVisualPolicy.textColor
@@ -179,13 +219,24 @@ internal enum class GestureSettingSelectionAction {
 
 internal fun settingSelectionAction(
     wasSelected: Boolean,
-    hasChildren: Boolean,
-): GestureSettingSelectionAction =
-    if (wasSelected && hasChildren) {
+    interactionMode: GestureSettingInteractionMode,
+): GestureSettingSelectionAction = when (interactionMode) {
+    GestureSettingInteractionMode.SELECT_AND_DETAILS -> if (wasSelected) {
         GestureSettingSelectionAction.ENTER_CHILD
     } else {
         GestureSettingSelectionAction.STAY_ON_FRAME
     }
+    GestureSettingInteractionMode.SELECT -> GestureSettingSelectionAction.STAY_ON_FRAME
+    GestureSettingInteractionMode.DETAILS_ONLY -> GestureSettingSelectionAction.ENTER_CHILD
+}
+
+internal fun settingSelectionAction(
+    wasSelected: Boolean,
+    hasChildren: Boolean,
+): GestureSettingSelectionAction = settingSelectionAction(
+    wasSelected,
+    if (hasChildren) GestureSettingInteractionMode.SELECT_AND_DETAILS else GestureSettingInteractionMode.SELECT,
+)
 
 /**
  * 経路末尾の選択を同階層へ排他的に適用します。
@@ -243,7 +294,8 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.SOUND_SCOPE -> GestureSettingScreen.SOUND_SCOPE
     CommandSettingEditor.SOUND_OPERATION -> GestureSettingScreen.SOUND_OPERATION
     CommandSettingEditor.SOUND_TARGET_POSITION -> GestureSettingScreen.SOUND_TARGET_POSITION
-    CommandSettingEditor.PARTICLE_DISPLAY -> GestureSettingScreen.PARTICLE_DISPLAY
+    // 表示対象タブは通常の対象選択を親画面へ直接表示します。単独の中間画面を挟みません。
+    CommandSettingEditor.PARTICLE_DISPLAY -> GestureSettingScreen.TARGET
     CommandSettingEditor.PARTICLE_GEOMETRY -> GestureSettingScreen.PARTICLE_GEOMETRY
     CommandSettingEditor.BLOCK_OPERATION -> GestureSettingScreen.BLOCK_OPERATION
     // issue #11: 建造物名・回転・反転の各編集経路を意味画面へ結びます。
@@ -260,14 +312,13 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
  * 単一項目経由を避ける直行先を返します。
  *
  * 次の画面は対象選択が唯一の掘り下げのため、経由画面を挟まず対象画面へ
- * 直行します。PARTICLE_DISPLAY は常時、SOUND_TARGET_POSITION は停止操作時、
- * CONDITION_DETAIL は他エンティティ対象時に該当します。それ以外は null を返し、
+ * 直行します。SOUND_TARGET_POSITION は停止操作時、CONDITION_DETAIL は
+ * 他エンティティ対象時に該当します。それ以外は null を返し、
  * 通常の画面遷移を行います。操作種別・対象種別の切替はタブの開き直しで追従し、
  * 経路開始時に判定します。文脈の役割は対象選択用へ正規化します。
  */
 internal fun shortCircuitTargetFrame(node: CommandNode, frame: GestureSettingFrame): GestureSettingFrame? {
     val direct = when (frame.screen) {
-        GestureSettingScreen.PARTICLE_DISPLAY -> true
         GestureSettingScreen.SOUND_TARGET_POSITION ->
             node.type == CommandType.PLAY_SOUND && SoundSettings.operation(node) == SoundOperation.STOP
         GestureSettingScreen.CONDITION_DETAIL ->

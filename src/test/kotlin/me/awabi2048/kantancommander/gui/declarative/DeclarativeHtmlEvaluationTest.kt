@@ -152,4 +152,42 @@ class DeclarativeHtmlEvaluationTest {
             "diagnostics: ${parsed.diagnostics}",
         )
     }
+
+    @Test
+    fun `html bridge carries components and reports reserved area collisions`() {
+        val mappedEnvironment = object : GestureGuiHtmlEnvironment by this@DeclarativeHtmlEvaluationTest.environment {
+            override fun textComponent(text: String, tag: String, classes: Set<String>, id: String?): Component =
+                if (id == "localized") Component.translatable("kantan.test.localized") else Component.text(text)
+
+            override fun gestureGuard(
+                tag: String,
+                classes: Set<String>,
+                id: String?,
+            ): ((org.bukkit.entity.Player, GestureGuiGesture) -> Boolean)? =
+                if (id == "action") { _, _ -> false } else null
+        }
+        val html = """
+            <section id="root" style="width: 100%; height: 100%;">
+              <p id="localized" style="position: absolute; left: 0.25; top: 0.25; width: 0.60; height: 0.10;">localized</p>
+              <button id="action" action="action" style="position: absolute; left: 0.25; top: 0.25; width: 0.60; height: 0.10;">Action</button>
+            </section>
+        """.trimIndent()
+
+        val compiled = KantanLayoutBridge.compileHtml(
+            html = html,
+            environment = mappedEnvironment,
+            onAction = {},
+            documentName = "setting-child.html",
+            panel = panel,
+        )
+
+        val collisions = compiled.diagnostics.filter { it.code == GestureGuiLayoutErrorCode.OVERLAPPING_CONTENT }
+        assertTrue(collisions.isNotEmpty(), "diagnostics: ${compiled.diagnostics}")
+        assertTrue(collisions.all { it.source == "setting-child.html" })
+        assertTrue(compiled.elements.single { it.elementId == "action" }.gestureGuard != null)
+        assertEquals(
+            Component.translatable("kantan.test.localized"),
+            compiled.visuals.filterIsInstance<GestureGuiVisual.Text>().single { it.visualId.contains("localized") }.text,
+        )
+    }
 }

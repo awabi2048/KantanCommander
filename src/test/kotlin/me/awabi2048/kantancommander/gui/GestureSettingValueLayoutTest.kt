@@ -18,6 +18,19 @@ class GestureSettingValueLayoutTest {
     }
 
     @Test
+    fun `two value rows can reserve space for the description without adding a gap`() {
+        val layout = GestureSettingValueLayout.calculate(
+            rowCount = 2,
+            valueAnchorY = 0.27,
+            detailAnchorY = 0.17,
+            rowGapRatio = 0.0,
+        )
+
+        assertEquals(listOf(0.27, 0.17), layout.rowCentersY)
+        assertEquals(0.07, layout.detailCenterY, 1.0e-9)
+    }
+
+    @Test
     fun `three values add the configured row gap and honor the lower boundary`() {
         val layout = GestureSettingValueLayout.calculate(
             rowCount = 3,

@@ -394,7 +394,8 @@ object DeclarativeSettings {
                 lineWidth = 120,
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "${row.id}-label",
-                width = GestureGuiSizeSpec.Fixed(1.0),
+                // 2列はそれぞれの予約幅を明示し、文字が短くても値欄の領域へ重ねません。
+                width = GestureGuiSizeSpec.Fixed(0.58),
                 height = GestureGuiSizeSpec.Auto,
                 absolute = placed(frame, labelX, row.y, 1.0, 0.0060 * 3.0),
             )
@@ -404,7 +405,7 @@ object DeclarativeSettings {
                 lineWidth = 170,
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "${row.id}-value",
-                width = GestureGuiSizeSpec.Fixed(1.0),
+                width = GestureGuiSizeSpec.Fixed(0.58),
                 height = GestureGuiSizeSpec.Auto,
                 absolute = placed(frame, valueX, row.y, 1.0, 0.0060 * 3.0),
             )
