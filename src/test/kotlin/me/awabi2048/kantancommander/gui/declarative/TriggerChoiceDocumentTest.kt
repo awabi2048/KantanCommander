@@ -38,8 +38,6 @@ class TriggerChoiceDocumentTest {
         },
         backLabel = Component.text("back"),
         backBackground = blockData(),
-        selectionLabel = "trigger",
-        selectionValue = Component.text("selected"),
     )
 
     @Test
@@ -92,5 +90,45 @@ class TriggerChoiceDocumentTest {
         assertTrue(firstIds.any { it.startsWith("lower-trigger-event-page:") })
         // 戻る操作と重ならないよう、ページャは候補の上部にあります。
         assertTrue(firstIds.contains("lower-setting-back"))
+        val selected = data(*names.toTypedArray()).copy(
+            options = data(*names.toTypedArray()).options.map { it.copy(selected = it.key == "BLOCK_LEFT_CLICK") },
+            page = 1,
+            pageCount = 2,
+            pagerAvailableBackground = blockData(),
+            pagerDisabledBackground = blockData(),
+        )
+        val second = KantanLayoutBridge.compile(DeclarativeTriggers.eventDocument(selected, panel), onAction = {})
+        assertTrue(second.diagnostics.isEmpty(), "diagnostics: ${second.diagnostics}")
+        val secondIds = second.elements.map { it.elementId }.toSet()
+        assertEquals(4, secondIds.count { it.startsWith("lower-trigger-event:") })
+        assertTrue("lower-trigger-event:BLOCK_LEFT_CLICK" in secondIds)
+        assertTrue("lower-trigger-event:BLOCK_BREAK" !in secondIds)
+    }
+
+    @Test
+    fun `detail screen exposes confirm and back after event selection`() {
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeTriggers.detailDocument(
+                TriggerDetailData(
+                    title = Component.text("details"),
+                    eventLabel = "event",
+                    eventName = Component.text("block break"),
+                    description = Component.text("description"),
+                    confirmLabel = Component.text("confirm"),
+                    backLabel = Component.text("back"),
+                    tabBackground = blockData(),
+                    tabOutline = blockData(),
+                    confirmBackground = blockData(),
+                    backBackground = blockData(),
+                ),
+                panel,
+            ),
+            onAction = {},
+        )
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        assertEquals(
+            setOf("lower-trigger-detail-confirm", "lower-setting-back"),
+            compiled.elements.map { it.elementId }.toSet(),
+        )
     }
 }

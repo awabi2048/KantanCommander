@@ -19,7 +19,7 @@ internal object TriggerDisplay {
     fun kindName(player: Player?, kind: TriggerKind): String = when (kind) {
         TriggerKind.TIMER -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_TIMER)
         TriggerKind.REDSTONE -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_REDSTONE)
-        TriggerKind.EVENT -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER)
+        TriggerKind.EVENT -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT)
     }
 
     /** イベント種別の固定名称です。選択肢の識別ラベルとしてそのまま示します。 */

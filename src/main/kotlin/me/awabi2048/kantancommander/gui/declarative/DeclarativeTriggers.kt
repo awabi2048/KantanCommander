@@ -1,8 +1,8 @@
 package me.awabi2048.kantancommander.gui.declarative
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
-import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
@@ -23,19 +23,13 @@ data class TriggerChoiceOption(
     val outline: BlockData?,
 )
 
-/** issue #7 の起動方法の選択画面の解決済み入力です。選択と確定を分けて表示します。 */
+/** issue #7 の起動方法の選択画面の解決済み入力です。選択時に即時確定します。 */
 data class TriggerChoiceData(
     val title: Component,
     val description: Component,
     val options: List<TriggerChoiceOption>,
     val backLabel: Component,
     val backBackground: BlockData,
-    /** 右側の現在値行に表示する固定ラベルです。 */
-    val selectionLabel: String,
-    /** 右側の現在値行に表示する選択値です。 */
-    val selectionValue: Component,
-    /** 選択候補に付随する現在値などの補足です。 */
-    val selectionSummary: Component? = null,
     /** 候補ページ番号です。単一ページの画面では0のままにします。 */
     val page: Int = 0,
     /** 候補ページ数です。2以上でページャを表示します。 */
@@ -44,12 +38,28 @@ data class TriggerChoiceData(
     val pagerDisabledBackground: BlockData? = null,
 )
 
+/** 選択済みイベントの詳細子画面に渡す表示値です。保存済みの値とは分離します。 */
+data class TriggerDetailData(
+    val title: Component,
+    val eventLabel: String,
+    val eventName: Component,
+    val description: Component,
+    val confirmLabel: Component,
+    val backLabel: Component,
+    val tabBackground: BlockData,
+    val tabOutline: BlockData,
+    val confirmBackground: BlockData,
+    val backBackground: BlockData,
+)
+
 /**
  * issue #7 の起動方法の選択子画面の宣言区画です。
  *
- * 一般コマンド設定と同じ左タブ・右詳細の配置で起動方法を編集します。
- * 1回目のクリックは候補選択だけを行い、選択中の候補をもう一度クリックした時に
- * 詳細画面への遷移または確定を行います。イベント候補は左側を6件単位で固定ページ化します。
+ * 型選択子画面と同じ座標・寸法・素材・操作振分けの約束を使い、要素 ID の接頭辞だけを
+ * `lower-trigger-kind`／`lower-trigger-event` へ変えます。選択は即時確定のため
+ * ［次へ］操作は持たず、戻る操作は設定画面共通の `lower-setting-back` を使います。
+ * 3件以上の候補は2列格子へ並べ、端数行は中央へ寄せて重心を保ちます。
+ * 候補が多い画面はページ分割し、戻る操作と重ならないようにします。
  */
 object DeclarativeTriggers {
     /**
@@ -60,76 +70,143 @@ object DeclarativeTriggers {
     const val EVENT_PAGE_SIZE = 6
 
     private fun visibleOptions(data: TriggerChoiceData): List<TriggerChoiceOption> =
-        if (data.pageCount > 1) data.options.drop(data.page * EVENT_PAGE_SIZE).take(EVENT_PAGE_SIZE)
-        else data.options
+        if (data.pageCount > 1) {
+            data.options.drop(data.page * EVENT_PAGE_SIZE).take(EVENT_PAGE_SIZE)
+        } else {
+            data.options
+        }
     fun kindDocument(data: TriggerChoiceData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =
-        choiceDocument(data, idPrefix = "trigger-kind", panel = panel)
+        choiceDocument(data, idPrefix = "trigger-kind", visualTag = "trigger-kind", panel = panel)
 
     fun eventDocument(data: TriggerChoiceData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =
-        choiceDocument(data, idPrefix = "trigger-event", panel = panel)
+        choiceDocument(data, idPrefix = "trigger-event", visualTag = "trigger-event", panel = panel)
 
-    private fun choiceDocument(
-        data: TriggerChoiceData,
-        idPrefix: String,
-        panel: GestureGuiPanel,
-    ): GestureGuiDocument {
+    /** 左タブ・右設定の配置は、イベントを再クリックした後の詳細子画面だけに適用します。 */
+    fun detailDocument(data: TriggerDetailData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
         val frame = contentFrame(panel)
         val nodes = mutableListOf<GestureGuiNode>()
-        val visible = visibleOptions(data)
-        visible.forEachIndexed { index, option ->
-            val selectedWidth = GestureSettingVisualPolicy.selectedTabWidth(
-                GestureLowerPanel.SETTINGS_TAB_WIDTH,
-                option.selected,
-            )
-            val selectedCenterX = GestureSettingVisualPolicy.selectedTabCenterX(
-                GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-                GestureLowerPanel.SETTINGS_TAB_WIDTH,
-                option.selected,
-            )
-            val centerY = GestureLowerPanel.SETTINGS_TAB_TOP_Y - index * GestureLowerPanel.SETTINGS_TAB_PITCH
-            val elementId = "lower-$idPrefix:${option.key}"
-            nodes += GestureGuiBlock(
-                blockData = option.background,
-                width = GestureGuiSizeSpec.Fixed(selectedWidth),
-                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-                id = elementId,
-                actionId = elementId,
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                outline = option.outline?.let(::GestureGuiOutline),
-                absolute = placed(frame, selectedCenterX, centerY, selectedWidth, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-            )
-            nodes += GestureGuiText(
-                text = option.label,
-                size = 0.0049,
-                lineWidth = 90,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = "$idPrefix-tab-$index",
-                width = GestureGuiSizeSpec.Fixed(selectedWidth),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, centerY - 0.02, selectedWidth, 0.0049 * 3.0),
-            )
-        }
+        val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, true)
+        val tabCenterX = GestureSettingVisualPolicy.selectedTabCenterX(
+            GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+            GestureLowerPanel.SETTINGS_TAB_WIDTH,
+            true,
+        )
+        nodes += GestureGuiBlock(
+            blockData = data.tabBackground,
+            interpolationTicks = 0,
+            width = GestureGuiSizeSpec.Fixed(tabWidth),
+            height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            outline = GestureGuiOutline(data.tabOutline),
+            id = "trigger-detail-tab",
+            absolute = placed(frame, tabCenterX, GestureLowerPanel.SETTINGS_TAB_TOP_Y, tabWidth, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+        )
+        nodes += GestureGuiText(
+            text = data.title,
+            interpolationTicks = 0,
+            size = 0.0049,
+            lineWidth = 90,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "trigger-detail-tab-label",
+            width = GestureGuiSizeSpec.Fixed(tabWidth),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_TOP_Y - 0.02, tabWidth, 0.0049 * 3.0),
+        )
         DeclarativeSettings.descriptionSection(
             nodes,
             frame,
             body = data.description,
-            detail = data.selectionSummary?.let {
-                DescriptionDetail(it, GestureLowerPanel.SETTING_DETAIL_ANCHOR_Y)
-            },
+            detail = null,
             centerX = 0.28,
             hoverY = GestureLowerPanel.ACTION_DESCRIPTION_Y,
         )
         DeclarativeSettings.valueRowsSection(
             nodes,
             frame,
-            rows = listOf(
-                SettingsValueRow(
-                    id = "$idPrefix-selection",
-                    label = data.selectionLabel,
-                    value = data.selectionValue,
-                    y = GestureLowerPanel.SETTING_VALUE_ANCHOR_Y,
-                ),
+            rows = listOf(SettingsValueRow("trigger-detail-event", data.eventLabel, data.eventName, GestureLowerPanel.SETTING_VALUE_ANCHOR_Y)),
+        )
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-trigger-detail-confirm",
+                label = data.confirmLabel,
+                background = data.confirmBackground,
+                cx = 0.28,
+                cy = -0.25,
+                w = 0.55,
+                h = 0.10,
+                labelSize = 0.0048,
+                labelWidth = 100,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = null,
+                visualTag = "trigger-detail-confirm",
             ),
+        )
+        DeclarativeSettings.backSection(
+            nodes,
+            frame,
+            label = data.backLabel,
+            background = data.backBackground,
+            centerX = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+            width = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+        )
+        return DeclarativeSettings.document(nodes, panel)
+    }
+
+    private fun choiceDocument(
+        data: TriggerChoiceData,
+        idPrefix: String,
+        visualTag: String,
+        panel: GestureGuiPanel,
+    ): GestureGuiDocument {
+        val frame = contentFrame(panel)
+        val nodes = mutableListOf<GestureGuiNode>()
+        nodes += GestureGuiText(
+            text = data.title,
+            size = 0.0060,
+            lineWidth = 200,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "$idPrefix-title",
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
+        )
+        DeclarativeSettings.descriptionSection(
+            nodes,
+            frame,
+            body = data.description,
+            detail = null,
+            centerX = 0.0,
+            hoverY = GestureLowerPanel.CHILD_HOVER_Y,
+        )
+        val visible = visibleOptions(data)
+        DeclarativeSettings.choiceCardsSection(
+            nodes,
+            frame,
+            cards = visible.mapIndexed { index, option ->
+                val row = index / 2
+                val oddLast = visible.size % 2 == 1 && index == visible.lastIndex
+                val cx = if (oddLast) 0.0 else if (index % 2 == 0) -0.53 else 0.53
+                SettingsChoiceCard(
+                    elementId = "lower-$idPrefix:${option.key}",
+                    label = option.label,
+                    background = option.background,
+                    outline = option.outline,
+                    enabled = true,
+                    cx = cx,
+                    cy = GestureLowerPanel.CHILD_CHOICE_TOP_Y - row * GestureLowerPanel.CHILD_CHOICE_PITCH,
+                    w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
+                    h = GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                    labelDy = -0.012,
+                    labelSize = 0.0045,
+                    labelWidth = 115,
+                    hover = null,
+                    replacesDescription = false,
+                    visualTag = visualTag,
+                    visualIndex = index,
+                )
+            },
         )
         if (data.pageCount > 1) {
             DeclarativeSettings.pagerSection(
@@ -139,7 +216,7 @@ object DeclarativeTriggers {
                 elementPrefix = "lower-$idPrefix-page",
                 page = data.page,
                 pageCount = data.pageCount,
-                centerX = 0.28,
+                centerX = 0.0,
                 centerY = GestureLowerPanel.CHILD_PAGER_Y,
                 arrowBackgrounds = listOf(data.page - 1, data.page + 1).map { targetPage ->
                     if (targetPage in 0 until data.pageCount) {
@@ -166,8 +243,8 @@ object DeclarativeTriggers {
             frame,
             label = data.backLabel,
             background = data.backBackground,
-            centerX = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-            width = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+            centerX = 0.0,
+            width = GestureLowerPanel.CHILD_CHOICE_WIDTH,
         )
         return DeclarativeSettings.document(nodes, panel)
     }

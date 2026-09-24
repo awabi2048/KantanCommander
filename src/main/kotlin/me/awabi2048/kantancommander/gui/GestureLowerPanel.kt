@@ -174,6 +174,7 @@ class GestureLowerPanel(
             // 親側へ選択肢の内部座標を誤描画しないようにします。
             GestureLowerMode.TRIGGER_KIND -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.TRIGGER_EVENT -> buildSettings(state, player, attention, suppressHighlight)
+            GestureLowerMode.TRIGGER_DETAIL -> buildSettings(state, player, attention, suppressHighlight)
             // issue #8: 呼び出し設定の子画面です。子画面が閉じられた場合でも、
             // 親側へ設定用の内部座標を誤描画しないようにします。
             GestureLowerMode.DISK_CALL_SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
@@ -1101,8 +1102,7 @@ class GestureLowerPanel(
     /**
      * issue #7 の起動方法の種別選択子画面を生成します。
      *
-     * 現在の起動方法を選択表示します。初回クリックは選択だけを行い、再クリックで
-     * タイマーは間隔入力へ、イベントはイベント選択へ進み、信号は確定します。
+     * 変更前の選択カード配置を維持します。種別クリックで次の操作へ進みます。
      */
     fun buildTriggerKindChild(
         state: GestureEditorState,
@@ -1110,17 +1110,12 @@ class GestureLowerPanel(
     ): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId)
         val currentTrigger = script?.effectiveTrigger()
-        val current = state.pendingTriggerKind ?: currentTrigger?.kind
-        val selectionSummary = currentTrigger
-            ?.takeIf { it.kind == current }
-            ?.let { Component.text(TriggerDisplay.summary(player, it)) }
+        val current = currentTrigger?.kind
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.kindDocument(
                 me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
                     title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER)),
-                    description = Component.text(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY),
-                    ),
+                    description = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY)),
                     options = TriggerKind.entries.map { kind ->
                         me.awabi2048.kantancommander.gui.declarative.TriggerChoiceOption(
                             key = kind.name,
@@ -1134,12 +1129,6 @@ class GestureLowerPanel(
                     },
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
-                    selectionLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
-                    selectionValue = Component.text(
-                        current?.let { TriggerDisplay.kindName(player, it) }
-                            ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
-                    ),
-                    selectionSummary = selectionSummary,
                 ),
             ),
             GestureLowerMode.TRIGGER_KIND,
@@ -1233,14 +1222,15 @@ class GestureLowerPanel(
     /**
      * issue #7 のイベント種別の選択子画面を生成します。
      *
-     * 初期10種をページ表示し、同じ候補の再クリックで起動方法として確定します。
+     * 初期10種を変更前のカード配置でページ表示し、同じ候補の再クリックで詳細へ進みます。
      */
     fun buildTriggerEventChild(
         state: GestureEditorState,
         player: Player,
     ): GestureGuiView {
+        val configuredEvent = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
+            ?.takeIf { it.kind == TriggerKind.EVENT }?.event
         val current = state.pendingTriggerEvent
-            ?: plugin.scripts.load(state.scriptId)?.effectiveTrigger()?.event
         val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
         val total = EventTriggerKind.entries.size
         val pageCount = ((total + pageSize - 1) / pageSize).coerceAtLeast(1)
@@ -1258,7 +1248,10 @@ class GestureLowerPanel(
                             label = Component.text(TriggerDisplay.eventName(player, event)),
                             selected = current == event,
                             background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
-                            outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(current == event)?.let {
+                            outline = GestureSettingVisualPolicy.entityChoiceOutlineMaterial(
+                                selected = current == event,
+                                configured = configuredEvent == event,
+                            )?.let {
                                 Bukkit.createBlockData(it)
                             },
                         )
@@ -1269,15 +1262,33 @@ class GestureLowerPanel(
                     pageCount = pageCount,
                     pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
                     pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
-                    selectionLabel = TriggerDisplay.kindName(player, TriggerKind.EVENT),
-                    selectionValue = Component.text(
-                        current?.let { TriggerDisplay.eventName(player, it) }
-                            ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
-                    ),
                 ),
             ),
             GestureLowerMode.TRIGGER_EVENT,
             "[DeclarativeTriggerEvent]",
+        )
+    }
+
+    /** 再クリック後のイベント詳細だけを、一般コマンド設定と同じ左右構成で表示します。 */
+    fun buildTriggerDetailChild(state: GestureEditorState, player: Player): GestureGuiView {
+        val event = requireNotNull(state.pendingTriggerEvent) { "詳細画面のイベントが選択されていません" }
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.detailDocument(
+                me.awabi2048.kantancommander.gui.declarative.TriggerDetailData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS)),
+                    eventLabel = TriggerDisplay.kindName(player, TriggerKind.EVENT),
+                    eventName = Component.text(TriggerDisplay.eventName(player, event)),
+                    description = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY)),
+                    confirmLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM)),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    tabBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                    tabOutline = Bukkit.createBlockData(Material.WHITE_CONCRETE),
+                    confirmBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.TRIGGER_DETAIL,
+            "[DeclarativeTriggerDetail]",
         )
     }
 

@@ -206,7 +206,6 @@ data class GestureEditorState(
     /** issue #7: イベント種別の選択子画面のページ番号です。 */
     var triggerEventPage: Int = 0,
     /** 起動方法の選択画面で確定前に選択している候補です。 */
-    var pendingTriggerKind: TriggerKind? = null,
     /** イベント選択画面で確定前に選択している候補です。 */
     var pendingTriggerEvent: EventTriggerKind? = null,
     /** issue #8: ディスク設定の引数ページ番号です。 */
@@ -235,6 +234,8 @@ enum class GestureLowerMode {
      * 初期10種をページ表示し、同じ候補の再クリックで起動方法として確定します。
      */
     TRIGGER_EVENT,
+    /** イベント候補を再クリックした後だけ開く、左右分割の詳細設定子画面です。 */
+    TRIGGER_DETAIL,
     /**
      * issue #8: ディスク呼び出しの引数・戻り値受取先の設定子画面です。
      */
@@ -835,6 +836,7 @@ class GestureSequenceEditor(
                 // issue #7: 起動方法の選択子画面です。子画面の内容だけを差し替えます。
                 GestureLowerMode.TRIGGER_KIND -> lowerPanel.buildTriggerKindChild(state, owner)
                 GestureLowerMode.TRIGGER_EVENT -> lowerPanel.buildTriggerEventChild(state, owner)
+                GestureLowerMode.TRIGGER_DETAIL -> lowerPanel.buildTriggerDetailChild(state, owner)
                 // issue #8: 呼び出し設定の子画面です。
                 GestureLowerMode.DISK_CALL_SETTINGS -> lowerPanel.buildDiskCallSettingsChild(state, owner)
                 // issue #8: ディスク設定の子画面です。
@@ -4329,13 +4331,11 @@ class GestureSequenceEditor(
      * issue #7 の起動方法の種別選択子画面へ遷移します。
      *
      * 種別選択はDialogの追加操作ではなく、GestureGUI上の独立した設定画面として扱います。
-     * 初回クリックで候補を選択し、タイマーは再クリックで間隔入力へ、イベントは
-     * イベント選択へ進み、信号は再クリックで確定します。
+     * 変更前と同じく種類のクリックで間隔入力・イベント一覧・保存へ直接進みます。
      */
     private fun openTriggerKindSelection(player: Player) {
         val current = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
-        state.pendingTriggerKind = current?.kind
-        state.pendingTriggerEvent = current?.event
+        state.pendingTriggerEvent = null
         state.lowerMode = GestureLowerMode.TRIGGER_KIND
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) {
@@ -4360,7 +4360,6 @@ class GestureSequenceEditor(
             false
         }
         if (!opened) {
-            state.pendingTriggerKind = null
             state.pendingTriggerEvent = null
             state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
@@ -4513,21 +4512,24 @@ class GestureSequenceEditor(
         )
     }
 
-    /** 起動方法の種別選択から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
+    /** 起動方法の種別選択から設定一覧へ戻り、候補子画面も閉じます。 */
     private fun closeTriggerKindSelection(player: Player) {
-        state.pendingTriggerKind = null
         state.pendingTriggerEvent = null
         state.lowerMode = GestureLowerMode.SETTINGS
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         updateLower(player)
     }
 
     /** 起動方法の種別選択からイベント種別の選択へ進みます。子画面の内容だけを差し替えます。 */
     private fun openTriggerEventSelection(player: Player) {
         val currentEvent = plugin.scripts.load(state.scriptId)?.effectiveTrigger()?.event
-        state.pendingTriggerEvent = state.pendingTriggerEvent ?: currentEvent
+        // 保存済みのイベントと、この画面でクリックした候補を区別します。
+        // 既存値でも最初のクリックは選択、次のクリックで詳細へ進みます。
+        state.pendingTriggerEvent = null
         // 開くたびに先頭へ戻すと、イベント詳細から戻った時に候補位置が飛びます。
         // 既存選択がある場合だけ、その候補を含むページを明示的に開きます。
-        state.pendingTriggerEvent?.let { selected ->
+        currentEvent?.let { selected ->
             val selectedIndex = EventTriggerKind.entries.indexOf(selected)
             if (selectedIndex >= 0) {
                 state.triggerEventPage = selectedIndex /
@@ -4535,6 +4537,13 @@ class GestureSequenceEditor(
             }
         }
         state.lowerMode = GestureLowerMode.TRIGGER_EVENT
+        updateLower(player)
+    }
+
+    /** イベントを選択済み候補として再クリックした時だけ詳細子画面へ進みます。 */
+    private fun openTriggerDetail(player: Player) {
+        if (state.pendingTriggerEvent == null) return
+        state.lowerMode = GestureLowerMode.TRIGGER_DETAIL
         updateLower(player)
     }
 
@@ -4566,9 +4575,11 @@ class GestureSequenceEditor(
             )
             return false
         }
-        state.pendingTriggerKind = null
         state.pendingTriggerEvent = null
         state.lowerMode = GestureLowerMode.SETTINGS
+        // 保存後に古い候補子画面を残すと、親を更新しても前面のクリック先が古いままになります。
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         updateUpperIfNeeded(player)
         updateLower(player)
         return true
@@ -8483,26 +8494,19 @@ class GestureSequenceEditor(
                 val type = state.pendingWorldVariableType ?: return
                 showWorldVariableNameDialog(player, type)
             }
-            // issue #7: 起動方法の種別選択です。タイマーは間隔入力へ進み、
-            // 信号は即時確定し、イベントは種別選択へ進みます。
+            // 起動方法の種類は、従来どおり1クリックで次の操作へ進みます。
             context.elementId.startsWith("lower-trigger-kind:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val kind = runCatching {
                     TriggerKind.valueOf(context.elementId.removePrefix("lower-trigger-kind:"))
                 }.getOrNull() ?: return
-                if (state.pendingTriggerKind != kind) {
-                    state.pendingTriggerKind = kind
-                    state.pendingTriggerEvent = null
-                    updateLower(player)
-                    return
-                }
                 when (kind) {
                     TriggerKind.TIMER -> showTriggerIntervalDialog(player)
                     TriggerKind.REDSTONE -> saveTrigger(player, ScriptTrigger(TriggerKind.REDSTONE))
                     TriggerKind.EVENT -> openTriggerEventSelection(player)
                 }
             }
-            // issue #7: イベント候補を初回クリックで選択し、再クリックで確定します。
+            // イベント候補だけは初回選択、再クリックで詳細子画面へ進みます。
             context.elementId.startsWith("lower-trigger-event:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val event = runCatching {
@@ -8513,7 +8517,17 @@ class GestureSequenceEditor(
                     updateLower(player)
                     return
                 }
+                openTriggerDetail(player)
+            }
+            context.elementId == "lower-trigger-detail-confirm" && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val event = state.pendingTriggerEvent ?: return
                 saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event))
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.lowerMode = GestureLowerMode.TRIGGER_EVENT
+                updateLower(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_EVENT &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
