@@ -836,14 +836,8 @@ object CommandSettingsModel {
                 "to" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_TO
                 else -> undefinedWarningKey(node, fieldKey)
             }
-            // issue #11: 建造物は名前・回転・反転・位置の警告を示します。位置系は
-            // ブロック操作と同じ警告キーを再利用し、新規キーを増やしません。
-            CommandType.STRUCTURE_SAVE -> when (fieldKey) {
-                "structure" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK
-                "from" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_FROM
-                "to" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_TO
-                else -> undefinedWarningKey(node, fieldKey)
-            }
+            // 建造物読み込みは名前・回転・反転・位置の警告を示します。
+            // 位置系はブロック操作と同じ警告キーを再利用します。
             CommandType.STRUCTURE_PLACE -> when (fieldKey) {
                 "structure" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK
                 "rotation", "mirror" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_OPERATION
@@ -1112,14 +1106,8 @@ object CommandSettingsModel {
             "to" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_TO)
             else -> text()
         }
-        // issue #11: 建造物は名前・回転・反転を専用画面で編集し、設置位置だけは
+        // issue #11: 建造物読み込みは名前・回転・反転を専用画面で編集し、設置位置だけは
         // 既存の位置設定木を再利用します（BLOCK_OPERATION と同じ扱い）。
-        CommandType.STRUCTURE_SAVE -> when (fieldKey) {
-            "structure" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_NAME)
-            "from" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_FROM)
-            "to" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_TO)
-            else -> text()
-        }
         CommandType.STRUCTURE_PLACE -> when (fieldKey) {
             "structure" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_NAME)
             "rotation" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_ROTATION)

@@ -431,10 +431,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.FOR_START ->
             "×${node.string("count", "1")}"
-        // issue #11: 建造物の概要は「名前＋回転度＋反転有無」とし、対象の多い
+        // issue #11: 読み込み建造物の概要は「名前＋回転度＋反転有無」とし、対象の多い
         // 設置位置は概要から外します（詳細画面で確認します）。
-        CommandType.STRUCTURE_SAVE ->
-            node.string("structure").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.STRUCTURE_PLACE -> {
             val name = node.string("structure").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
             "$name ${node.string("rotation", StructureRotation.NONE.value)}°"

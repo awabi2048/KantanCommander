@@ -665,7 +665,6 @@ object ExecutableScriptValidator {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "カメラシェイクの対象が未設定です")
             }
             CommandType.BLOCK_OPERATION -> validateBlockOperation(node, path, errors, temporaryDefinitions)
-            CommandType.STRUCTURE_SAVE -> validateStructureSave(node, path, errors, temporaryDefinitions)
             CommandType.STRUCTURE_PLACE -> validateStructurePlace(node, path, errors, temporaryDefinitions)
             CommandType.ENTITY_GROUP -> validateEntityGroup(node, path, errors, temporaryDefinitions)
             CommandType.ENTITY_DELETE -> {
@@ -1483,37 +1482,7 @@ object ExecutableScriptValidator {
     }
 
     /**
-     * issue #11: 建造物保存の検証です。保存範囲は BLOCK_OPERATION の fill と同じ
-     * blockFromSpec／blockToSpec を流用し、体積上限も同じ
-     * [MAX_BLOCK_OPERATION_VOLUME] で判定します。建造物名はストアを安全に扱うため
-     * 英語小文字・数字・アンダースコア・ハイフンのみを許可します。
-     */
-    private fun validateStructureSave(
-        node: CommandNode,
-        path: String,
-        errors: MutableList<ScriptValidationError>,
-        temporaryDefinitions: Map<String, ValueType>? = null,
-    ) {
-        validateStructureName(node, path, errors)
-        val from = node.blockFromSpec
-        val to = node.blockToSpec
-        if (from == null && node.executionPositionSpec == null) {
-            errors += nodeError(node, path, setOf("from"), "保存範囲の始点が未設定です")
-        }
-        if (to == null && node.executionPositionSpec == null) {
-            errors += nodeError(node, path, setOf("to"), "保存範囲の終点が未設定です")
-        }
-        val effectiveFrom = from ?: node.executionPositionSpec
-        val effectiveTo = to ?: node.executionPositionSpec
-        if (effectiveFrom != null && effectiveTo != null &&
-            blockVolume(effectiveFrom, effectiveTo)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true
-        ) {
-            errors += nodeError(node, path, setOf("from", "to"), "保存範囲は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
-        }
-    }
-
-    /**
-     * issue #11: 建造物設置の検証です。建造物名の存在確認は実行時のストア照合で
+     * issue #11: 保存済み建造物の読み込みの検証です。建造物名の存在確認は実行時のストア照合で
      * 行い、ここでは名前形式・回転・反転・設置位置の指定だけを検証します。
      */
     private fun validateStructurePlace(

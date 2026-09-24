@@ -553,28 +553,6 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `structure save requires a name and a bounded range`() {
-        val script = DiskScript(name = "structure-save-check", owner = UUID.randomUUID())
-        val save = GraphEditor.append(script.graph, CommandType.STRUCTURE_SAVE)
-
-        val errors = ExecutableScriptValidator.validate(script)
-
-        assertTrue(errors.any { it.nodeId == save.id && it.fieldKeys == setOf("structure") })
-        assertTrue(errors.any { it.nodeId == save.id && it.fieldKeys == setOf("from") })
-        assertTrue(errors.any { it.nodeId == save.id && it.fieldKeys == setOf("to") })
-
-        save.params["structure"] = "Invalid Name!"
-        assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.nodeId == save.id && it.fieldKeys == setOf("structure") },
-        )
-
-        save.params["structure"] = "my_house-01"
-        save.blockFromSpec = PositionSpec(PositionKind.COORDINATES, 0.0, 0.0, 0.0)
-        save.blockToSpec = PositionSpec(PositionKind.COORDINATES, 100.0, 100.0, 100.0)
-        assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("32768") })
-    }
-
-    @Test
     fun `structure place requires a valid name and known rotation and mirror`() {
         val script = DiskScript(name = "structure-place-check", owner = UUID.randomUUID())
         val place = GraphEditor.append(script.graph, CommandType.STRUCTURE_PLACE)

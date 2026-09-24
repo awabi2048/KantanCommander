@@ -109,9 +109,8 @@ class ScriptStoreLifecycleTest {
     }
 
     @Test
-    fun `asset references collect structure and group names`() {
+    fun `asset references collect structure and group names from executable operations`() {
         val script = DiskScript(name = "assets", owner = UUID.randomUUID())
-        GraphEditor.append(script.graph, CommandType.STRUCTURE_SAVE).apply { params["structure"] = "my_house-01" }
         GraphEditor.append(script.graph, CommandType.STRUCTURE_PLACE).apply { params["structure"] = "my_house-01" }
         GraphEditor.append(script.graph, CommandType.ENTITY_GROUP).apply { params["group"] = "my_group-01" }
         GraphEditor.append(script.graph, CommandType.WAIT)

@@ -162,6 +162,8 @@ object DeclarativePicker {
             val cy = GestureCommandPickerLayoutPolicy.rowY(row)
             nodes += GestureGuiBlock(
                 blockData = data.cardBackgrounds[index],
+                // コマンド選択肢カードだけを補間なしで切り替えます。
+                interpolationTicks = 0,
                 width = GestureGuiSizeSpec.Fixed(GestureCommandPickerLayoutPolicy.CARD_WIDTH),
                 height = GestureGuiSizeSpec.Fixed(GestureCommandPickerLayoutPolicy.CARD_HEIGHT),
                 id = "lower-type:${card.key}",
@@ -188,6 +190,7 @@ object DeclarativePicker {
             )
             nodes += GestureGuiText(
                 text = Component.text(card.label),
+                interpolationTicks = 0,
                 size = 0.0045,
                 lineWidth = 115,
                 alignment = GestureGuiTextAlignment.CENTER,

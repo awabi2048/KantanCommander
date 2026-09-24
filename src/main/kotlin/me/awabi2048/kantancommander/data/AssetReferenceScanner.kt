@@ -12,10 +12,10 @@ import me.awabi2048.kantancommander.model.DiskScript
  * ワールド全走査は行いません。
  */
 object AssetReferenceScanner {
-    /** STRUCTURE_SAVE／STRUCTURE_PLACE が参照する建造物名を集めます。 */
+    /** 保存済み建造物を読み込む STRUCTURE_PLACE が参照する名前を集めます。 */
     fun structureNames(scripts: List<DiskScript>): Set<String> = scripts
         .flatMap { it.graph.nodes.values }
-        .filter { it.type == CommandType.STRUCTURE_SAVE || it.type == CommandType.STRUCTURE_PLACE }
+        .filter { it.type == CommandType.STRUCTURE_PLACE }
         .mapNotNull { it.params["structure"]?.takeIf(String::isNotBlank) }
         .toSet()
 

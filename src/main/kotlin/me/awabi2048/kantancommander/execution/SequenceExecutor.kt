@@ -1373,7 +1373,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 true
             }
             CommandType.BLOCK_OPERATION -> executeBlockOperation(node, session, effectiveContext, origins, attempts)
-            CommandType.STRUCTURE_SAVE -> executeStructureSave(node, session, effectiveContext, origins)
             CommandType.STRUCTURE_PLACE -> executeStructurePlace(node, session, effectiveContext, origins, attempts)
             CommandType.ENTITY_GROUP -> executeEntityGroup(node, session, effectiveContext, attempts)
             CommandType.ENTITY_DELETE -> {
@@ -2353,41 +2352,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #11: 建造物保存を実行します。
-     *
-     * 範囲は BLOCK_OPERATION の fill と同じ解決を使い、体積上限も同じ
-     * [MAX_BLOCK_OPERATION_VOLUME] で判定します。保護対象ブロックが1つでも
-     * 範囲に含まれる場合は、書き出し前に全体を失敗させます（部分保存を残さない）。
-     */
-    private fun executeStructureSave(
-        node: CommandNode,
-        session: ExecutionSession,
-        context: ExecutionContextSpec?,
-        origins: List<Location>,
-    ): Boolean {
-        val name = node.string("structure")
-        val from = commandPositionOrExecution(node.blockFromSpec, session, context, origins) ?: return false
-        val to = commandPositionOrExecution(node.blockToSpec, session, context, origins) ?: return false
-        val world = from.world ?: return false
-        if (world != to.world) return false
-        val minX = minOf(from.blockX, to.blockX)
-        val maxX = maxOf(from.blockX, to.blockX)
-        val minY = minOf(from.blockY, to.blockY)
-        val maxY = maxOf(from.blockY, to.blockY)
-        val minZ = minOf(from.blockZ, to.blockZ)
-        val maxZ = maxOf(from.blockZ, to.blockZ)
-        val volume = (maxX.toLong() - minX + 1L) * (maxY.toLong() - minY + 1L) * (maxZ.toLong() - minZ + 1L)
-        if (volume !in 1L..MAX_BLOCK_OPERATION_VOLUME) return false
-        if (BlockOperationProtectionPolicy.hasProtectedBlock(minX, maxX, minY, maxY, minZ, maxZ) { coordinate ->
-                plugin.placements.isRegistered(world, coordinate.x, coordinate.y, coordinate.z)
-            }
-        ) return false
-        return plugin.structures.save(name, from, to) ==
-            me.awabi2048.kantancommander.structure.StructureSaveResult.Saved
-    }
-
-    /**
-     * issue #11: 建造物設置を実行します。
+     * issue #11: 保存済み建造物の読み込み・設置を実行します。
      *
      * 設置位置は structurePlacePositionSpec を優先し、未設定時は単一の実行起点を
      * 既定値とします。設置範囲は建造物の大きさ・回転から算出し、fill と同じく

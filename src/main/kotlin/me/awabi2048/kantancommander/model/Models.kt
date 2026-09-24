@@ -1004,16 +1004,7 @@ enum class CommandType(
         "operation" to "setblock", "block" to ""
     )),
     /**
-     * issue #11 の建造物保存です。範囲は blockFromSpec／blockToSpec を流用し、
-     * 建造物名 structure を保存します。非空・名前空間安全な名前だけを許可し、
-     * 保存先はプラグイン管理下の構造物ストアです。
-     */
-    STRUCTURE_SAVE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_STRUCTURE_SAVE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_STRUCTURE_SAVE_DESCRIPTION, Material.STRUCTURE_BLOCK, mapOf(
-        // 選択肢型に未選択と区別できない既定値は置きません（BLOCK_OPERATIONと同一方針）。
-        "structure" to "",
-    )),
-    /**
-     * issue #11 の建造物設置です。structure の名前で保存済み建造物を引き当て、
+     * issue #11 の建造物読み込みです。structure の名前で保存済み建造物を引き当て、
      * 設置位置（structurePlacePositionSpec）へ回転・反転を適用して配置します。
      * physics抑制と保護判定は BLOCK_OPERATION と同じ経路を使います。
      */

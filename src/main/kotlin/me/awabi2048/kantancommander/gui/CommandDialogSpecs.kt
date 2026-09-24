@@ -1265,7 +1265,7 @@ internal object CommandDialogSpecs {
             return conditionNumberValue
         }
         if (node.type == CommandType.PLACE_ITEM && fieldKey == "slot") return placeSlot(node)
-        if ((node.type == CommandType.STRUCTURE_SAVE || node.type == CommandType.STRUCTURE_PLACE) && fieldKey == "structure") {
+        if (node.type == CommandType.STRUCTURE_PLACE && fieldKey == "structure") {
             return structureNameSpec()
         }
         // issue #24: 群名・移動軸・回転軸は専用の入力仕様を使います。
