@@ -105,6 +105,32 @@ class GestureSettingTreeTest {
     }
 
     @Test
+    fun `random mode opens range input only after a second selection in the current route`() {
+        assertEquals(
+            VariableModeSelectionAction.SAVE_MODE,
+            variableModeSelectionAction(
+                me.awabi2048.kantancommander.model.VariableChangeMode.RANDOM,
+                wasSelectedInCurrentRoute = false,
+            ),
+        )
+        assertEquals(
+            VariableModeSelectionAction.EDIT_RANDOM_RANGE,
+            variableModeSelectionAction(
+                me.awabi2048.kantancommander.model.VariableChangeMode.RANDOM,
+                wasSelectedInCurrentRoute = true,
+            ),
+        )
+        // ASSIGNなど他方式の再クリックで、数値Dialogを誤って開きません。
+        assertEquals(
+            VariableModeSelectionAction.SAVE_MODE,
+            variableModeSelectionAction(
+                me.awabi2048.kantancommander.model.VariableChangeMode.ASSIGN,
+                wasSelectedInCurrentRoute = true,
+            ),
+        )
+    }
+
+    @Test
     fun `path selection applies exclusively within the current choices`() {
         val preset = GestureSettingTreeNode("target-preset:NEARBY_PLAYERS", "周囲", selected = true)
         val detail = GestureSettingTreeNode("target-detail", "詳細")
@@ -260,7 +286,7 @@ class GestureSettingTreeTest {
             ),
         )
         assertEquals(
-            null,
+            org.bukkit.Material.LIGHT_BLUE_CONCRETE,
             GestureSettingVisualPolicy.choiceOutlineMaterial(
                 GestureSettingTreeNode(
                     "choice:configured",

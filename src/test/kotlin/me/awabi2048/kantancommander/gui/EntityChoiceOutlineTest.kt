@@ -3,6 +3,8 @@ package me.awabi2048.kantancommander.gui
 import org.bukkit.Material
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -12,6 +14,51 @@ import org.junit.jupiter.api.Test
  * 非排他的に複数件へ付与できることを、縁色規則の真理値表で固定します。
  */
 class EntityChoiceOutlineTest {
+    @Test
+    fun `entity property target and configured value are independent`() {
+        val gravity = requireNotNull(me.awabi2048.kantancommander.model.EntityDataSchema.definition("gravity"))
+
+        val configuredFalse = EntityPropertyChoicePolicy.state(
+            activePropertyId = "gravity",
+            definition = gravity,
+            rawValue = "false",
+        )
+        assertTrue(configuredFalse.selected, "falseでも操作対象の項目は選択中です")
+        assertTrue(configuredFalse.configured, "明示的なfalseも保存済み値です")
+
+        val configuredTrue = EntityPropertyChoicePolicy.state(
+            activePropertyId = "gravity",
+            definition = gravity,
+            rawValue = "true",
+        )
+        assertTrue(configuredTrue.selected)
+        assertTrue(configuredTrue.configured)
+
+        val unset = EntityPropertyChoicePolicy.state(
+            activePropertyId = "gravity",
+            definition = gravity,
+            rawValue = "",
+        )
+        assertTrue(unset.selected, "未設定でも操作対象の選択は残ります")
+        assertFalse(unset.configured)
+
+        val anotherProperty = EntityPropertyChoicePolicy.state(
+            activePropertyId = "ai",
+            definition = gravity,
+            rawValue = "false",
+        )
+        assertFalse(anotherProperty.selected, "false値から別項目の選択状態を作りません")
+        assertFalse(anotherProperty.configured, "共通の値欄を別項目の設定済み表示へ流用しません")
+
+        val malformedBoolean = EntityPropertyChoicePolicy.state(
+            activePropertyId = "gravity",
+            definition = gravity,
+            rawValue = "TRUE",
+        )
+        assertTrue(malformedBoolean.selected)
+        assertFalse(malformedBoolean.configured, "不正なbooleanを設定済みとして色付けしません")
+    }
+
     @Test
     fun `outline follows the selection first rule`() {
         // 選択中は設定済み有無にかかわらず白縁とします。

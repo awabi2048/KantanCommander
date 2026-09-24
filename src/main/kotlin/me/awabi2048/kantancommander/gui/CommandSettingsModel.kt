@@ -598,6 +598,25 @@ object CommandSettingsModel {
         else -> true
     }
 
+    /** 数値Range乱数を選択可能な操作かを、GUIとDialog保存時の双方で共有します。 */
+    fun supportsRandomNumberMode(node: CommandNode): Boolean = when (node.type) {
+        CommandType.VARIABLE -> ValueType.parse(node.string("type")) == ValueType.NUMBER &&
+            runCatching { VariableOperation.valueOf(node.string("operation")) }
+                .getOrDefault(VariableOperation.DEFINE) in setOf(
+                VariableOperation.DEFINE,
+                VariableOperation.SET,
+                VariableOperation.CHANGE,
+            )
+        CommandType.TEMP_SET -> ValueType.parse(node.string("tempType")) == ValueType.NUMBER
+        else -> false
+    }
+
+    /** 現在Range入力を編集できる状態かを確認し、Dialog中の方式変更も拒否します。 */
+    fun isRandomRangeInputAvailable(node: CommandNode): Boolean =
+        supportsRandomNumberMode(node) &&
+            runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+                .getOrDefault(VariableChangeMode.ASSIGN) == VariableChangeMode.RANDOM
+
     /**
      * issue #2 の変数操作コマンドの項目可視性です。
      *
@@ -677,14 +696,34 @@ object CommandSettingsModel {
             // 子画面で編集するため、タブ列には出しません。タブ列が選択で
             // 増減すると表示と経路がずれるため、対象・項目・実行位置に固定します。
             // Inventory GUIの直接編集行はvisibleFields側に残します。
-            node.type != CommandType.ENTITY_OPERATION ||
-                field.key !in setOf(
+            val entityDetail = node.type == CommandType.ENTITY_OPERATION && field.key in setOf(
                     EntityTagEntries.PARAM_ENTRIES,
                     EntityAttributeSupport.PARAM_VALUE,
                     EntityDataSchema.PARAM_VALUE,
                 )
+            val randomRange = node.type in setOf(CommandType.VARIABLE, CommandType.TEMP_SET) &&
+                field.key == "range"
+            !entityDetail && !randomRange
         }.map { field ->
-            if (node.type == CommandType.DISPLAY_TEXT &&
+            val randomNumberMode = field.key == "changeMode" &&
+                node.type in setOf(CommandType.VARIABLE, CommandType.TEMP_SET) &&
+                ValueType.parse(node.string(if (node.type == CommandType.TEMP_SET) "tempType" else "type")) == ValueType.NUMBER &&
+                runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+                    .getOrDefault(VariableChangeMode.ASSIGN) == VariableChangeMode.RANDOM
+            if (randomNumberMode) {
+                // 範囲入力は独立タブにせず、乱数方式の選択を再クリックしたDialogで編集します。
+                // 保存値は方式タブの複合表示にも出し、入力後に範囲が見失われないようにします。
+                field.copy(
+                    value = { currentNode ->
+                        DisplayValue.VariableRandomRange(
+                            mode = field.value(currentNode),
+                            range = currentNode.string("range").takeIf(String::isNotBlank)
+                                ?.let(DisplayValue::Literal)
+                                ?: DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                        )
+                    },
+                )
+            } else if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)
             ) {

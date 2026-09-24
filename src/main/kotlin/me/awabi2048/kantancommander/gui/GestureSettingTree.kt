@@ -3,8 +3,11 @@ package me.awabi2048.kantancommander.gui
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.EntityPropertyDefinition
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.conditionSubject
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
@@ -93,6 +96,35 @@ enum class GestureSettingValueState {
 }
 
 /**
+ * エンティティ個別設定の操作対象と保存値を独立して投影する共通規則です。
+ * selectedは「今どの項目を操作するか」、configuredは「その項目に有効な値が保存済みか」を表します。
+ */
+internal object EntityPropertyChoicePolicy {
+    fun state(
+        activePropertyId: String?,
+        definition: EntityPropertyDefinition,
+        rawValue: String,
+    ): EntityPropertyChoiceState = EntityPropertyChoiceState(
+        selected = activePropertyId == definition.id,
+        // エンティティ操作は現在の項目の値をPARAM_VALUEへ一つだけ保存します。
+        // 対応する項目だけ設定済みにし、共用欄の値で別項目まで色付けしないようにします。
+        configured = activePropertyId == definition.id && isValueConfigured(definition, rawValue),
+    )
+
+    /** falseも設定値です。空欄や壊れたbooleanをfalseへ読み替えません。 */
+    fun isValueConfigured(definition: EntityPropertyDefinition, rawValue: String): Boolean = when (definition.valueKind) {
+        EntityPropertyValueKind.BOOLEAN -> rawValue.toBooleanStrictOrNull() != null
+        EntityPropertyValueKind.ENUM -> definition.enumChoices.any { it.id == rawValue }
+        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> rawValue.isNotBlank()
+    }
+}
+
+internal data class EntityPropertyChoiceState(
+    val selected: Boolean,
+    val configured: Boolean,
+)
+
+/**
  * 設定カードの表示規則を一箇所へ集約します。
  *
  * 設定項目の通常テクスチャは薄灰色へ統一し、ホバー中もテクスチャを変えません。
@@ -147,20 +179,15 @@ internal object GestureSettingVisualPolicy {
         if (selected) Material.WHITE_CONCRETE else null
 
     /**
-     * 選択方式と保存状態から設定カードの枠素材を決めます。
-     * 択一カードは現在選択中だけを白枠にし、複数選択カードは各保存済み項目を
-     * 空色枠で残します。エンティティデータ画面は従来どおり設定済み値も示します。
+     * 選択状態と保存状態から設定カードの枠素材を決めます。
+     * 現在選択中は白枠を優先し、それ以外の設定済み項目は選択方式にかかわらず
+     * 空色枠で示します。択一／複数選択は入力契約を決め、保存状態の可視性は隠しません。
      */
-    fun choiceOutlineMaterial(
-        choice: GestureSettingTreeNode,
-        highlightsConfiguredValues: Boolean = false,
-    ): Material? = when {
-        choice.selected -> Material.WHITE_CONCRETE
-        choice.valueState == GestureSettingValueState.CONFIGURED &&
-            (choice.selectionMode == GestureSettingSelectionMode.MULTIPLE || highlightsConfiguredValues) ->
-            Material.LIGHT_BLUE_CONCRETE
-        else -> null
-    }
+    fun choiceOutlineMaterial(choice: GestureSettingTreeNode): Material? =
+        entityChoiceOutlineMaterial(
+            selected = choice.selected,
+            configured = choice.valueState == GestureSettingValueState.CONFIGURED,
+        )
 
     /** クリック先が子画面なら§b、値入力・値変更なら§6、操作不能なら灰色です。 */
     fun settingChoiceTextColor(choice: GestureSettingTreeNode): NamedTextColor = when {
@@ -237,6 +264,23 @@ internal fun settingSelectionAction(
     wasSelected,
     if (hasChildren) GestureSettingInteractionMode.SELECT_AND_DETAILS else GestureSettingInteractionMode.SELECT,
 )
+
+/** 数値変更方式の選択後に必要な操作です。乱数だけは同じ選択肢の再クリックで範囲入力へ進みます。 */
+internal enum class VariableModeSelectionAction {
+    SAVE_MODE,
+    EDIT_RANDOM_RANGE,
+}
+
+internal fun variableModeSelectionAction(
+    mode: VariableChangeMode,
+    wasSelectedInCurrentRoute: Boolean,
+): VariableModeSelectionAction = if (
+    mode == VariableChangeMode.RANDOM && wasSelectedInCurrentRoute
+) {
+    VariableModeSelectionAction.EDIT_RANDOM_RANGE
+} else {
+    VariableModeSelectionAction.SAVE_MODE
+}
 
 /**
  * 経路末尾の選択を同階層へ排他的に適用します。

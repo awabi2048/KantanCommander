@@ -4170,6 +4170,48 @@ class GestureSequenceEditor(
         }
     }
 
+    /**
+     * 数値変数のRange入力専用経路です。
+     * 方式選択と範囲編集を別操作にし、Dialog表示中に型・操作・方式が変わった場合は
+     * 古い設定へ範囲を保存しません。rangeフィールドの汎用入力経路にも依存しません。
+     */
+    private fun beginVariableRandomRangeInput(
+        player: Player,
+        context: CommandSettingContext,
+    ) {
+        val snapshot = plugin.scripts.load(context.scriptId) ?: return
+        observedRevision = snapshot.revision
+        val node = snapshot.graph.nodes[context.nodeId] ?: return
+        if (!CommandSettingsModel.isRandomRangeInputAvailable(node)) {
+            updateLower(player)
+            return
+        }
+
+        val spec = CommandDialogSpecs.randomRange
+        beginSettingInput(player, spec, node.string("range")) { raw ->
+            val normalized = raw.trim()
+            val currentNode = plugin.scripts.load(context.scriptId)
+                ?.graph?.nodes?.get(context.nodeId)
+            if (currentNode == null || !CommandSettingsModel.isRandomRangeInputAvailable(currentNode)) {
+                return@beginSettingInput KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            }
+            // Dialog共通層でも検証されますが、ここでも同じSpecを適用し、保存境界を閉じます。
+            val validationError = spec.validateInput(normalized)
+            if (validationError != null) {
+                KcI18n.text(player, validationError)
+            } else if (!updateSettingNode(player, context, configuredFields = setOf("range")) {
+                    CommandSettingsModel.setParameter(it, "range", normalized)
+                }) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            } else {
+                null
+            }
+        }
+    }
+
     /** 単一文字列の入力をCC-Systemの入力画面へ委譲します。 */
     private fun showTextInputDialog(
         player: Player,
@@ -7968,6 +8010,18 @@ class GestureSequenceEditor(
             GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
                 if (group != "changeMode") return
                 val mode = runCatching { VariableChangeMode.valueOf(value) }.getOrNull() ?: return
+                if (mode == VariableChangeMode.RANDOM &&
+                    !CommandSettingsModel.supportsRandomNumberMode(node)
+                ) return
+                val wasSelectedInCurrentRoute =
+                    state.settingTreePath?.nodeIds?.lastOrNull() == encoded &&
+                        node.string("changeMode", VariableChangeMode.ASSIGN.name) == mode.name
+                val action = variableModeSelectionAction(mode, wasSelectedInCurrentRoute)
+                rememberSettingNode(encoded)
+                if (action == VariableModeSelectionAction.EDIT_RANDOM_RANGE) {
+                    beginVariableRandomRangeInput(player, settingContext)
+                    return
+                }
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "changeMode", mode.name)
                     }) showSettingScreen()

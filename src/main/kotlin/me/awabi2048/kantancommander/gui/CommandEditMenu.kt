@@ -3972,6 +3972,43 @@ sealed interface DisplayValue {
         }
     }
 
+    /**
+     * エンティティ操作の対象項目と保存値を別々の行で表示します。
+     * booleanのfalseや未入力を、項目の未選択・falseのどちらかへ誤って読み替えないための型です。
+     */
+    data class EntityPropertySetting(
+        val property: DisplayValue,
+        val value: DisplayValue,
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> = listOf(
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA),
+                property.render(player),
+            ),
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE),
+                value.render(player),
+            ),
+        )
+    }
+
+    /** 乱数方式とRangeの現在値を、方式タブ内で編集・確認できる複合表示です。 */
+    data class VariableRandomRange(
+        val mode: DisplayValue,
+        val range: DisplayValue,
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> = listOf(
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION),
+                mode.render(player),
+            ),
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE),
+                range.render(player),
+            ),
+        )
+    }
+
     /** 効果音の操作・対象・位置を、一つの設定欄で現在値として表示します。 */
     data class SoundTargetPosition(
         val targetKind: TargetKind?,
@@ -4058,7 +4095,7 @@ sealed interface DisplayValue {
         is Literal -> value
         is Localized -> KcI18n.text(player, key)
         is EntityTypeName -> rawId
-        is Timing, is Duration, is ParticleParameters, is SoundTargetPosition,
+        is Timing, is Duration, is ParticleParameters, is EntityPropertySetting, is VariableRandomRange, is SoundTargetPosition,
         is SoundSetting, is ParticleDisplay -> readableRows(player)
         is GeometrySettings -> KcI18n.text(player, geometryShapeKey(shape))
         is Location -> readableRows(player).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
@@ -4074,6 +4111,8 @@ sealed interface DisplayValue {
         is Timing -> rows(player)
         is Duration -> rows(player)
         is ParticleParameters -> rows(player)
+        is EntityPropertySetting -> rows(player)
+        is VariableRandomRange -> rows(player)
         is Location -> rows(player).takeIf { it.isNotEmpty() }
         is SoundTargetPosition -> rows(player)
         is SoundSetting -> rows(player)
@@ -5113,7 +5152,20 @@ private fun displayEntityDataPath(node: CommandNode): DisplayValue {
             val definition = EntityDataSchema.definition(parsed.propertyId) ?: return displayUnset()
             val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
             if (definition !in EntityDataSchema.propertiesFor(knownType)) return displayUnset()
-            DisplayValue.Localized(definition.optionKey)
+            val rawValue = node.string(EntityDataSchema.PARAM_VALUE)
+            val value = when (definition.valueKind) {
+                EntityPropertyValueKind.BOOLEAN -> rawValue.toBooleanStrictOrNull()
+                    ?.let(::displayBoolean)
+                    ?: displayUnset()
+                EntityPropertyValueKind.ENUM -> definition.enumChoices.firstOrNull { it.id == rawValue }
+                    ?.let { DisplayValue.Localized(it.optionKey) }
+                    ?: displayUnset()
+                EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> displayLiteral(rawValue)
+            }
+            DisplayValue.EntityPropertySetting(
+                property = DisplayValue.Localized(definition.optionKey),
+                value = value,
+            )
         }
         null -> displayUnset()
     }

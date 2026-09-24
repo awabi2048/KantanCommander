@@ -1910,12 +1910,8 @@ class GestureLowerPanel(
         outline = if (suppressHighlight) {
             null
         } else {
-            // エンティティ操作画面では設定済みを空色枠で示します。
-            // 枠の描画はCC-System、状態との対応はKantanCommanderが決定します。
-            val outline = GestureSettingVisualPolicy.choiceOutlineMaterial(
-                choice,
-                highlightsConfiguredValues = fieldKey == EntityDataPath.PARAM_PATH,
-            )
+            // 選択中は白枠、設定済み値は空色枠とする共通状態規則を使います。
+            val outline = GestureSettingVisualPolicy.choiceOutlineMaterial(choice)
             outline?.let(Bukkit::createBlockData)
         },
         enabled = choice.enabled,
@@ -3776,8 +3772,14 @@ class GestureLowerPanel(
                     node.string(EntityDataSchema.summonDataKey(propertyId)) == choice
                 }
             }
-            id.startsWith("summonData:") -> choice.selected &&
-                node.string(EntityDataSchema.summonDataKey(id.removePrefix("summonData:"))).isNotBlank()
+            id.startsWith("summonData:") -> {
+                // selectedは切替状態（真偽値ならON）を表すため、設定済み判定には使いません。
+                // 明示的なfalseも有効な保存値として扱います。
+                val propertyId = id.removePrefix("summonData:")
+                val definition = EntityDataSchema.definition(propertyId)
+                val raw = node.string(EntityDataSchema.summonDataKey(propertyId))
+                definition?.let { EntityPropertyChoicePolicy.isValueConfigured(it, raw) } == true
+            }
             id.startsWith("equipmentSlot:") -> choice.selected &&
                 node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
                 CommandSettingsModel.isFieldConfigured(node, "slot")
@@ -3806,14 +3808,12 @@ class GestureLowerPanel(
             id.startsWith("entityData:property:") -> {
                 val propertyId = id.removePrefix("entityData:property:")
                 val raw = node.string(EntityDataSchema.PARAM_VALUE)
-                EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH)) == propertyId &&
-                    when (EntityDataSchema.definition(propertyId)?.valueKind) {
-                        EntityPropertyValueKind.BOOLEAN -> raw.toBooleanStrictOrNull() != null
-                        EntityPropertyValueKind.ENUM ->
-                            EntityDataSchema.definition(propertyId)?.enumChoices?.any { it.id == raw } == true
-                        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> raw.isNotBlank()
-                        null -> false
-                    }
+                val definition = EntityDataSchema.definition(propertyId) ?: return false
+                EntityPropertyChoicePolicy.state(
+                    activePropertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH)),
+                    definition = definition,
+                    rawValue = raw,
+                ).configured
             }
             id.startsWith("attribute:") ->
                 EntityDataPath.attributeIdOf(node.string(EntityDataPath.PARAM_PATH)) == id.removePrefix("attribute:")
@@ -4157,11 +4157,15 @@ class GestureLowerPanel(
             buildList {
                 add(choice(VariableChangeMode.ASSIGN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN))
                 if (node.type == CommandType.TEMP_SET && type == ValueType.NUMBER) {
-                    add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                    if (CommandSettingsModel.supportsRandomNumberMode(node)) {
+                        add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                    }
                 } else if (node.type == CommandType.VARIABLE && type == ValueType.NUMBER) {
                     add(choice(VariableChangeMode.CALCULATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE))
                     add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
-                    add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                    if (CommandSettingsModel.supportsRandomNumberMode(node)) {
+                        add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                    }
                 } else if (node.type == CommandType.VARIABLE) {
                     add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
                 }
@@ -4310,8 +4314,8 @@ class GestureLowerPanel(
      * タグ・attributeグループ・各データ項目を同じ階層に並べます。
      * attribute全種のフラット展開は行わず、attributeは子画面への親項目とします。
      * タグ・attribute・有限候補は子画面を持つ親項目であり、選択済みの
-     * 再クリックで入室します（コードベースの共通契約）。真偽値は選択→
-     * クリックの直接切替えであり、ON状態を選択表示します。
+     * 再クリックで入室します（コードベースの共通契約）。選択表示は操作対象の項目、
+     * 設定値はvalueStateと値欄へ別々に投影します。真偽値がfalseでも対象項目は選択中です。
      * 対象種別が確定できる場合のみ適用可能な項目を表示し、和集合表示は行いません。
      */
     private fun entityDataRootChoices(node: CommandNode, player: Player): List<SettingChoice> {
@@ -4344,21 +4348,26 @@ class GestureLowerPanel(
                 )
             }
             EntityDataSchema.propertiesFor(knownType).forEach { definition ->
-                val targeted = currentProperty == definition.id
+                val propertyState = EntityPropertyChoicePolicy.state(
+                    activePropertyId = currentProperty,
+                    definition = definition,
+                    rawValue = currentValue,
+                )
                 when (definition.valueKind) {
-                    // 真偽値はON状態を選択表示し、トグル操作と一致させます。子画面を持ちません。
+                    // 操作対象の選択と真偽値を分けます。falseでも現在の対象項目として選択表示し、
+                    // 実際のON/OFFは値欄、明示設定の有無はvalueStateで示します。
                     EntityPropertyValueKind.BOOLEAN -> add(
                         SettingChoice(
                             "entityData:property:${definition.id}",
                             KcI18n.text(player, definition.optionKey),
-                            targeted && currentValue == "true",
+                            propertyState.selected,
                         ),
                     )
                     EntityPropertyValueKind.ENUM -> add(
                         GestureSettingTreeNode(
                             id = "entityData:property:${definition.id}",
                             label = KcI18n.text(player, definition.optionKey),
-                            selected = targeted,
+                            selected = propertyState.selected,
                             children = definition.enumChoices.map { choice ->
                                 SettingChoice(
                                     "propertyValue:${choice.id}",
@@ -4372,7 +4381,7 @@ class GestureLowerPanel(
                         SettingChoice(
                             "entityData:property:${definition.id}",
                             KcI18n.text(player, definition.optionKey),
-                            targeted && currentValue.isNotBlank(),
+                            propertyState.selected,
                         ),
                     )
                 }
@@ -4385,8 +4394,8 @@ class GestureLowerPanel(
      *
      * 既存Entity編集の統合選択画面と同じ階層・操作契約で、保存先だけを
      * 召喚時個別設定（`summonData_<propertyId>`）へ振り替えます。
-     * 真偽値は選択→クリックの直接切替え、有限候補は子画面を持たず
-     * 行内に選択肢を展開します。文字列・整数はDialog入力へ進みます。
+     * 各行の選択表示は現在の操作経路、設定済み状態は共通valueStateへ渡し、
+     * 真偽値や文字列の保存値を操作選択状態へ流用しません。
      * 召喚種類が確定できる場合のみ適用可能な項目を表示します。
      */
     private fun summonDataRootChoices(node: CommandNode, player: Player): List<SettingChoice> {
@@ -4403,14 +4412,24 @@ class GestureLowerPanel(
                         SettingChoice(
                             "summonData:${definition.id}",
                             KcI18n.text(player, definition.optionKey),
-                            current == "true",
+                            // ON/OFFは保存値表示に使い、操作選択として白枠へ流用しません。
+                            selected = false,
+                            description = current?.toBooleanStrictOrNull()?.let { enabled ->
+                                KcI18n.text(
+                                    player,
+                                    if (enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED
+                                    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
+                                )
+                            }.orEmpty(),
                         ),
                     )
                     me.awabi2048.kantancommander.model.EntityPropertyValueKind.ENUM -> add(
                         GestureSettingTreeNode(
                             id = "summonData:${definition.id}",
                             label = KcI18n.text(player, definition.optionKey),
-                            selected = current != null,
+                            selected = false,
+                            description = definition.enumChoices.firstOrNull { it.id == current }
+                                ?.let { KcI18n.text(player, it.optionKey) }.orEmpty(),
                             children = definition.enumChoices.map { choice ->
                                 SettingChoice(
                                     "summonDataValue:${definition.id}:${choice.id}",
@@ -4426,7 +4445,8 @@ class GestureLowerPanel(
                         SettingChoice(
                             "summonData:${definition.id}",
                             KcI18n.text(player, definition.optionKey),
-                            !current.isNullOrBlank(),
+                            selected = false,
+                            description = current.orEmpty(),
                         ),
                     )
                 }

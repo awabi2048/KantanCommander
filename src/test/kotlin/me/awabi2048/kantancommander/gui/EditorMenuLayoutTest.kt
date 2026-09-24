@@ -3,6 +3,8 @@ package me.awabi2048.kantancommander.gui
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.EntityDataPath
+import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -15,6 +17,44 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class EditorMenuLayoutTest {
+    @Test
+    fun `entity property summary keeps the selected property separate from its boolean value`() {
+        fun value(raw: String): DisplayValue {
+            val node = CommandType.ENTITY_OPERATION.newNode().apply {
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("gravity")
+                params[EntityDataSchema.PARAM_VALUE] = raw
+            }
+            return EditorMenuLayout.fields(CommandType.ENTITY_OPERATION)
+                .single { it.key == EntityDataPath.PARAM_PATH }
+                .value(node)
+        }
+
+        val property = DisplayValue.Localized(
+            requireNotNull(EntityDataSchema.definition("gravity")).optionKey,
+        )
+        assertEquals(
+            DisplayValue.EntityPropertySetting(
+                property,
+                DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED),
+            ),
+            value("false"),
+        )
+        assertEquals(
+            DisplayValue.EntityPropertySetting(
+                property,
+                DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED),
+            ),
+            value("true"),
+        )
+        assertEquals(
+            DisplayValue.EntityPropertySetting(
+                property,
+                DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+            ),
+            value(""),
+        )
+    }
+
     @Test
     fun `structured target and destination values are shown in settings`() {
         val node = CommandType.TELEPORT.newNode().apply {

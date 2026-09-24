@@ -155,6 +155,45 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `random range is edited from the mode tab and only for numeric random operations`() {
+        val variable = CommandType.VARIABLE.newNode().apply {
+            params["type"] = ValueType.NUMBER.name
+            params["operation"] = VariableOperation.SET.name
+            params["changeMode"] = me.awabi2048.kantancommander.model.VariableChangeMode.RANDOM.name
+            params["range"] = "1..6"
+        }
+        val temporary = CommandType.TEMP_SET.newNode().apply {
+            params["tempType"] = ValueType.NUMBER.name
+            params["changeMode"] = me.awabi2048.kantancommander.model.VariableChangeMode.RANDOM.name
+            params["range"] = "0.25..2.5"
+        }
+
+        listOf(variable, temporary).forEach { node ->
+            assertTrue(CommandSettingsModel.isRandomRangeInputAvailable(node))
+            val gestureFields = CommandSettingsModel.gestureVisibleFields(node)
+            assertFalse(gestureFields.any { it.key == "range" })
+            val summary = gestureFields.single { it.key == "changeMode" }.value(node)
+            assertTrue(summary is DisplayValue.VariableRandomRange)
+        }
+        assertEquals(
+            DisplayValue.VariableRandomRange(
+                DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM),
+                DisplayValue.Literal("1..6"),
+            ),
+            CommandSettingsModel.gestureVisibleFields(variable)
+                .single { it.key == "changeMode" }.value(variable),
+        )
+
+        variable.params["changeMode"] = me.awabi2048.kantancommander.model.VariableChangeMode.ASSIGN.name
+        assertFalse(CommandSettingsModel.isRandomRangeInputAvailable(variable))
+        variable.params["changeMode"] = me.awabi2048.kantancommander.model.VariableChangeMode.RANDOM.name
+        variable.params["operation"] = VariableOperation.COPY.name
+        assertFalse(CommandSettingsModel.supportsRandomNumberMode(variable))
+        temporary.params["tempType"] = ValueType.STRING.name
+        assertFalse(CommandSettingsModel.supportsRandomNumberMode(temporary))
+    }
+
+    @Test
     fun `coordinate facing is incomplete until all values are entered`() {
         val node = CommandType.TELEPORT.newNode()
 
