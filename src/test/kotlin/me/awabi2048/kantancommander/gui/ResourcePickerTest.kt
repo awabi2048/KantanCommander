@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
  * issue #28 の候補選択子画面の回帰テストです。
  *
  * Registry由来の一覧取得は [CommandDialogSpecs.registeredIds] を正本とし、
- * ここでは種別対応・ページング・アイコン解決だけを固定します。
+ * ここでは種別対応・プリセット名・ページング・アイコン解決を固定します。
  * サーバーなしでも検証できる範囲に留めます。
  */
 class ResourcePickerTest {
@@ -24,10 +24,30 @@ class ResourcePickerTest {
         assertEquals(GestureResourcePickerKind.ENTITY_TYPE, ResourcePicker.kindForFieldKey("entityType"))
         assertEquals(GestureResourcePickerKind.PARTICLE, ResourcePicker.kindForFieldKey(ParticleSettings.PARAM_PARTICLE))
         assertEquals(GestureResourcePickerKind.SOUND, ResourcePicker.kindForFieldKey("sound"))
+        assertEquals(GestureResourcePickerKind.SOUND, ResourcePicker.kindForFieldKey("soundSetting"))
         assertEquals(GestureResourcePickerKind.EFFECT, ResourcePicker.kindForFieldKey("effect"))
         assertNull(ResourcePicker.kindForFieldKey("text"))
         assertNull(ResourcePicker.kindForFieldKey("volume"))
         assertNull(ResourcePicker.kindForFieldKey("block"))
+    }
+
+    @Test
+    fun `particle and sound presets have independent localized names and command ids`() {
+        listOf(GestureResourcePickerKind.PARTICLE, GestureResourcePickerKind.SOUND).forEach { kind ->
+            val ids = ResourcePresets.ids(kind)
+            val nameKeys = ids.mapNotNull { ResourcePresets.nameKey(kind, it) }
+            assertEquals(ids.size, nameKeys.size, kind.name)
+            assertEquals(nameKeys.size, nameKeys.distinct().size, kind.name)
+        }
+        assertEquals("sound", ResourcePicker.valueFieldKey("soundSetting"))
+        assertEquals(
+            "minecraft:flame",
+            ResourcePresetDisplay.commandId(GestureResourcePickerKind.PARTICLE, "FLAME"),
+        )
+        assertEquals(
+            "minecraft:block.note_block.harp",
+            ResourcePresetDisplay.commandId(GestureResourcePickerKind.SOUND, "minecraft:block.note_block.harp"),
+        )
     }
 
     @Test
