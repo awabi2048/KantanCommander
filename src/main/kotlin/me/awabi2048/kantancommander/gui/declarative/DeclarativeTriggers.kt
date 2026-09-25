@@ -1,7 +1,7 @@
 package me.awabi2048.kantancommander.gui.declarative
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
-import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
+
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
@@ -36,30 +36,27 @@ data class TriggerChoiceData(
     val pagerDisabledBackground: BlockData? = null,
 )
 
-/** 選択済みイベントの詳細子画面に渡す表示値です。保存済みの値とは分離します。 */
+/** 選択済みイベントの詳細子画面へ渡す表示値です。保存済みの値とは分離します。 */
 data class TriggerDetailData(
-    val title: Component,
     val eventLabel: String,
     val eventName: Component,
     val description: Component,
+    val descriptionDetail: DescriptionDetail? = null,
     val confirmLabel: Component,
     val backLabel: Component,
     val tabBackground: BlockData,
     val selectedTabBackground: BlockData,
-    val tabOutline: BlockData,
     val confirmBackground: BlockData,
     val backBackground: BlockData,
     val tabs: List<TriggerDetailTab> = emptyList(),
     val selectedTab: Int = 0,
     val values: List<SettingsValueRow> = emptyList(),
-    val actions: List<TriggerDetailAction> = emptyList(),
+    /** 通常TARGETと同じ候補カード列です。独自の縦並び操作は持ちません。 */
+    val choices: List<SettingsChoiceCard> = emptyList(),
 )
 
-/** 詳細画面の左タブです。設定済みと選択中は別の状態として保持します。 */
-data class TriggerDetailTab(val key: String, val label: Component, val configured: Boolean)
-
-/** 詳細画面右側の操作です。値はNameに含めず、上部の値行へ出します。 */
-data class TriggerDetailAction(val key: String, val label: Component, val background: BlockData, val outline: BlockData? = null)
+/** 詳細画面の左タブです。通常設定と同じく選択状態だけを持ちます。 */
+data class TriggerDetailTab(val key: String, val label: Component)
 
 /**
  * issue #7 の起動方法の選択子画面の宣言区画です。
@@ -94,22 +91,18 @@ object DeclarativeTriggers {
     fun detailDocument(data: TriggerDetailData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
         val frame = contentFrame(panel)
         val nodes = mutableListOf<GestureGuiNode>()
-        val tabs = data.tabs.ifEmpty { listOf(TriggerDetailTab("event", data.title, false)) }
         DeclarativeSettings.tabColumnSection(
             nodes,
             frame,
-            tabs = tabs.mapIndexed { index, tab ->
+            tabs = data.tabs.mapIndexed { index, tab ->
                 val selected = index == data.selectedTab
                 SettingsTabEntry(
                     label = tab.label,
                     selected = selected,
                     attentionHover = null,
                     background = if (selected) data.selectedTabBackground else data.tabBackground,
-                    outline = when {
-                        selected -> GestureGuiOutline(data.tabOutline)
-                        tab.configured -> GestureGuiOutline(data.confirmBackground)
-                        else -> null
-                    },
+                    // 通常設定のタブと同じく設定済み縁は使いません。
+                    outline = null,
                     elementId = "lower-trigger-detail-tab:${tab.key}",
                 )
             },
@@ -118,7 +111,7 @@ object DeclarativeTriggers {
             nodes,
             frame,
             body = data.description,
-            detail = null,
+            detail = data.descriptionDetail,
             centerX = 0.28,
             hoverY = GestureLowerPanel.ACTION_DESCRIPTION_Y,
         )
@@ -127,27 +120,7 @@ object DeclarativeTriggers {
             frame,
             rows = listOf(SettingsValueRow("trigger-detail-event", data.eventLabel, data.eventName, GestureLowerPanel.SETTING_VALUE_ANCHOR_Y)) + data.values,
         )
-        data.actions.forEachIndexed { index, action ->
-            DeclarativeSettings.actionCardSection(
-                nodes, frame,
-                SettingsActionCard(
-                    elementId = "lower-trigger-detail-action:${action.key}",
-                    label = action.label,
-                    background = action.background,
-                    outline = action.outline,
-                    cx = 0.28,
-                    cy = 0.06 - index * 0.12,
-                    w = 0.55,
-                    h = 0.10,
-                    labelSize = 0.0048,
-                    labelWidth = 100,
-                    gestures = GestureGuiClickPolicy.CLICK,
-                    guard = null,
-                    hover = null,
-                    visualTag = "trigger-detail-action-${action.key}",
-                ),
-            )
-        }
+        DeclarativeSettings.choiceCardsSection(nodes, frame, data.choices)
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
@@ -156,11 +129,11 @@ object DeclarativeTriggers {
                 label = data.confirmLabel,
                 background = data.confirmBackground,
                 cx = 0.28,
-                cy = -0.34,
-                w = 0.55,
-                h = 0.10,
+                cy = -0.47,
+                w = 0.92,
+                h = 0.08,
                 labelSize = 0.0048,
-                labelWidth = 100,
+                labelWidth = 140,
                 gestures = GestureGuiClickPolicy.CLICK,
                 guard = null,
                 hover = null,

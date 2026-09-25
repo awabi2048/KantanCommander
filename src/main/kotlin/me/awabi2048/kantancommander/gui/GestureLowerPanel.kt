@@ -134,6 +134,8 @@ class GestureLowerPanel(
     val LOWER_SCREEN_ID = "gesture-editor-lower"
     /** 個別設定専用。親の下部画面へモーダルに重ねます。 */
     val SETTING_CHILD_SCREEN_ID = GestureSettingChildScreenIds.ROOT
+    /** 起動トリガーのTARGET_FILTERSを既存設定子画面より前面へ積む専用IDです。 */
+    val TRIGGER_FILTER_SCREEN_ID = "gesture-trigger-filter-child"
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
     val TEST_CONFIRM_SCREEN_ID = "gesture-editor-test-confirm"
 
@@ -1269,130 +1271,309 @@ class GestureLowerPanel(
         )
     }
 
-    /** 再クリック後のイベント詳細だけを、一般コマンド設定と同じ左右構成で表示します。 */
+    /**
+     * 通常コマンドのTARGETと同じ候補・詳細操作で起動条件を編集します。
+     *
+     * 左タブは通常の選択表現だけを使い、設定済み縁は付けません。右側の候補は
+     * 通常TARGETと同じ共通カード生成器，并由下の固定操作として全条件の確定を
+     * 1枚だけ置きます。編集・消去・視線取得の縦並び操作は持ちません。
+     */
     fun buildTriggerDetailChild(state: GestureEditorState, player: Player): GestureGuiView {
         val event = requireNotNull(state.pendingTriggerEvent) { "詳細画面のイベントが選択されていません" }
-        val conditions = state.pendingTriggerConditions
         val hasOperation = event in setOf(EventTriggerKind.LEVER_CLICK, EventTriggerKind.ENTITY_CLICK, EventTriggerKind.BLOCK_CLICK)
         val tabs = buildList {
             add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailTab(
-                "who", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WHO),
-                conditions.actorId != null || conditions.actorTarget != null,
+                TriggerDetailTab.PLAYER_FILTER.name,
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_PLAYER_FILTER),
             ))
             add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailTab(
-                "target", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
-                if (event == EventTriggerKind.ENTITY_CLICK) {
-                    conditions.entityId != null || conditions.entityTarget != null
-                } else conditions.blockType != null || conditions.blockIdentity != null,
+                TriggerDetailTab.TARGET.name,
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
             ))
             if (hasOperation) add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailTab(
-                "operation", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OPERATION),
-                conditions.clickSide != null || conditions.leverState != null,
+                TriggerDetailTab.OPERATION.name,
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OPERATION),
             ))
         }
-        val selectedTab = tabs.indexOfFirst { it.key == state.triggerDetailTab }.coerceAtLeast(0)
-        val tab = tabs[selectedTab]
-        val unset = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY)
-        fun labeled(label: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): String? =
-            value?.let { "${KcI18n.text(player, label)}: $it" }
-        val value = when (tab.key) {
-            "who" -> listOfNotNull(
-                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, conditions.actorTarget?.name),
-                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, conditions.actorTarget?.tag),
-                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE, conditions.actorTarget?.gameMode),
-                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, conditions.actorId?.toString()),
-            ).joinToString(" / ").ifBlank { unset }
-            "target" -> if (event == EventTriggerKind.ENTITY_CLICK) {
-                listOfNotNull(
-                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, conditions.entityTarget?.entityType),
-                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, conditions.entityTarget?.name),
-                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, conditions.entityTarget?.tag),
-                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, conditions.entityId?.toString()),
-                ).joinToString(" / ").ifBlank { unset }
-            } else {
-                listOfNotNull(
-                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, conditions.blockType),
-                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
-                        conditions.blockIdentity?.let { "${it.world} ${it.x} ${it.y} ${it.z}" }),
-                ).joinToString(" / ").ifBlank { unset }
-            }
-            else -> when {
-                conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.LEFT ->
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_LEFT)
-                conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.RIGHT ->
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_RIGHT)
-                conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.ON ->
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ON)
-                conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.OFF ->
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OFF)
-                else -> unset
-            }
-        }
-        val actionBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE)
-        val actions = when (tab.key) {
-            "operation" -> {
-                val choices = if (event == EventTriggerKind.LEVER_CLICK) {
-                    listOf(
-                        "any" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY,
-                        "on" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ON,
-                        "off" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OFF,
-                    )
-                } else listOf(
-                    "any" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY,
-                    "left" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_LEFT,
-                    "right" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_RIGHT,
-                )
-                choices.map { (key, label) ->
-                    val selected = when (key) {
-                        "any" -> conditions.clickSide == null && conditions.leverState == null
-                        "left" -> conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.LEFT
-                        "right" -> conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.RIGHT
-                        "on" -> conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.ON
-                        else -> conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.OFF
-                    }
-                    me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
-                        key, KcI18n.component(player, label), actionBackground,
-                        if (selected) Bukkit.createBlockData(Material.WHITE_CONCRETE) else null,
-                    )
-                }
-            }
-            else -> buildList {
-                add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
-                    "edit", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_EDIT), actionBackground,
-                ))
-                if (tab.key == "target") add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
-                    "capture", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_CAPTURE), actionBackground,
-                ))
-                add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
-                    "clear", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR), actionBackground,
-                ))
-            }
-        }
+        val selectedTab = tabs.indexOfFirst { it.key == state.triggerDetailTab.name }.coerceAtLeast(0)
+        val rawChoices = triggerDetailChoices(state, event, player)
+        val defaultChoice = rawChoices.firstOrNull { it.selected }?.id
+        val choices = applyPathSelectionExclusive(
+            rawChoices,
+            state.triggerDetailSelectedChoiceId ?: defaultChoice,
+        )
+        val detailHint = choices.firstOrNull { it.selected && it.hasChildren }
+            ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.detailDocument(
                 me.awabi2048.kantancommander.gui.declarative.TriggerDetailData(
-                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS)),
                     eventLabel = TriggerDisplay.kindName(player, TriggerKind.EVENT),
                     eventName = Component.text(TriggerDisplay.eventName(player, event)),
-                    description = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PRESET_TARGET_DETAIL)),
+                    description = Component.text(triggerDetailDescription(player, state.triggerDetailTab, event)),
+                    descriptionDetail = detailHint?.let {
+                        DescriptionDetail(Component.text(it, NamedTextColor.GRAY), SETTING_DETAIL_ANCHOR_Y)
+                    },
                     confirmLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM)),
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     tabBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
                     selectedTabBackground = Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(true)),
-                    tabOutline = Bukkit.createBlockData(Material.WHITE_CONCRETE),
                     confirmBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                     tabs = tabs,
                     selectedTab = selectedTab,
-                    values = listOf(SettingsValueRow(
-                        "trigger-detail-value", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE),
-                        Component.text(value), GestureLowerPanel.SETTING_VALUE_ANCHOR_Y - 0.105,
-                    )),
-                    actions = actions,
+                    values = listOf(triggerDetailValueRow(state, event, player)),
+                    choices = settingChoiceCards(
+                        choices = choices,
+                        fieldKey = "trigger-${state.triggerDetailTab.name}",
+                        player = player,
+                        child = false,
+                        suppressHighlight = false,
+                    ),
                 ),
             ),
             GestureLowerMode.TRIGGER_DETAIL,
             "[DeclarativeTriggerDetail]",
+        )
+    }
+
+    private fun triggerDetailDescription(
+        player: Player,
+        tab: TriggerDetailTab,
+        event: EventTriggerKind,
+    ): String = KcI18n.text(
+        player,
+        when (tab) {
+            TriggerDetailTab.PLAYER_FILTER -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_PLAYER_FILTER
+            TriggerDetailTab.TARGET -> if (event == EventTriggerKind.ENTITY_CLICK) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_ENTITY_FILTER
+            } else {
+                KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_BLOCK_FILTER
+            }
+            TriggerDetailTab.OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_OPERATION
+        },
+    )
+
+    /** 通常TARGETの候補生成と同じ選択・設定済み表現でトリガー条件の親カードを返します。 */
+    private fun triggerDetailChoices(
+        state: GestureEditorState,
+        event: EventTriggerKind,
+        player: Player,
+    ): List<GestureSettingTreeNode> {
+        val conditions = state.triggerConditionDraft.conditions
+        return when (state.triggerDetailTab) {
+            TriggerDetailTab.PLAYER_FILTER -> triggerTargetParentChoices(
+                prefix = "trigger-player",
+                configured = conditions.hasActorFilter(),
+                children = triggerFilterChoices(state, TriggerFilterRole.PLAYER, player),
+                player = player,
+            )
+            TriggerDetailTab.TARGET -> if (event == EventTriggerKind.ENTITY_CLICK) {
+                triggerTargetParentChoices(
+                    prefix = "trigger-entity",
+                    configured = conditions.hasEntityFilter(),
+                    children = triggerFilterChoices(state, TriggerFilterRole.ENTITY, player),
+                    player = player,
+                )
+            } else {
+                triggerTargetParentChoices(
+                    prefix = "trigger-block",
+                    configured = conditions.hasBlockFilter(),
+                    children = triggerFilterChoices(state, TriggerFilterRole.BLOCK, player),
+                    player = player,
+                )
+            }
+            TriggerDetailTab.OPERATION -> triggerOperationChoices(state, event, player)
+        }
+    }
+
+    private fun triggerTargetParentChoices(
+        prefix: String,
+        configured: Boolean,
+        children: List<GestureSettingTreeNode>,
+        player: Player,
+    ): List<GestureSettingTreeNode> = listOf(
+        GestureSettingTreeNode(
+            id = "$prefix:any",
+            label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY),
+            selected = !configured,
+            valueState = GestureSettingValueState.INITIAL,
+            description = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_ANY),
+        ),
+        GestureSettingTreeNode(
+            id = "$prefix:detail",
+            label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
+            selected = configured,
+            valueState = if (configured) GestureSettingValueState.CONFIGURED else GestureSettingValueState.INITIAL,
+            children = children,
+            description = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PRESET_TARGET_DETAIL),
+            bottomAligned = true,
+        ),
+    )
+
+    private fun triggerOperationChoices(
+        state: GestureEditorState,
+        event: EventTriggerKind,
+        player: Player,
+    ): List<GestureSettingTreeNode> {
+        val choices = if (event == EventTriggerKind.LEVER_CLICK) {
+            listOf(
+                Triple("any", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY, null as me.awabi2048.kantancommander.model.TriggerLeverState?),
+                Triple("on", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ON, me.awabi2048.kantancommander.model.TriggerLeverState.ON),
+                Triple("off", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OFF, me.awabi2048.kantancommander.model.TriggerLeverState.OFF),
+            )
+        } else {
+            listOf(
+                Triple("any", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY, null as me.awabi2048.kantancommander.model.TriggerClickSide?),
+                Triple("left", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_LEFT, me.awabi2048.kantancommander.model.TriggerClickSide.LEFT),
+                Triple("right", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_RIGHT, me.awabi2048.kantancommander.model.TriggerClickSide.RIGHT),
+            )
+        }
+        val conditions = state.triggerConditionDraft.conditions
+        return choices.map { (key, labelKey, value) ->
+            val selected = when (event) {
+                EventTriggerKind.LEVER_CLICK -> conditions.leverState == value
+                else -> conditions.clickSide == value
+            }
+            GestureSettingTreeNode(
+                id = "trigger-operation:$key",
+                label = KcI18n.text(player, labelKey),
+                selected = selected,
+                valueState = if (selected && key != "any") {
+                    GestureSettingValueState.CONFIGURED
+                } else {
+                    GestureSettingValueState.INITIAL
+                },
+                description = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_OPERATION),
+            )
+        }
+    }
+
+    private fun triggerFilterChoices(
+        state: GestureEditorState,
+        role: TriggerFilterRole,
+        player: Player,
+    ): List<GestureSettingTreeNode> {
+        val conditions = state.triggerConditionDraft.conditions
+        fun filter(id: String, label: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): GestureSettingTreeNode =
+            GestureSettingTreeNode(
+                id = "trigger-filter:$id",
+                label = labeled(player, label, value),
+                valueState = if (value != null) GestureSettingValueState.CONFIGURED else GestureSettingValueState.INITIAL,
+                selectionMode = GestureSettingSelectionMode.MULTIPLE,
+                description = KcI18n.text(
+                    player,
+                    when (id) {
+                        "entityType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE
+                        "gameMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_GAME_MODE
+                        "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_TAG
+                        "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_NAME
+                        "individual" -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_INDIVIDUAL
+                        "blockType" -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_BLOCK_TYPE
+                        "blockIdentity" -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_BLOCK_IDENTITY
+                        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_DEFAULT
+                    },
+                ),
+            )
+        return when (role) {
+            TriggerFilterRole.PLAYER -> listOf(
+                filter("gameMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE, conditions.actorTarget?.gameMode),
+                filter("tag", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, conditions.actorTarget?.tag),
+                filter("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, conditions.actorTarget?.name),
+                filter("individual", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, conditions.actorId?.toString()),
+            )
+            TriggerFilterRole.ENTITY -> listOf(
+                filter("entityType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, conditions.entityTarget?.entityType),
+                filter("tag", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, conditions.entityTarget?.tag),
+                filter("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, conditions.entityTarget?.name),
+                filter("individual", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, conditions.entityId?.toString()),
+            )
+            TriggerFilterRole.BLOCK -> listOf(
+                filter("blockType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, conditions.blockType),
+                filter(
+                    "blockIdentity",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                    conditions.blockIdentity?.let { "${it.world} ${it.x} ${it.y} ${it.z}" },
+                ),
+            )
+        }
+    }
+
+    private fun triggerDetailValueRow(
+        state: GestureEditorState,
+        event: EventTriggerKind,
+        player: Player,
+    ): SettingsValueRow {
+        val conditions = state.triggerConditionDraft.conditions
+        val value = when (state.triggerDetailTab) {
+            TriggerDetailTab.PLAYER_FILTER -> if (conditions.hasActorFilter()) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
+            } else {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY)
+            }
+            TriggerDetailTab.TARGET -> {
+                val configured = if (event == EventTriggerKind.ENTITY_CLICK) {
+                    conditions.hasEntityFilter()
+                } else {
+                    conditions.hasBlockFilter()
+                }
+                if (configured) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
+                else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY)
+            }
+            TriggerDetailTab.OPERATION -> when {
+                conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.LEFT -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_LEFT)
+                conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.RIGHT -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_RIGHT)
+                conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.ON -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ON)
+                conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.OFF -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OFF)
+                else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY)
+            }
+        }
+        return SettingsValueRow(
+            id = "trigger-detail-value",
+            label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE),
+            value = Component.text(value),
+            y = SETTING_VALUE_ANCHOR_Y - 0.105,
+        )
+    }
+
+    private fun triggerFilterDescription(player: Player, role: TriggerFilterRole): String = KcI18n.text(
+        player,
+        when (role) {
+            TriggerFilterRole.PLAYER -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_PLAYER_FILTER
+            TriggerFilterRole.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_ENTITY_FILTER
+            TriggerFilterRole.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_BLOCK_FILTER
+        },
+    )
+
+    /** 通常TARGET_FILTERSと同じ子画面配置・カード・hover・戻る操作で条件を一項目ずつ編集します。 */
+    fun buildTriggerFilterChild(state: GestureEditorState, player: Player): GestureGuiView {
+        val role = requireNotNull(state.triggerFilterRole) { "トリガーの詳細対象が未設定です" }
+        val choices = triggerFilterChoices(state, role, player)
+        val fieldLabel = when (role) {
+            TriggerFilterRole.PLAYER -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_PLAYER_FILTER)
+            TriggerFilterRole.ENTITY -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET)
+            TriggerFilterRole.BLOCK -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET)
+        }
+        val configured = choices.any { it.valueState == GestureSettingValueState.CONFIGURED }
+        val fieldValue = Component.text(
+            if (configured) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
+            else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+        )
+        return finishSettingChoicesChildHtml(
+            fieldLabel = fieldLabel,
+            fieldValue = fieldValue,
+            backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+            description = Component.text(
+                triggerFilterDescription(player, role),
+                NamedTextColor.GRAY,
+            ),
+            cards = settingChoiceCards(
+                choices = choices,
+                fieldKey = "trigger-filter:${role.name}",
+                player = player,
+                child = true,
+                suppressHighlight = false,
+            ),
+            childScreenId = TRIGGER_FILTER_SCREEN_ID,
         )
     }
 
@@ -1942,32 +2123,87 @@ class GestureLowerPanel(
         child: Boolean,
         suppressHighlight: Boolean,
     ) {
-        // 上揃え項目は上端基準、下揃え項目（詳細設定・一時変数参照等）は
-        // 下端基準で配置します。下揃え行は下からの行番号で定まるため、
-        // 上位項目数の増減で位置がずれません。
+        DeclarativeSettings.choiceCardsSection(
+            nodes,
+            frame,
+            cards = settingChoiceCards(
+                choices = choices,
+                fieldKey = fieldKey,
+                player = player,
+                child = child,
+                suppressHighlight = suppressHighlight,
+            ),
+        )
+    }
+
+    /**
+     * 通常コマンドとトリガー詳細で共有する候補カード列です。
+     *
+     * 上段候補と下段候補、2列配置、選択／設定済み縁、子を持つ項目のhover、
+     * 子画面時の中央2列配置までを一つの生成元へ集約します。トリガー側は
+     * 独自の縦並びActionを生成せず、この通常のTARGET出力だけを利用します。
+     */
+    private fun settingChoiceCards(
+        choices: List<GestureSettingTreeNode>,
+        fieldKey: String,
+        player: Player,
+        child: Boolean,
+        suppressHighlight: Boolean,
+    ): List<SettingsChoiceCard> {
         val topChoices = choices.filterNot { it.bottomAligned }
         val bottomChoices = choices.filter { it.bottomAligned }
-        appendChoiceRows(
-            nodes, frame, topChoices, fieldKey, player, child, suppressHighlight,
+        val topRowCount = (topChoices.size + 1) / 2
+        val topCards = settingChoiceRows(
+            choices = topChoices,
+            fieldKey = fieldKey,
+            player = player,
+            child = child,
+            suppressHighlight = suppressHighlight,
             rowBase = 0,
-            rowCount = (topChoices.size + 1) / 2,
-            cyForRow = { row ->
+            rowCount = topRowCount,
+            cx = { column, row ->
+                val oddLast = topChoices.size % 2 == 1 && row == topRowCount - 1
+                if (oddLast) {
+                    if (child) 0.0 else 0.285
+                } else if (child) {
+                    if (column == 0) -0.53 else 0.53
+                } else if (column == 0) {
+                    -0.10
+                } else {
+                    0.67
+                }
+            },
+            cy = { row ->
                 if (child) CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH
                 else TARGET_PARENT_CHOICE_TOP_Y - row * TARGET_PARENT_CHOICE_PITCH
             },
         )
         val bottomRowCount = (bottomChoices.size + 1) / 2
-        appendChoiceRows(
-            nodes, frame, bottomChoices, fieldKey, player, child, suppressHighlight,
+        return topCards + settingChoiceRows(
+            choices = bottomChoices,
+            fieldKey = fieldKey,
+            player = player,
+            child = child,
+            suppressHighlight = suppressHighlight,
             rowBase = 0,
             rowCount = bottomRowCount,
-            cyForRow = { row -> SETTING_CHOICE_BOTTOM_Y + (bottomRowCount - 1 - row) * SETTING_CHOICE_PITCH },
+            cx = { column, row ->
+                val oddLast = bottomChoices.size % 2 == 1 && row == bottomRowCount - 1
+                if (oddLast) {
+                    if (child) 0.0 else 0.285
+                } else if (child) {
+                    if (column == 0) -0.53 else 0.53
+                } else if (column == 0) {
+                    -0.10
+                } else {
+                    0.67
+                }
+            },
+            cy = { row -> SETTING_CHOICE_BOTTOM_Y + (bottomRowCount - 1 - row) * SETTING_CHOICE_PITCH },
         )
     }
 
-    private fun appendChoiceRows(
-        nodes: MutableList<GestureGuiNode>,
-        frame: ContentFrame,
+    private fun settingChoiceRows(
         choices: List<GestureSettingTreeNode>,
         fieldKey: String,
         player: Player,
@@ -1975,33 +2211,24 @@ class GestureLowerPanel(
         suppressHighlight: Boolean,
         rowBase: Int,
         rowCount: Int,
-        cyForRow: (Int) -> Double,
-    ) {
-        choices.forEachIndexed { index, choice ->
-            val column = index % 2
-            val row = rowBase + index / 2
-            val cx = if (child) {
-                if (column == 0) -0.53 else 0.53
-            } else if (column == 0) -0.10 else 0.67
-            val cy = cyForRow(index / 2)
-            DeclarativeSettings.choiceCardsSection(
-                nodes,
-                frame,
-                cards = listOf(settingChoiceCard(
-                    choice = choice,
-                    fieldKey = fieldKey,
-                    player = player,
-                    child = child,
-                    suppressHighlight = suppressHighlight,
-                    cx = cx,
-                    cy = cy,
-                    row = row,
-                    rowCount = rowCount,
-                    choicesInRowGroup = choices.size,
-                    visualIndex = index,
-                )),
-            )
-        }
+        cx: (Int, Int) -> Double,
+        cy: (Int) -> Double,
+    ): List<SettingsChoiceCard> = choices.mapIndexed { index, choice ->
+        val column = index % 2
+        val row = rowBase + index / 2
+        settingChoiceCard(
+            choice = choice,
+            fieldKey = fieldKey,
+            player = player,
+            child = child,
+            suppressHighlight = suppressHighlight,
+            cx = cx(column, index / 2),
+            cy = cy(index / 2),
+            row = row,
+            rowCount = rowCount,
+            choicesInRowGroup = choices.size,
+            visualIndex = index,
+        )
     }
 
     /** 同じ意味・色・ホバー規則をKotlin宣言とHTMLテンプレートで共有する選択カードです。 */

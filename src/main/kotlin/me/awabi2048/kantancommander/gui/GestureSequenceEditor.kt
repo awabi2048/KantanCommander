@@ -103,7 +103,9 @@ import me.awabi2048.kantancommander.model.EventTriggerConditions
 import me.awabi2048.kantancommander.model.TriggerBlockIdentity
 import me.awabi2048.kantancommander.model.TriggerClickSide
 import me.awabi2048.kantancommander.model.TriggerLeverState
+import me.awabi2048.kantancommander.model.TriggerNormalizationIssue
 import me.awabi2048.kantancommander.model.effectiveTrigger
+
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.applyCalledDisk
@@ -116,7 +118,7 @@ import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
-import org.bukkit.attribute.Attribute
+
 import org.bukkit.block.data.BlockData
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
@@ -214,17 +216,68 @@ data class GestureEditorState(
     /** イベント選択画面で確定前に選択している候補です。 */
     var pendingTriggerEvent: EventTriggerKind? = null,
     /** 詳細画面の仮設定です。確定まで保存値を変更しません。 */
-    var pendingTriggerConditions: EventTriggerConditions = EventTriggerConditions(),
-    /** 仮設定がどのイベント候補に属するかを保持し、種別切替の破棄警告に使います。 */
-    var pendingTriggerConditionsEvent: EventTriggerKind? = null,
-    var triggerDetailTab: String = "who",
+    var triggerConditionDraft: TriggerConditionDraft = TriggerConditionDraft(),
+    /** 通常TARGETと同じ候補体験で編輯する詳細タブです。 */
+    var triggerDetailTab: TriggerDetailTab = TriggerDetailTab.PLAYER_FILTER,
+    /** 通常TARGETと同じ再クリック選択方式で、現在の親画面候補を保持します。 */
+    var triggerDetailSelectedChoiceId: String? = null,
+    /** 通常TARGET_FILTERSと同じ詳細子画面を開いている対象領域です。 */
+    var triggerFilterRole: TriggerFilterRole? = null,
     /** issue #8: ディスク設定の引数ページ番号です。 */
     var diskSettingsArgsPage: Int = 0,
     /** テスト実行中だけ共有する表示・復元状態です。 */
     var testExecution: GestureTestState? = null,
 )
 
+data class TriggerConditionDraft(
+    val event: EventTriggerKind? = null,
+    val conditions: EventTriggerConditions = EventTriggerConditions(),
+    val initialized: Boolean = false,
+    val dirty: Boolean = false,
+) {
+    fun edit(event: EventTriggerKind, transform: (EventTriggerConditions) -> EventTriggerConditions): TriggerConditionDraft {
+        require(initialized && this.event == event) { "異なるイベント condition draft is edited" }
+        return copy(conditions = transform(conditions), dirty = true)
+    }
+}
+
 /** 下部パネルの表示モード。各確認画面は親から分離した子画面として開きます。 */
+/** 起動トリガーの詳細条件領域です。通常TARGETのUI/UXを異なる意味領域ごとに開きます。 */
+enum class TriggerDetailTab {
+    PLAYER_FILTER,
+    TARGET,
+    OPERATION,
+}
+
+/** 通常TARGET_FILTERSへ渡すトリガー固有の保存先です。 */
+enum class TriggerFilterRole {
+    PLAYER,
+    ENTITY,
+    BLOCK,
+}
+
+private fun TriggerNormalizationIssue.localizationKey(): LocalizationKey<String> = when (this) {
+    TriggerNormalizationIssue.BLOCK_CONDITION_REMOVED ->
+        KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WARNING_BLOCK_REMOVED
+    TriggerNormalizationIssue.ENTITY_CONDITION_REMOVED ->
+        KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WARNING_ENTITY_REMOVED
+    TriggerNormalizationIssue.CLICK_CONDITION_REMOVED ->
+        KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WARNING_CLICK_REMOVED
+    TriggerNormalizationIssue.LEVER_CONDITION_REMOVED ->
+        KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WARNING_LEVER_REMOVED
+    TriggerNormalizationIssue.DISCOVERY_FILTER_REMOVED ->
+        KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WARNING_DISCOVERY_REMOVED
+    TriggerNormalizationIssue.TARGET_KIND_NORMALIZED ->
+        KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WARNING_KIND_NORMALIZED
+    TriggerNormalizationIssue.INAPPLICABLE_CONDITION ->
+        KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WARNING_INAPPLICABLE
+}
+
+/** トリガー属性を一項目解除した結果が空の場合、TargetSpec自体を未設定へ戻します。 */
+private fun TargetSpec.orNullIfUnconfigured(): TargetSpec? = takeIf {
+    entityType != null || name != null || tag != null || gameMode != null
+}
+
 enum class GestureLowerMode {
     SETTINGS,
     PICKER,
@@ -244,7 +297,7 @@ enum class GestureLowerMode {
      * 7種をページ表示し、同じ候補の再クリックで詳細設定へ進みます。
      */
     TRIGGER_EVENT,
-    /** イベント候補を再クリックした後だけ開く、左右分割の詳細設定子画面です。 */
+    /** 通常TARGETと同じ候補・詳細操作で編集する起動トリガー詳細画面です。 */
     TRIGGER_DETAIL,
     /**
      * issue #8: ディスク呼び出しの引数・戻り値受取先の設定子画面です。
@@ -834,9 +887,11 @@ class GestureSequenceEditor(
     /** 通常更新とOPENING後の再試行で、子画面の優先順位を同じにします。 */
     private fun buildCurrentLowerView(owner: Player): GestureGuiView {
         val childOpen = settingChildOpen(owner.uniqueId)
+        val triggerFilterOpen = triggerFilterChildOpen(owner.uniqueId) && state.triggerFilterRole != null
         val testChildOpen = testConfirmationChildOpen(owner.uniqueId)
         val attention = attentionState()
         return when {
+            triggerFilterOpen -> lowerPanel.buildTriggerFilterChild(state, owner)
             testChildOpen -> lowerPanel.buildTestConfirmationChild(state, owner)
             childOpen -> when (state.lowerMode) {
                 GestureLowerMode.SETTING_CHOICES -> lowerPanel.buildSettingChild(state, owner, attention)
@@ -4346,9 +4401,12 @@ class GestureSequenceEditor(
     private fun openTriggerKindSelection(player: Player) {
         val current = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
         state.pendingTriggerEvent = null
-        state.pendingTriggerConditions = EventTriggerConditions()
-        state.pendingTriggerConditionsEvent = null
+        state.triggerConditionDraft = TriggerConditionDraft()
+        state.triggerDetailTab = TriggerDetailTab.PLAYER_FILTER
+        state.triggerDetailSelectedChoiceId = null
+        state.triggerFilterRole = null
         state.lowerMode = GestureLowerMode.TRIGGER_KIND
+
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) {
             updateLower(player)
@@ -4527,9 +4585,12 @@ class GestureSequenceEditor(
     /** 起動方法の種別選択から設定一覧へ戻り、候補子画面も閉じます。 */
     private fun closeTriggerKindSelection(player: Player) {
         state.pendingTriggerEvent = null
-        state.pendingTriggerConditions = EventTriggerConditions()
-        state.pendingTriggerConditionsEvent = null
+        state.triggerConditionDraft = TriggerConditionDraft()
+        state.triggerDetailTab = TriggerDetailTab.PLAYER_FILTER
+        state.triggerDetailSelectedChoiceId = null
+        state.triggerFilterRole = null
         state.lowerMode = GestureLowerMode.SETTINGS
+
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         updateLower(player)
@@ -4541,6 +4602,9 @@ class GestureSequenceEditor(
         // 保存済みのイベントと、この画面でクリックした候補を区別します。
         // 既存値でも最初のクリックは選択、次のクリックで詳細へ進みます。
         state.pendingTriggerEvent = null
+        state.triggerDetailTab = TriggerDetailTab.PLAYER_FILTER
+        state.triggerDetailSelectedChoiceId = null
+        state.triggerFilterRole = null
         // 開くたびに先頭へ戻すと、イベント詳細から戻った時に候補位置が飛びます。
         // 既存選択がある場合だけ、その候補を含むページを明示的に開きます。
         currentEvent?.let { selected ->
@@ -4565,213 +4629,296 @@ class GestureSequenceEditor(
      */
     private fun openTriggerDetail(player: Player) {
         val event = state.pendingTriggerEvent ?: return
-        // 詳細画面から戻って同じ候補へ再入室した場合は編集中の仮設定を継続します。
-        if (state.lowerMode == GestureLowerMode.TRIGGER_EVENT &&
-            state.pendingTriggerConditions != EventTriggerConditions() &&
-            state.pendingTriggerConditionsEvent == event
-        ) {
+        val draft = state.triggerConditionDraft
+        if (state.lowerMode == GestureLowerMode.TRIGGER_EVENT && draft.initialized && draft.event == event) {
             state.lowerMode = GestureLowerMode.TRIGGER_DETAIL
             updateLower(player)
             return
         }
         val saved = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
-        // 異なるイベントへ切り替える場合、未確定の仮設定は失われます。
-        if (state.pendingTriggerConditions != EventTriggerConditions() &&
-            state.pendingTriggerConditionsEvent != null &&
-            state.pendingTriggerConditionsEvent != event
-        ) {
-            player.sendMessage("起動条件の編集中内容はイベント種別の切替により破棄されます")
+        if (draft.dirty && draft.event != null && draft.event != event) {
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DRAFT_DISCARDED),
+            )
         }
-        state.pendingTriggerConditions = if (saved?.kind == TriggerKind.EVENT && saved.event == event) {
-            saved.conditions.forEvent(event)
-        } else EventTriggerConditions()
-        state.pendingTriggerConditionsEvent = event
-        state.triggerDetailTab = "who"
+        state.triggerConditionDraft = TriggerConditionDraft(
+            event = event,
+            conditions = if (saved?.kind == TriggerKind.EVENT && saved.event == event) {
+                saved.conditions.forEvent(event)
+            } else {
+                EventTriggerConditions()
+            },
+            initialized = true,
+        )
+        state.triggerDetailTab = TriggerDetailTab.PLAYER_FILTER
+        state.triggerDetailSelectedChoiceId = null
+        state.triggerFilterRole = null
         state.lowerMode = GestureLowerMode.TRIGGER_DETAIL
         updateLower(player)
     }
 
-    /** 詳細タブの操作は仮設定だけを変え、確定ボタンで一度だけ保存します。 */
-    private fun handleTriggerDetailAction(player: Player, key: String) {
+    /** 通常TARGETと同じ再クリック規則で、親画面の候補操作を仮設定へ反映します。 */
+    private fun handleTriggerDetailChoice(player: Player, choiceId: String) {
         val event = state.pendingTriggerEvent ?: return
-        val current = state.pendingTriggerConditions
-        when (state.triggerDetailTab) {
-            "operation" -> {
-                state.pendingTriggerConditions = when (event) {
-                    EventTriggerKind.LEVER_CLICK -> when (key) {
-                        "any" -> current.copy(leverState = null)
-                        "on" -> current.copy(leverState = TriggerLeverState.ON)
-                        "off" -> current.copy(leverState = TriggerLeverState.OFF)
-                        else -> return
+        if (state.triggerDetailTab == TriggerDetailTab.OPERATION) {
+            val operation: Pair<TriggerClickSide?, TriggerLeverState?> = when (choiceId) {
+                "trigger-operation:any" -> null to null
+                "trigger-operation:left" -> TriggerClickSide.LEFT to null
+                "trigger-operation:right" -> TriggerClickSide.RIGHT to null
+                "trigger-operation:on" -> null to TriggerLeverState.ON
+                "trigger-operation:off" -> null to TriggerLeverState.OFF
+                else -> return
+            }
+            state.triggerConditionDraft = state.triggerConditionDraft.edit(event) { current ->
+                current.copy(clickSide = operation.first, leverState = operation.second)
+            }
+            state.triggerDetailSelectedChoiceId = choiceId
+            updateLower(player)
+            return
+        }
+
+        val current = state.triggerConditionDraft.conditions
+        val role = when (state.triggerDetailTab) {
+            TriggerDetailTab.PLAYER_FILTER -> TriggerFilterRole.PLAYER
+            TriggerDetailTab.TARGET -> if (event == EventTriggerKind.ENTITY_CLICK) TriggerFilterRole.ENTITY else TriggerFilterRole.BLOCK
+            TriggerDetailTab.OPERATION -> return
+        }
+        val anyId = "trigger-${roleFilterPrefix(role)}:any"
+        val detailId = "trigger-${roleFilterPrefix(role)}:detail"
+        val defaultId = when (role) {
+            TriggerFilterRole.PLAYER -> if (current.hasActorFilter()) "trigger-player:detail" else "trigger-player:any"
+            TriggerFilterRole.ENTITY -> if (current.hasEntityFilter()) "trigger-entity:detail" else "trigger-entity:any"
+            TriggerFilterRole.BLOCK -> if (current.hasBlockFilter()) "trigger-block:detail" else "trigger-block:any"
+        }
+        val wasSelected = (state.triggerDetailSelectedChoiceId ?: defaultId) == choiceId
+        state.triggerDetailSelectedChoiceId = choiceId
+        when (choiceId) {
+            anyId -> {
+                state.triggerConditionDraft = state.triggerConditionDraft.edit(event) { conditions ->
+                    when (role) {
+                        TriggerFilterRole.PLAYER -> conditions.copy(actorTarget = null, actorId = null)
+                        TriggerFilterRole.ENTITY -> conditions.copy(entityTarget = null, entityId = null)
+                        TriggerFilterRole.BLOCK -> conditions.copy(blockType = null, blockIdentity = null)
                     }
-                    EventTriggerKind.ENTITY_CLICK, EventTriggerKind.BLOCK_CLICK -> when (key) {
-                        "any" -> current.copy(clickSide = null)
-                        "left" -> current.copy(clickSide = TriggerClickSide.LEFT)
-                        "right" -> current.copy(clickSide = TriggerClickSide.RIGHT)
-                        else -> return
-                    }
-                    else -> return
                 }
                 updateLower(player)
             }
-            "who" -> when (key) {
-                "edit" -> showTriggerActorDialog(player)
-                "clear" -> {
-                    state.pendingTriggerConditions = current.copy(actorId = null, actorTarget = null)
-                    updateLower(player)
+            detailId -> if (wasSelected) {
+                openTriggerFilterChild(player, role)
+            } else {
+                updateLower(player)
+            }
+        }
+    }
+
+
+    /** 通常TARGET_FILTERSと同じ項目別操作で、トリガーの属性条件だけを編集します。 */
+    private fun handleTriggerFilterChoice(player: Player, filterId: String) {
+        val role = state.triggerFilterRole ?: return
+        val event = state.pendingTriggerEvent ?: return
+        val current = state.triggerConditionDraft.conditions
+        fun update(transform: (EventTriggerConditions) -> EventTriggerConditions) {
+            state.triggerConditionDraft = state.triggerConditionDraft.edit(event, transform)
+            val prefix = roleFilterPrefix(role)
+            val configured = when (role) {
+                TriggerFilterRole.PLAYER -> state.triggerConditionDraft.conditions.hasActorFilter()
+                TriggerFilterRole.ENTITY -> state.triggerConditionDraft.conditions.hasEntityFilter()
+                TriggerFilterRole.BLOCK -> state.triggerConditionDraft.conditions.hasBlockFilter()
+            }
+            state.triggerDetailSelectedChoiceId = "trigger-$prefix:${if (configured) "detail" else "any"}"
+        }
+        if (filterId == "gameMode") {
+            val next = when (current.actorTarget?.gameMode?.uppercase()) {
+                null -> "SURVIVAL"
+                "SURVIVAL" -> "CREATIVE"
+                "CREATIVE" -> "ADVENTURE"
+                "ADVENTURE" -> "SPECTATOR"
+                else -> null
+            }
+            val spec = current.actorTarget ?: TargetSpec(TargetKind.NEAREST_PLAYER)
+            update { conditions ->
+                conditions.copy(actorTarget = if (next == null) null else spec.copy(gameMode = next))
+            }
+            updateLower(player)
+            return
+        }
+        when (filterId) {
+            "entityType" -> showTriggerTargetFilterDialog(
+                player = player,
+                spec = requireNotNull(CommandDialogSpecs.triggerFilter(filterId)),
+                suggestionParameter = filterId,
+                initial = current.entityTarget?.entityType.orEmpty(),
+            ) { value ->
+                update { conditions ->
+                    val spec = conditions.entityTarget ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                    conditions.copy(
+                        entityTarget = value?.let { spec.copy(entityType = it) }
+                            ?: spec.copy(entityType = null).orNullIfUnconfigured(),
+                    )
                 }
             }
-            "target" -> when (key) {
-                "edit" -> if (event == EventTriggerKind.ENTITY_CLICK) showTriggerEntityDialog(player)
-                    else showTriggerBlockDialog(player)
-                "capture" -> captureTriggerTarget(player, event)
-                "clear" -> {
-                    state.pendingTriggerConditions = if (event == EventTriggerKind.ENTITY_CLICK) {
-                        current.copy(entityId = null, entityTarget = null)
-                    } else current.copy(blockType = null, blockIdentity = null)
-                    updateLower(player)
+            "tag" -> showTriggerTargetFilterDialog(
+                player = player,
+                spec = requireNotNull(CommandDialogSpecs.triggerFilter(filterId)),
+                initial = if (role == TriggerFilterRole.PLAYER) current.actorTarget?.tag else current.entityTarget?.tag,
+            ) { value ->
+                update { conditions ->
+                    if (role == TriggerFilterRole.PLAYER) {
+                        val spec = conditions.actorTarget ?: TargetSpec(TargetKind.NEAREST_PLAYER)
+                        conditions.copy(actorTarget = spec.copy(tag = value).orNullIfUnconfigured())
+                    } else {
+                        val spec = conditions.entityTarget ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                        conditions.copy(entityTarget = spec.copy(tag = value).orNullIfUnconfigured())
+                    }
                 }
             }
-        }
-    }
-
-    /** 汎用TargetSpecのプレイヤー絞り込みと個体IDを、発生した操作者1人へ適用します。 */
-    private fun showTriggerActorDialog(player: Player) {
-        val current = state.pendingTriggerConditions
-        val target = current.actorTarget
-        val fields = listOf(
-            Triple("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, target?.name.orEmpty()),
-            Triple("tag", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, target?.tag.orEmpty()),
-            Triple("gameMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE, target?.gameMode.orEmpty()),
-            Triple("individual", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, current.actorId?.toString().orEmpty()),
-        )
-        showTriggerConditionDialog(player, fields) { values ->
-            val name = values.getValue("name").ifBlank { null }
-            val tag = values.getValue("tag").ifBlank { null }
-            val gameMode = values.getValue("gameMode").ifBlank { null }
-            val id = values.getValue("individual").ifBlank { null }
-            if (tag != null && !CommandValueRules.isTag(tag)) return@showTriggerConditionDialog false
-            if (gameMode != null && gameMode.uppercase() !in setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) {
-                return@showTriggerConditionDialog false
+            "name" -> showTriggerTargetFilterDialog(
+                player = player,
+                spec = requireNotNull(CommandDialogSpecs.triggerFilter(filterId)),
+                initial = if (role == TriggerFilterRole.PLAYER) current.actorTarget?.name else current.entityTarget?.name,
+            ) { value ->
+                update { conditions ->
+                    if (role == TriggerFilterRole.PLAYER) {
+                        val spec = conditions.actorTarget ?: TargetSpec(TargetKind.NEAREST_PLAYER)
+                        conditions.copy(actorTarget = spec.copy(name = value).orNullIfUnconfigured())
+                    } else {
+                        val spec = conditions.entityTarget ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                        conditions.copy(entityTarget = spec.copy(name = value).orNullIfUnconfigured())
+                    }
+                }
             }
-            val parsedId = id?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: return@showTriggerConditionDialog false }
-            state.pendingTriggerConditions = state.pendingTriggerConditions.copy(
-                actorTarget = if (name != null || tag != null || gameMode != null) {
-                    TargetSpec(TargetKind.NEAREST_PLAYER, name = name, tag = tag, gameMode = gameMode)
-                } else null,
-                actorId = parsedId,
-            )
-            true
+            "individual" -> showTriggerTargetFilterDialog(
+                player = player,
+                spec = requireNotNull(CommandDialogSpecs.triggerFilter(filterId)),
+                initial = (if (role == TriggerFilterRole.PLAYER) current.actorId else current.entityId)?.toString().orEmpty(),
+            ) { value ->
+                val id = value?.let(UUID::fromString)
+                update { conditions ->
+                    if (role == TriggerFilterRole.PLAYER) conditions.copy(actorId = id)
+                    else conditions.copy(entityId = id)
+                }
+            }
+            "blockType" -> showTriggerTargetFilterDialog(
+                player = player,
+                spec = requireNotNull(CommandDialogSpecs.triggerFilter(filterId)),
+                initial = current.blockType.orEmpty(),
+            ) { value ->
+                val material = value?.let { CommandValueRules.material(it, allowAir = true) }
+                update { conditions -> conditions.copy(blockType = material?.name) }
+            }
+            "blockIdentity" -> showTriggerBlockIdentityDialog(player)
         }
     }
 
-    /** 汎用TargetSpecの種類・名前・タグと個体IDを、クリックされた1体へ適用します。 */
-    private fun showTriggerEntityDialog(player: Player) {
-        val current = state.pendingTriggerConditions
-        val target = current.entityTarget
-        val fields = listOf(
-            Triple("entityType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, target?.entityType.orEmpty()),
-            Triple("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, target?.name.orEmpty()),
-            Triple("tag", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, target?.tag.orEmpty()),
-            Triple("individual", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, current.entityId?.toString().orEmpty()),
-        )
-        showTriggerConditionDialog(player, fields) { values ->
-            val type = values.getValue("entityType").ifBlank { null }
-            val name = values.getValue("name").ifBlank { null }
-            val tag = values.getValue("tag").ifBlank { null }
-            val id = values.getValue("individual").ifBlank { null }
-            if (type != null && !CommandValueRules.isEntityTypeId(type)) return@showTriggerConditionDialog false
-            if (tag != null && !CommandValueRules.isTag(tag)) return@showTriggerConditionDialog false
-            val parsedId = id?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: return@showTriggerConditionDialog false }
-            state.pendingTriggerConditions = state.pendingTriggerConditions.copy(
-                entityTarget = if (type != null || name != null || tag != null) {
-                    TargetSpec(TargetKind.NEAREST_ENTITY, entityType = type, name = name, tag = tag)
-                } else null,
-                entityId = parsedId,
-            )
-            true
+    private fun roleFilterPrefix(role: TriggerFilterRole): String = when (role) {
+        TriggerFilterRole.PLAYER -> "player"
+        TriggerFilterRole.ENTITY -> "entity"
+        TriggerFilterRole.BLOCK -> "block"
+    }
+
+    private fun showTriggerTargetFilterDialog(
+        player: Player,
+        spec: CommandDialogSpecs.Spec,
+        initial: String?,
+        suggestionParameter: String? = null,
+        apply: (String?) -> Unit,
+    ) {
+        showTextInputDialog(
+            player = player,
+            spec = spec,
+            initial = initial.orEmpty(),
+            suggestionParameter = suggestionParameter,
+        ) { raw ->
+            apply(raw.trim().ifBlank { null })
+            null
         }
     }
 
-    /** 素材とブロック個体の条件は独立です。AIRは素材として指定できます。 */
-    private fun showTriggerBlockDialog(player: Player) {
-        val current = state.pendingTriggerConditions
-        val identity = current.blockIdentity
+    private fun showTriggerBlockIdentityDialog(player: Player) {
+        val event = state.pendingTriggerEvent ?: return
+        val identity = state.triggerConditionDraft.conditions.blockIdentity
         val fields = listOf(
-            Triple("block", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, current.blockType.orEmpty()),
             Triple("world", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WORLD, identity?.world.orEmpty()),
             Triple("x", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, identity?.x?.toString().orEmpty()),
             Triple("y", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, identity?.y?.toString().orEmpty()),
             Triple("z", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, identity?.z?.toString().orEmpty()),
         )
-        showTriggerConditionDialog(player, fields) { values ->
-            val block = values.getValue("block").ifBlank { null }
-                ?.let { CommandValueRules.material(it)?.takeIf(Material::isBlock) ?: return@showTriggerConditionDialog false }
-            val world = values.getValue("world")
-            val coordinates = listOf(values.getValue("x"), values.getValue("y"), values.getValue("z"))
-            val identityValue = if (world.isBlank() && coordinates.all(String::isBlank)) null else {
-                if (world.isBlank() || coordinates.any(String::isBlank) || Bukkit.getWorld(world) == null) {
-                    return@showTriggerConditionDialog false
-                }
-                val numbers = coordinates.map { it.toIntOrNull() ?: return@showTriggerConditionDialog false }
-                TriggerBlockIdentity(world, numbers[0], numbers[1], numbers[2])
-            }
-            state.pendingTriggerConditions = state.pendingTriggerConditions.copy(
-                blockType = block?.name,
-                blockIdentity = identityValue,
-            )
-            true
-        }
-    }
-
-    private fun showTriggerConditionDialog(
-        player: Player,
-        fields: List<Triple<String, LocalizationKey<String>, String>>,
-        apply: (Map<String, String>) -> Boolean,
-    ) {
-        observedRevision = plugin.scripts.load(state.scriptId)?.revision ?: return
         val inputs = fields.map { (id, label, initial) ->
             CommandDialogSpecs.input(
-                player, id, initial,
-                CommandDialogSpecs.Spec(label, if (id == "name") 256 else 128),
-                // X/Y/Zは別欄として識別できるよう、軸名を固定ラベルに使います。
+                player,
+                id,
+                initial,
+                CommandDialogSpecs.Spec(label, 128),
                 if (id in setOf("x", "y", "z")) Component.text(id.uppercase()) else KcI18n.component(player, label),
             )
         }
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
-            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PRESET_TARGET_DETAIL)),
+            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_DESCRIPTION_BLOCK_IDENTITY)),
             inputs = inputs,
             afterSubmit = { updateLower(player) },
         ) { response ->
-            val values = fields.associate { (id, _, _) -> id to response.textValue(id).trim() }
-            if (apply(values)) null else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT)
+            val world = response.textValue("world").trim()
+            val coordinates = listOf("x", "y", "z").map { response.textValue(it).trim() }
+            val next = if (world.isBlank() && coordinates.all(String::isBlank)) {
+                null
+            } else {
+                if (world.isBlank() || coordinates.any(String::isBlank) || Bukkit.getWorld(world) == null) {
+                    return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT)
+                }
+                val numbers = coordinates.map {
+                    it.toIntOrNull() ?: return@showInputDialog KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+                    )
+                }
+                TriggerBlockIdentity(world, numbers[0], numbers[1], numbers[2])
+            }
+            val prefix = roleFilterPrefix(TriggerFilterRole.BLOCK)
+            state.triggerConditionDraft = state.triggerConditionDraft.edit(event) { conditions ->
+                conditions.copy(blockIdentity = next)
+            }
+            state.triggerDetailSelectedChoiceId = "trigger-$prefix:${if (state.triggerConditionDraft.conditions.hasBlockFilter()) "detail" else "any"}"
+            null
         }
     }
 
-    /** 見ている対象を個体条件へ格納します。種類等の既存絞り込みは残します。 */
-    private fun captureTriggerTarget(player: Player, event: EventTriggerKind) {
-        val current = state.pendingTriggerConditions
-        val reach = (player.getAttribute(Attribute.BLOCK_INTERACTION_RANGE)?.value ?: 4.5).coerceAtLeast(1.0)
-        if (event == EventTriggerKind.ENTITY_CLICK) {
-            val entityReach = (player.getAttribute(Attribute.ENTITY_INTERACTION_RANGE)?.value ?: 3.0).coerceAtLeast(1.0)
-            val entity = player.getTargetEntity(kotlin.math.ceil(entityReach).toInt()) ?: run {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT))
-                return
-            }
-            state.pendingTriggerConditions = current.copy(entityId = entity.uniqueId)
-        } else {
-            val block = player.getTargetBlockExact(kotlin.math.ceil(reach).toInt()) ?: run {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT))
-                return
-            }
-            state.pendingTriggerConditions = current.copy(
-                blockIdentity = TriggerBlockIdentity(block.world.name, block.x, block.y, block.z),
-            )
+    private fun openTriggerFilterChild(player: Player, role: TriggerFilterRole) {
+        state.triggerFilterRole = role
+        val ownerId = ownerIdFor(player)
+        if (triggerFilterChildOpen(ownerId)) {
+            updateLower(player)
+            return
         }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.buildTriggerDetailChild(state, owner),
+                lowerPanel.buildTriggerFilterChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.SETTING_CHILD_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { false }
+        if (opened) updateLower(player) else {
+            state.triggerFilterRole = null
+            updateLower(player)
+        }
+    }
+
+    private fun closeTriggerFilterChild(player: Player) {
+        val ownerId = ownerIdFor(player)
+        if (triggerFilterChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.TRIGGER_FILTER_SCREEN_ID)
+        state.triggerFilterRole = null
         updateLower(player)
     }
+
+    private fun triggerFilterChildOpen(ownerId: UUID): Boolean =
+        api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.TRIGGER_FILTER_SCREEN_ID) == true
 
     /**
      * 起動方法を保存します。
@@ -4787,8 +4934,8 @@ class GestureSequenceEditor(
      */
     private fun saveTrigger(player: Player, trigger: ScriptTrigger): Boolean {
         if (trigger.kind == TriggerKind.EVENT && trigger.event != null) {
-            trigger.conditions.normalizationWarning(trigger.event)?.let { warning ->
-                player.sendMessage(warning)
+            trigger.conditions.normalizationWarning(trigger.event)?.let { issue ->
+                player.sendMessage(KcI18n.text(player, issue.localizationKey()))
             }
         }
         val updated = runCatching {
@@ -4813,9 +4960,12 @@ class GestureSequenceEditor(
             return false
         }
         state.pendingTriggerEvent = null
-        state.pendingTriggerConditions = EventTriggerConditions()
-        state.pendingTriggerConditionsEvent = null
+        state.triggerConditionDraft = TriggerConditionDraft()
+        state.triggerDetailTab = TriggerDetailTab.PLAYER_FILTER
+        state.triggerDetailSelectedChoiceId = null
+        state.triggerFilterRole = null
         state.lowerMode = GestureLowerMode.SETTINGS
+
         // 保存後に古い候補子画面を残すと、親を更新しても前面のクリック先が古いままになります。
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
@@ -8768,21 +8918,41 @@ class GestureSequenceEditor(
             context.elementId == "lower-trigger-detail-confirm" && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val event = state.pendingTriggerEvent ?: return
-                saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event, conditions = state.pendingTriggerConditions))
+                saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event, conditions = state.triggerConditionDraft.conditions))
             }
             context.elementId.startsWith("lower-trigger-detail-tab:") && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val tab = context.elementId.removePrefix("lower-trigger-detail-tab:")
-                if (tab !in setOf("who", "target", "operation")) return
-                state.triggerDetailTab = tab
+                val parsed = runCatching { TriggerDetailTab.valueOf(tab) }.getOrNull() ?: return
+                state.triggerDetailTab = parsed
+                state.triggerDetailSelectedChoiceId = null
                 updateLower(player)
             }
-            context.elementId.startsWith("lower-trigger-detail-action:") && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
+            context.elementId.startsWith("lower-setting-choice:trigger-filter:") &&
+                triggerFilterChildOpen(ownerIdFor(player)) &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                handleTriggerDetailAction(player, context.elementId.removePrefix("lower-trigger-detail-action:"))
+                handleTriggerFilterChoice(
+                    player,
+                    context.elementId.removePrefix("lower-setting-choice:trigger-filter:"),
+                )
+            }
+            context.elementId.startsWith("lower-setting-choice:trigger-") &&
+                !triggerFilterChildOpen(ownerIdFor(player)) &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                handleTriggerDetailChoice(
+                    player,
+                    context.elementId.removePrefix("lower-setting-choice:"),
+                )
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
+                triggerFilterChildOpen(ownerIdFor(player)) &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeTriggerFilterChild(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.triggerDetailSelectedChoiceId = null
+                state.triggerFilterRole = null
                 state.lowerMode = GestureLowerMode.TRIGGER_EVENT
                 updateLower(player)
             }

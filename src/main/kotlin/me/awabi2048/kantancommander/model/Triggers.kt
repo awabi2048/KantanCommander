@@ -47,6 +47,17 @@ enum class EventTriggerKind {
 /** 未指定なら左右の両方、指定すればその操作だけに一致します。 */
 enum class TriggerClickSide { LEFT, RIGHT }
 
+enum class TriggerNormalizationIssue {
+    BLOCK_CONDITION_REMOVED,
+    ENTITY_CONDITION_REMOVED,
+    CLICK_CONDITION_REMOVED,
+    LEVER_CONDITION_REMOVED,
+    DISCOVERY_FILTER_REMOVED,
+    TARGET_KIND_NORMALIZED,
+    INAPPLICABLE_CONDITION,
+}
+
+
 /** 未指定ならオン・オフの両方、指定すれば変更後の状態だけに一致します。 */
 enum class TriggerLeverState { ON, OFF }
 
@@ -86,37 +97,42 @@ data class EventTriggerConditions(
         leverState = leverState.takeIf { event == EventTriggerKind.LEVER_CLICK },
     )
 
+    fun hasActorFilter(): Boolean = actorTarget != null || actorId != null
+
+    fun hasEntityFilter(): Boolean = entityTarget != null || entityId != null
+
+    fun hasBlockFilter(): Boolean = blockType != null || blockIdentity != null
+
     /**
      * 保存時に除去される内容の警告です。正規化で変化がなければ null です。
      *
      * 種別切替・保存の確定前に呼び出し、適用外条件の持ち越しを利用者へ知らせます。
      * 検証エラーではなく保存時除去の事前警告であり、互換読み込みを妨げません。
      */
-    fun normalizationWarning(event: EventTriggerKind): String? {
+    fun normalizationWarning(event: EventTriggerKind): TriggerNormalizationIssue? {
         if (this == forEvent(event)) return null
-        // 種別外の欄が残っている場合は切替破棄を優先表示します。
         if (blockType != null && event == EventTriggerKind.ENTITY_CLICK) {
-            return "イベント種別の切替によりブロック条件は保存時に除去されます"
+            return TriggerNormalizationIssue.BLOCK_CONDITION_REMOVED
         }
         if (blockIdentity != null && event == EventTriggerKind.ENTITY_CLICK) {
-            return "イベント種別の切替によりブロック個体条件は保存時に除去されます"
+            return TriggerNormalizationIssue.BLOCK_CONDITION_REMOVED
         }
         if ((entityTarget != null || entityId != null) && event != EventTriggerKind.ENTITY_CLICK) {
-            return "イベント種別の切替によりエンティティ条件は保存時に除去されます"
+            return TriggerNormalizationIssue.ENTITY_CONDITION_REMOVED
         }
         if (clickSide != null && event != EventTriggerKind.ENTITY_CLICK && event != EventTriggerKind.BLOCK_CLICK) {
-            return "イベント種別の切替によりクリック条件は保存時に除去されます"
+            return TriggerNormalizationIssue.CLICK_CONDITION_REMOVED
         }
         if (leverState != null && event != EventTriggerKind.LEVER_CLICK) {
-            return "イベント種別の切替によりレバー条件は保存時に除去されます"
+            return TriggerNormalizationIssue.LEVER_CONDITION_REMOVED
         }
         if (actorTarget?.hasTriggerIneffectiveSetting() == true || entityTarget?.hasTriggerIneffectiveSetting() == true) {
-            return "探索・距離・件数の対象設定はトリガーでは意味を持たないため保存時に除去されます"
+            return TriggerNormalizationIssue.DISCOVERY_FILTER_REMOVED
         }
         if (actorTarget?.needsTriggerKindNormalization() == true || entityTarget?.needsTriggerKindNormalization() == true) {
-            return "対象種類の探索語彙は単体照合として保存時に正規化されます"
+            return TriggerNormalizationIssue.TARGET_KIND_NORMALIZED
         }
-        return "イベント種別に適用できない詳細条件は保存時に除去されます"
+        return TriggerNormalizationIssue.INAPPLICABLE_CONDITION
     }
 
     /**

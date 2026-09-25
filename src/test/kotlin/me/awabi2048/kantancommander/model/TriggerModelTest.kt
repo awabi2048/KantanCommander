@@ -176,7 +176,10 @@ class TriggerModelTest {
             actorTarget = TargetSpec(TargetKind.ALL_PLAYERS, tag = "crew"),
         )
         assertNull(idiomatic.validationProblem(EventTriggerKind.BLOCK_BREAK))
-        assertTrue(idiomatic.normalizationWarning(EventTriggerKind.BLOCK_BREAK) != null)
+        assertEquals(
+            TriggerNormalizationIssue.TARGET_KIND_NORMALIZED,
+            idiomatic.normalizationWarning(EventTriggerKind.BLOCK_BREAK),
+        )
 
         // 正規化後も残る値の不正だけをエラーにします。
         assertTrue(
@@ -199,7 +202,20 @@ class TriggerModelTest {
     }
 
     @Test
+    fun `individual identifiers count as configured filters`() {
+        val conditions = EventTriggerConditions(
+            actorId = UUID.randomUUID(),
+            entityId = UUID.randomUUID(),
+        )
+
+        assertTrue(conditions.hasActorFilter())
+        assertTrue(conditions.hasEntityFilter())
+        assertTrue(!conditions.hasBlockFilter())
+    }
+
+    @Test
     fun `event kinds are exactly seven`() {
+
         assertEquals(7, EventTriggerKind.entries.size)
         // 設置と破壊は別種別、レバー状態とクリック方向は詳細条件で選びます。
         assertTrue(EventTriggerKind.entries.containsAll(

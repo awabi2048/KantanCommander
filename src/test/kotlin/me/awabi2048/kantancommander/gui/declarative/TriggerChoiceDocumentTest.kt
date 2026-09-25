@@ -5,10 +5,14 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
+import me.awabi2048.kantancommander.gui.TriggerConditionDraft
+import me.awabi2048.kantancommander.model.EventTriggerConditions
+import me.awabi2048.kantancommander.model.EventTriggerKind
+
 import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -63,6 +67,23 @@ class TriggerChoiceDocumentTest {
     }
 
     @Test
+    fun `explicit any clear remains an initialized dirty draft`() {
+        val draft = TriggerConditionDraft(
+            event = EventTriggerKind.BLOCK_BREAK,
+            conditions = EventTriggerConditions(blockType = "STONE"),
+            initialized = true,
+        )
+
+        val cleared = draft.edit(EventTriggerKind.BLOCK_BREAK) { EventTriggerConditions() }
+
+        assertEquals(EventTriggerKind.BLOCK_BREAK, cleared.event)
+        assertEquals(EventTriggerConditions(), cleared.conditions)
+        assertTrue(cleared.initialized)
+        assertTrue(cleared.dirty)
+    }
+
+    @Test
+
     fun `event document pages seven events without overlap`() {
         val names = listOf(
             "BLOCK_BREAK",
@@ -108,11 +129,10 @@ class TriggerChoiceDocumentTest {
     }
 
     @Test
-    fun `detail screen exposes confirm and back after event selection`() {
+    fun `detail screen exposes confirm back and command target tabs`() {
         val compiled = KantanLayoutBridge.compile(
             DeclarativeTriggers.detailDocument(
                 TriggerDetailData(
-                    title = Component.text("details"),
                     eventLabel = "event",
                     eventName = Component.text("block break"),
                     description = Component.text("description"),
@@ -120,25 +140,31 @@ class TriggerChoiceDocumentTest {
                     backLabel = Component.text("back"),
                     tabBackground = blockData(),
                     selectedTabBackground = blockData(),
-                    tabOutline = blockData(),
                     confirmBackground = blockData(),
                     backBackground = blockData(),
+                    tabs = listOf(
+                        TriggerDetailTab("PLAYER_FILTER", Component.text("player filter")),
+                        TriggerDetailTab("TARGET", Component.text("target")),
+                    ),
+                    selectedTab = 1,
                 ),
                 panel,
             ),
             onAction = {},
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
-        assertEquals(
-            setOf("lower-trigger-detail-confirm", "lower-setting-back", "lower-trigger-detail-tab:event"),
-            compiled.elements.map { it.elementId }.toSet(),
-        )
+        val ids = compiled.elements.map { it.elementId }.toSet()
+        assertTrue(ids.containsAll(setOf(
+            "lower-trigger-detail-tab:PLAYER_FILTER",
+            "lower-trigger-detail-tab:TARGET",
+            "lower-trigger-detail-confirm",
+            "lower-setting-back",
+        )))
     }
 
     @Test
-    fun `detail screen exposes condition tabs and actions without overlapping ids`() {
+    fun `detail screen uses choice cards instead of vertical action cards`() {
         val data = TriggerDetailData(
-            title = Component.text("details"),
             eventLabel = "event",
             eventName = Component.text("lever"),
             description = Component.text("description"),
@@ -146,38 +172,47 @@ class TriggerChoiceDocumentTest {
             backLabel = Component.text("back"),
             tabBackground = blockData(),
             selectedTabBackground = blockData(),
-            tabOutline = blockData(),
             confirmBackground = blockData(),
             backBackground = blockData(),
             tabs = listOf(
-                TriggerDetailTab("who", Component.text("who"), true),
-                TriggerDetailTab("target", Component.text("target"), false),
-                TriggerDetailTab("operation", Component.text("operation"), true),
+                TriggerDetailTab("PLAYER_FILTER", Component.text("player filter")),
+                TriggerDetailTab("TARGET", Component.text("target")),
+                TriggerDetailTab("OPERATION", Component.text("operation")),
             ),
             selectedTab = 2,
-            actions = listOf(
-                TriggerDetailAction("any", Component.text("any"), blockData()),
-                TriggerDetailAction("on", Component.text("on"), blockData()),
-                TriggerDetailAction("off", Component.text("off"), blockData()),
+            choices = listOf(
+                SettingsChoiceCard(
+                    elementId = "lower-setting-choice:trigger-operation:any",
+                    label = Component.text("any"),
+                    background = blockData(),
+                    outline = null,
+                    enabled = true,
+                    cx = -0.10,
+                    cy = 0.20,
+                    w = 0.66,
+                    h = 0.10,
+                    labelDy = -0.012,
+                    labelSize = 0.0045,
+                    labelWidth = 115,
+                    hover = null,
+                    replacesDescription = false,
+                    visualTag = "setting-choice",
+                    visualIndex = 0,
+                ),
             ),
         )
         val compiled = KantanLayoutBridge.compile(DeclarativeTriggers.detailDocument(data, panel), onAction = {})
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val ids = compiled.elements.map { it.elementId }.toSet()
-        assertTrue(ids.containsAll(setOf(
-            "lower-trigger-detail-tab:who", "lower-trigger-detail-tab:target",
-            "lower-trigger-detail-tab:operation", "lower-trigger-detail-action:any",
-            "lower-trigger-detail-action:on", "lower-trigger-detail-action:off",
-            "lower-trigger-detail-confirm", "lower-setting-back",
-        )))
+        assertTrue("lower-setting-choice:trigger-operation:any" in ids)
+        assertTrue(ids.none { it.startsWith("lower-trigger-detail-action:") })
     }
 
     @Test
-    fun `detail tabs use the same column geometry and text as command settings`() {
+    fun `detail tabs use command geometry without configured outlines`() {
         val idleBackground = blockData()
         val selectedBackground = blockData()
         val data = TriggerDetailData(
-            title = Component.text("details"),
             eventLabel = "event",
             eventName = Component.text("lever"),
             description = Component.text("description"),
@@ -185,12 +220,11 @@ class TriggerChoiceDocumentTest {
             backLabel = Component.text("back"),
             tabBackground = idleBackground,
             selectedTabBackground = selectedBackground,
-            tabOutline = blockData(),
             confirmBackground = blockData(),
             backBackground = blockData(),
             tabs = listOf(
-                TriggerDetailTab("who", Component.text("who"), true),
-                TriggerDetailTab("target", Component.text("target"), false),
+                TriggerDetailTab("PLAYER_FILTER", Component.text("player filter")),
+                TriggerDetailTab("TARGET", Component.text("target")),
             ),
             selectedTab = 1,
         )
@@ -200,7 +234,7 @@ class TriggerChoiceDocumentTest {
             commandNodes,
             contentFrame(panel),
             listOf(
-                SettingsTabEntry(Component.text("who"), false, null, idleBackground),
+                SettingsTabEntry(Component.text("player filter"), false, null, idleBackground),
                 SettingsTabEntry(Component.text("target"), true, null, selectedBackground),
             ),
         )
@@ -213,7 +247,7 @@ class TriggerChoiceDocumentTest {
             assertEquals(command.width, detail.width)
             assertEquals(command.height, detail.height)
             assertSame(command.blockData, detail.blockData)
-            assertNotNull(detail.outline, "選択中または設定済みの詳細タブには枠が必要です")
+            assertNull(detail.outline)
         }
         val detailLabels = detailNodes.filterIsInstance<GestureGuiText>()
             .filter { it.id?.endsWith("-label") == true && it.id?.startsWith("lower-trigger-detail-tab:") == true }

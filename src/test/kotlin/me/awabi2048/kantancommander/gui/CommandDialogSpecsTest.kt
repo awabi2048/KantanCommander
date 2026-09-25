@@ -49,6 +49,29 @@ class CommandDialogSpecsTest {
     }
 
     @Test
+    fun `trigger filters use literal matching rules while sharing target dialogs`() {
+        val entityType = requireNotNull(CommandDialogSpecs.triggerFilter("entityType"))
+        val tag = requireNotNull(CommandDialogSpecs.triggerFilter("tag"))
+        val name = requireNotNull(CommandDialogSpecs.triggerFilter("name"))
+        val individual = requireNotNull(CommandDialogSpecs.triggerFilter("individual"))
+        val blockType = requireNotNull(CommandDialogSpecs.triggerFilter("blockType"))
+
+        assertEquals(CommandDialogSpecs.InputFormat.RESOURCE_ID, entityType.format)
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_ENTITY_TYPE_FORMAT,
+            entityType.validate("bad id"),
+        )
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT, tag.validate("\${tag}"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT, name.validate("\${name}"))
+        assertNull(individual.validate("00000000-0000-0000-0000-000000000001"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            individual.validate("not-a-uuid"),
+        )
+        assertEquals(CommandDialogSpecs.InputFormat.MATERIAL_ID, blockType.format)
+    }
+
+    @Test
     fun `direct field specs cover loop values and field-specific validators`() {
         val valueSpec = requireNotNull(CommandDialogSpecs.field("value"))
         val countSpec = requireNotNull(CommandDialogSpecs.field("count"))

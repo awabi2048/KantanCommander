@@ -100,6 +100,7 @@ internal object CommandDialogSpecs {
         val format: InputFormat = InputFormat.ANY_STRING,
         /** 形式・範囲を入力本文へ表示する説明キーです。 */
         val formatHintKey: LocalizationKey<String>? = null,
+        val templateHint: Boolean = true,
         /** 数値欄の範囲・刻みです。検証の正本であり、検証側が正とします。 */
         val numericRange: NumericRange? = null,
     ) {
@@ -126,7 +127,7 @@ internal object CommandDialogSpecs {
         // テキスト入力を伴う入力画面では、変数参照と色指定の例を入力欄より下へ
         // 表示します。完成済みの日本語文をここへ持たせず、localeごとのカタログ
         // から取得することで、Inventory/Gesture双方の案内を同じ契約にします。
-        if (spec.maxLength >= 256) {
+        if (spec.maxLength >= 256 && spec.templateHint) {
             add(
                 Component.text(
                     KcI18n.text(
@@ -920,6 +921,61 @@ internal object CommandDialogSpecs {
                 }
             },
             format = InputFormat.ANY_STRING,
+        )
+        else -> null
+    }
+
+    fun triggerFilter(parameter: String): Spec? = when (parameter) {
+        "entityType" -> targetFilter(parameter)
+        "tag" -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
+            64,
+            validate = { raw ->
+                if (VariableTemplate.references(raw).isNotEmpty() ||
+                    TemporaryTemplate.references(raw).isNotEmpty() ||
+                    VariableTemplate.hasMalformedReference(raw) ||
+                    TemporaryTemplate.hasMalformedReference(raw) ||
+                    !CommandValueRules.isTag(raw)
+                ) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
+                } else null
+            },
+            format = InputFormat.TAG,
+        )
+        "name" -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
+            256,
+            validate = { raw ->
+                when {
+                    raw.length > 256 -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_NAME_LENGTH
+                    VariableTemplate.references(raw).isNotEmpty() -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    TemporaryTemplate.references(raw).isNotEmpty() -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    VariableTemplate.hasMalformedReference(raw) -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    TemporaryTemplate.hasMalformedReference(raw) -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    else -> null
+                }
+            },
+            format = InputFormat.ANY_STRING,
+            templateHint = false,
+        )
+        "individual" -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL,
+            128,
+            validate = { raw ->
+                if (runCatching { java.util.UUID.fromString(raw) }.isFailure) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                } else null
+            },
+        )
+        "blockType" -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK,
+            128,
+            validate = { raw ->
+                if (CommandValueRules.material(raw, allowAir = true)?.isBlock != true) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                } else null
+            },
+            format = InputFormat.MATERIAL_ID,
         )
         else -> null
     }
