@@ -186,15 +186,27 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    fun open(player: Player, scriptId: UUID) = runtime.open(player, route(scriptId))
-    fun open(player: Player, placement: DiskPlacement) = runtime.open(player, route(placement))
+    fun open(player: Player, scriptId: UUID) {
+        runtime.open(player, route(scriptId))
+        // Axiom有効プレイヤーには、エディターを開くたび併用警告を表示します。
+        me.awabi2048.kantancommander.util.AxiomUsageWarning.warnIfActive(plugin, player)
+    }
+
+    fun open(player: Player, placement: DiskPlacement) {
+        runtime.open(player, route(placement))
+        // Axiom有効プレイヤーには、エディターを開くたび併用警告を表示します。
+        me.awabi2048.kantancommander.util.AxiomUsageWarning.warnIfActive(plugin, player)
+    }
 
     /** 空のかんたんコマンダー制御ブロックへプログラムディスクの内容を書き込む確認画面を開く。 */
-    fun openWriteConfirm(player: Player, placement: DiskPlacement, diskId: UUID) =
+    fun openWriteConfirm(player: Player, placement: DiskPlacement, diskId: UUID) {
         runtime.open(
             player,
             EditorSession.forPlacement(placement).route(OWNER, WRITE_ID, mapOf(DISK_ID to diskId.toString())),
         )
+        // Axiom有効プレイヤーには、エディターを開くたび併用警告を表示します。
+        me.awabi2048.kantancommander.util.AxiomUsageWarning.warnIfActive(plugin, player)
+    }
 
     private fun navigate(context: MenuActionContext): MenuActionResult {
         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return MenuActionResult.Ignored

@@ -16,6 +16,8 @@ class KantanCommanderCommand(
     private val itemGrantService: KantanItemGrantService,
 ) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
+        // Axiom有効プレイヤーには、サブコマンドの成否を問わず併用警告を表示します。
+        (sender as? Player)?.let { me.awabi2048.kantancommander.util.AxiomUsageWarning.warnIfActive(plugin, it) }
         val subcommand = args.getOrNull(0)?.lowercase()
         if (!requireSubcommandPermission(sender, subcommand)) return true
         when (subcommand) {

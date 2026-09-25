@@ -7,7 +7,7 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-    <version>26.925.9</version>
+    <version>26.925.10</version>
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>
@@ -51,7 +51,13 @@
         <dependency>
             <groupId>com.awabi2048</groupId>
             <artifactId>CC-System</artifactId>
-            <version>26.925.4</version>
+            <version>26.925.5</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.moulberry.axiom</groupId>
+            <artifactId>AxiomPaper</artifactId>
+            <version>5.0.1</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
