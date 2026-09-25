@@ -66,36 +66,84 @@ data class EventTriggerConditions(
     val clickSide: TriggerClickSide? = null,
     val leverState: TriggerLeverState? = null,
 ) {
-    /** 他のイベント種別の条件を持ち越さないよう、種別に属さない欄は保存時に消します。 */
+    /**
+     * 保存前の正規化です。
+     *
+     * トリガーは発生した単一候補への属性絞りだけを意味します。種別に属さない欄は
+     * 保存時に除去し、慣用的な対象設定の探索文脈（距離・件数・順序・領域・基準・
+     * 一時参照・来歴）は除去して単体意味へ限定します。種別内の種類差
+     * （NEARBY／ALL／RANDOM 等）は単体照合上同値のため NEAREST へ寄せます。
+     * 除去される内容は [normalizationWarning] で事前に警告します。
+     */
     fun forEvent(event: EventTriggerKind): EventTriggerConditions = copy(
+        actorTarget = actorTarget?.let { normalizeTriggerTarget(it, playerOnly = true) },
         blockType = blockType.takeIf { event != EventTriggerKind.ENTITY_CLICK },
         blockIdentity = blockIdentity.takeIf { event != EventTriggerKind.ENTITY_CLICK },
-        entityTarget = entityTarget.takeIf { event == EventTriggerKind.ENTITY_CLICK },
+        entityTarget = entityTarget?.let { normalizeTriggerTarget(it, playerOnly = false) }
+            .takeIf { event == EventTriggerKind.ENTITY_CLICK },
         entityId = entityId.takeIf { event == EventTriggerKind.ENTITY_CLICK },
         clickSide = clickSide.takeIf { event == EventTriggerKind.ENTITY_CLICK || event == EventTriggerKind.BLOCK_CLICK },
         leverState = leverState.takeIf { event == EventTriggerKind.LEVER_CLICK },
     )
 
-    /** UI・保存・実行前検証が共有する、イベント候補1体へ適用できる条件契約です。 */
+    /**
+     * 保存時に除去される内容の警告です。正規化で変化がなければ null です。
+     *
+     * 種別切替・保存の確定前に呼び出し、適用外条件の持ち越しを利用者へ知らせます。
+     * 検証エラーではなく保存時除去の事前警告であり、互換読み込みを妨げません。
+     */
+    fun normalizationWarning(event: EventTriggerKind): String? {
+        if (this == forEvent(event)) return null
+        // 種別外の欄が残っている場合は切替破棄を優先表示します。
+        if (blockType != null && event == EventTriggerKind.ENTITY_CLICK) {
+            return "イベント種別の切替によりブロック条件は保存時に除去されます"
+        }
+        if (blockIdentity != null && event == EventTriggerKind.ENTITY_CLICK) {
+            return "イベント種別の切替によりブロック個体条件は保存時に除去されます"
+        }
+        if ((entityTarget != null || entityId != null) && event != EventTriggerKind.ENTITY_CLICK) {
+            return "イベント種別の切替によりエンティティ条件は保存時に除去されます"
+        }
+        if (clickSide != null && event != EventTriggerKind.ENTITY_CLICK && event != EventTriggerKind.BLOCK_CLICK) {
+            return "イベント種別の切替によりクリック条件は保存時に除去されます"
+        }
+        if (leverState != null && event != EventTriggerKind.LEVER_CLICK) {
+            return "イベント種別の切替によりレバー条件は保存時に除去されます"
+        }
+        if (actorTarget?.hasTriggerIneffectiveSetting() == true || entityTarget?.hasTriggerIneffectiveSetting() == true) {
+            return "探索・距離・件数の対象設定はトリガーでは意味を持たないため保存時に除去されます"
+        }
+        if (actorTarget?.needsTriggerKindNormalization() == true || entityTarget?.needsTriggerKindNormalization() == true) {
+            return "対象種類の探索語彙は単体照合として保存時に正規化されます"
+        }
+        return "イベント種別に適用できない詳細条件は保存時に除去されます"
+    }
+
+    /**
+     * UI・保存・実行前検証が共有する、イベント候補1体へ適用できる条件契約です。
+     *
+     * 正規化で除去される差（種別外・探索文脈・種類語彙）はエラーにしません。
+     * 保存時に [forEvent] で除去されるため、互換読み込みを妨げないことが契約です。
+     * 正規化後も残る値の不正（分類・素材・属性）だけをエラーにします。
+     */
     fun validationProblem(event: EventTriggerKind): String? {
-        if (this != forEvent(event)) return "イベント種別に適用できない詳細条件があります"
-        if (blockType != null && CommandValueRules.material(blockType)?.isBlock != true) {
+        val normalized = forEvent(event)
+        if (normalized.blockType != null && CommandValueRules.material(normalized.blockType)?.isBlock != true) {
             return "対象ブロックの種類が不正です"
         }
-        if (blockIdentity != null && blockIdentity.world.isBlank()) return "対象ブロックのワールドが未設定です"
+        if (normalized.blockIdentity != null && normalized.blockIdentity.world.isBlank()) {
+            return "対象ブロックのワールドが未設定です"
+        }
         fun targetProblem(spec: TargetSpec?, playerOnly: Boolean): String? {
             if (spec == null) return null
+            // 一時変数参照は起動前に解決できないため、互換読み込みでも拒否します。
+            if (spec.kind == TargetKind.TEMPORARY) return "イベント条件に一時変数参照は使用できません"
             val validKinds = if (playerOnly) setOf(
                 TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER,
             ) else setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)
             if (spec.kind !in validKinds) return "イベント条件の対象分類が不正です"
-            // 起動前には一時変数・探索基準・領域を解決できません。詳細画面が受け付ける
-            // 単体候補の属性条件だけに限定し、保存値と実行時判定を一致させます。
-            if (spec.tempName != null || spec.searchOrigin != null || spec.region != null ||
-                spec.minimumDistance != null || spec.maximumDistance != null ||
-                spec.dx != null || spec.dy != null || spec.dz != null || spec.limit != null ||
-                spec.sort != TargetSort.NEAREST
-            ) return "イベント条件では探索・距離・領域の対象設定を使用できません"
+            // 探索文脈は正規化で除去されるため、ここでは属性値だけを検証します。
+            // 種類差（NEARBY／ALL／RANDOM 等）は単体照合上同値として受け付けます。
             if (spec.entityType != null && !CommandValueRules.isEntityTypeId(spec.entityType)) {
                 return "対象エンティティの種類が不正です"
             }
@@ -105,9 +153,58 @@ data class EventTriggerConditions(
                 setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) return "対象ゲームモードが不正です"
             return null
         }
-        return targetProblem(actorTarget, true) ?: targetProblem(entityTarget, false)
+        return targetProblem(normalized.actorTarget, true) ?: targetProblem(normalized.entityTarget, false)
     }
 }
+
+/**
+ * トリガー単体意味へ対象指定を正規化します。
+ *
+ * 慣用的な対象設定との互換のため読み込み時は探索語彙・探索条件を受け付けますが、
+ * 保存・照合では属性絞り（種類・名前・タグ・ゲームモード）だけを残します。
+ * 種類は単体代表（NEAREST）へ寄せ、距離・件数・順序・範囲・基準・一時参照・来歴は除去します。
+ * 分類違い（TEMPORARY・他カテゴリ）は正規化せず検証エラーに委ねます。
+ */
+private fun normalizeTriggerTarget(spec: TargetSpec, playerOnly: Boolean): TargetSpec {
+    // 一時変数参照・分類違いは除去対象ではなく検証エラーとします。正規化で隠しません。
+    if (spec.kind == TargetKind.TEMPORARY) return spec
+    val playerKinds = setOf(
+        TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS,
+        TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER,
+    )
+    val entityKinds = setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)
+    if (playerOnly && spec.kind !in playerKinds) return spec
+    if (!playerOnly && spec.kind !in entityKinds) return spec
+    return spec.copy(
+    kind = if (playerOnly) TargetKind.NEAREST_PLAYER else TargetKind.NEAREST_ENTITY,
+    entityType = spec.entityType.takeIf { !playerOnly },
+    minimumDistance = null,
+    maximumDistance = null,
+    limit = null,
+    sort = TargetSort.NEAREST,
+    gameMode = spec.gameMode,
+    tag = spec.tag,
+    name = spec.name,
+    dx = null,
+    dy = null,
+    dz = null,
+    region = null,
+    searchOrigin = null,
+    tempName = null,
+    convertedFromPreset = false,
+)
+}
+
+/** 正規化で除去される探索文脈を持つかを返します。警告文の特定に使います。 */
+private fun TargetSpec.hasTriggerIneffectiveSetting(): Boolean =
+    tempName != null || searchOrigin != null || region != null ||
+        minimumDistance != null || maximumDistance != null ||
+        dx != null || dy != null || dz != null || limit != null ||
+        sort != TargetSort.NEAREST || convertedFromPreset
+
+/** 単体代表への寄せが必要な探索語彙かを返します。警告文の特定に使います。 */
+private fun TargetSpec.needsTriggerKindNormalization(): Boolean = kind != TargetKind.NEAREST_PLAYER &&
+    kind != TargetKind.NEAREST_ENTITY
 
 /**
  * issue #7 の起動方法の保存形式です。

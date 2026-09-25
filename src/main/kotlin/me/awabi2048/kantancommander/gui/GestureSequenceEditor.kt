@@ -215,6 +215,8 @@ data class GestureEditorState(
     var pendingTriggerEvent: EventTriggerKind? = null,
     /** 詳細画面の仮設定です。確定まで保存値を変更しません。 */
     var pendingTriggerConditions: EventTriggerConditions = EventTriggerConditions(),
+    /** 仮設定がどのイベント候補に属するかを保持し、種別切替の破棄警告に使います。 */
+    var pendingTriggerConditionsEvent: EventTriggerKind? = null,
     var triggerDetailTab: String = "who",
     /** issue #8: ディスク設定の引数ページ番号です。 */
     var diskSettingsArgsPage: Int = 0,
@@ -4344,6 +4346,8 @@ class GestureSequenceEditor(
     private fun openTriggerKindSelection(player: Player) {
         val current = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
         state.pendingTriggerEvent = null
+        state.pendingTriggerConditions = EventTriggerConditions()
+        state.pendingTriggerConditionsEvent = null
         state.lowerMode = GestureLowerMode.TRIGGER_KIND
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) {
@@ -4523,6 +4527,8 @@ class GestureSequenceEditor(
     /** 起動方法の種別選択から設定一覧へ戻り、候補子画面も閉じます。 */
     private fun closeTriggerKindSelection(player: Player) {
         state.pendingTriggerEvent = null
+        state.pendingTriggerConditions = EventTriggerConditions()
+        state.pendingTriggerConditionsEvent = null
         state.lowerMode = GestureLowerMode.SETTINGS
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
@@ -4548,13 +4554,38 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    /** イベントを選択済み候補として再クリックした時だけ詳細子画面へ進みます。 */
+    /**
+     * イベントを選択済み候補として再クリックした時だけ詳細子画面へ進みます。
+     *
+     * 同一イベントへの再入室で未確定の編集がある場合は編集を継続し、
+     * 保存値での上書きは行いません。異なるイベントへの切替時は保存値
+     * （同一種別）または空（新規種別）で仮設定を取り直し、適用外条件の
+     * 除去は保存時に [EventTriggerConditions.forEvent] で行います。
+     * 切替で失われる未確定編集がある場合は事前に警告します。
+     */
     private fun openTriggerDetail(player: Player) {
         val event = state.pendingTriggerEvent ?: return
+        // 詳細画面から戻って同じ候補へ再入室した場合は編集中の仮設定を継続します。
+        if (state.lowerMode == GestureLowerMode.TRIGGER_EVENT &&
+            state.pendingTriggerConditions != EventTriggerConditions() &&
+            state.pendingTriggerConditionsEvent == event
+        ) {
+            state.lowerMode = GestureLowerMode.TRIGGER_DETAIL
+            updateLower(player)
+            return
+        }
         val saved = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
+        // 異なるイベントへ切り替える場合、未確定の仮設定は失われます。
+        if (state.pendingTriggerConditions != EventTriggerConditions() &&
+            state.pendingTriggerConditionsEvent != null &&
+            state.pendingTriggerConditionsEvent != event
+        ) {
+            player.sendMessage("起動条件の編集中内容はイベント種別の切替により破棄されます")
+        }
         state.pendingTriggerConditions = if (saved?.kind == TriggerKind.EVENT && saved.event == event) {
             saved.conditions.forEvent(event)
         } else EventTriggerConditions()
+        state.pendingTriggerConditionsEvent = event
         state.triggerDetailTab = "who"
         state.lowerMode = GestureLowerMode.TRIGGER_DETAIL
         updateLower(player)
@@ -4748,7 +4779,18 @@ class GestureSequenceEditor(
      * 保存失敗時はログへ原因を残し、画面には保存失敗を示します。成功時は
      * 設定一覧へ戻して上下画面を更新します。
      */
+    /**
+     * 起動方法を保存します。
+     *
+     * イベント保存時は適用外条件の除去を事前に警告します。除去自体は
+     * [ScriptTrigger.normalized] が行い、保存は正規化後で確定します。
+     */
     private fun saveTrigger(player: Player, trigger: ScriptTrigger): Boolean {
+        if (trigger.kind == TriggerKind.EVENT && trigger.event != null) {
+            trigger.conditions.normalizationWarning(trigger.event)?.let { warning ->
+                player.sendMessage(warning)
+            }
+        }
         val updated = runCatching {
             CommandSettingsModel.updateTrigger(
                 plugin,
@@ -4771,6 +4813,8 @@ class GestureSequenceEditor(
             return false
         }
         state.pendingTriggerEvent = null
+        state.pendingTriggerConditions = EventTriggerConditions()
+        state.pendingTriggerConditionsEvent = null
         state.lowerMode = GestureLowerMode.SETTINGS
         // 保存後に古い候補子画面を残すと、親を更新しても前面のクリック先が古いままになります。
         val ownerId = ownerIdFor(player)
@@ -8219,6 +8263,13 @@ class GestureSequenceEditor(
                 if (mode == VariableChangeMode.RANDOM &&
                     !CommandSettingsModel.supportsRandomNumberMode(node)
                 ) return
+                // CALCULATE は数値型だけに適用できます。不正な組合せは保存しません。
+                if (mode == VariableChangeMode.CALCULATE) {
+                    val targetType = ValueType.parse(
+                        node.string(if (node.type == CommandType.TEMP_SET) "tempType" else "type"),
+                    ) ?: return
+                    if (targetType != ValueType.NUMBER) return
+                }
                 val wasSelectedInCurrentRoute =
                     state.settingTreePath?.nodeIds?.lastOrNull() == encoded &&
                         node.string("changeMode", VariableChangeMode.ASSIGN.name) == mode.name

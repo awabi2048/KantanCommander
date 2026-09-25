@@ -1199,7 +1199,7 @@ internal object CommandDialogSpecs {
         }
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "source" && node.type == CommandType.VARIABLE) return variableName
-        if (fieldKey == "propertySource" && node.type == CommandType.VARIABLE) return variableName
+        if (fieldKey == "propertySource" && (node.type == CommandType.VARIABLE || node.type == CommandType.TEMP_SET)) return variableName
         if (fieldKey == "range" && (node.type == CommandType.VARIABLE || node.type == CommandType.TEMP_SET)) {
             return randomRange
         }
@@ -1221,10 +1221,16 @@ internal object CommandDialogSpecs {
             val tempType = ValueType.parse(
                 node.string("tempType", ValueType.NUMBER.name),
             ) ?: ValueType.NUMBER
+            val tempMode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+                .getOrDefault(VariableChangeMode.ASSIGN)
             when (fieldKey) {
-                "value" -> return when (tempType) {
-                    ValueType.NUMBER -> tempNumberValue
-                    ValueType.STRING -> tempStringValue
+                // CALCULATE は変数同士の式、ASSIGN は型別値を受け付けます。
+                // PROPERTY／RANDOM は専用欄を使うため値欄の直接入力を持ちません。
+                "value" -> return when {
+                    tempMode == VariableChangeMode.CALCULATE && tempType == ValueType.NUMBER ->
+                        variableValue(type = tempType, operation = VariableOperation.DEFINE, changeMode = tempMode)
+                    tempMode == VariableChangeMode.ASSIGN && tempType == ValueType.NUMBER -> tempNumberValue
+                    tempMode == VariableChangeMode.ASSIGN && tempType == ValueType.STRING -> tempStringValue
                     else -> null
                 }
                 "x", "y", "z" -> return tempCoordinate

@@ -4801,11 +4801,11 @@ object EditorMenuLayout {
     }
 
     /**
-     * 「一時変数を設定」の編集項目を、一時型ごとに切り替えます。
+     * 「一時変数を設定」の編集項目を、一時型と生成方法で切り替えます。
      *
-     * NUMBER・STRING は共通値欄、LOCATIONは位置・向きを
-     * 共通設定画面へ委譲し、ITEM・BLOCKはメインハンド、ENTITYは共通対象選択を使います。
-     * NUMBERの値指定とRange乱数は変数操作コマンドと同じchangeModeで切り替え、
+     * 変数操作コマンドと共通の4方式（ASSIGN／CALCULATE／PROPERTY／RANDOM）を使います。
+     * NUMBER・STRING は共通値欄、LOCATIONは位置・向きを共通設定画面へ委譲し、
+     * ITEM・BLOCKはメインハンド、ENTITYは共通対象選択を使います。
      * 型自体はtempType欄で変更します。
      */
     private fun tempSetFields(node: CommandNode): List<EditorField> = buildList {
@@ -4816,22 +4816,41 @@ object EditorMenuLayout {
         val type = ValueType.parse(node.string("tempType", ValueType.NUMBER.name)) ?: ValueType.NUMBER
         val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
             .getOrDefault(VariableChangeMode.ASSIGN)
-        // 乱数を選べる数値型だけで値の設定方法を表示します。
-        if (type == ValueType.NUMBER) {
-            add(field("changeMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.COMPARATOR) {
-                displayVariableChangeMode(it.string("changeMode", VariableChangeMode.ASSIGN.name))
-            })
+        // 生成方法は全型で表示し、方式別の項目は対応する方式のときだけ出します。
+        add(field("changeMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.COMPARATOR) {
+            displayVariableChangeMode(it.string("changeMode", VariableChangeMode.ASSIGN.name))
+        })
+        if (mode == VariableChangeMode.PROPERTY) {
+            add(field(
+                "propertySource",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_SOURCE,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+            ))
+            add(field(
+                "property",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_PROPERTY,
+                Material.TARGET,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+            ) { displayLiteral(it.string("property")) })
         }
-        if (type == ValueType.NUMBER && mode == VariableChangeMode.RANDOM) {
+        if (mode == VariableChangeMode.RANDOM) {
             add(field("range", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, Material.COMPARATOR) {
                 displayVariableValue(it.string("range"))
             })
-        } else if ((type == ValueType.NUMBER || type == ValueType.STRING) && mode == VariableChangeMode.ASSIGN) {
+        } else if ((type == ValueType.NUMBER || type == ValueType.STRING) && mode == VariableChangeMode.ASSIGN ||
+            (type == ValueType.NUMBER && mode == VariableChangeMode.CALCULATE)
+        ) {
             add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
                 displayVariableValue(it.string("value"))
             })
         }
-        addAll(typedValueSubFields(node, type))
+        // 型別設定は ASSIGN のときだけ有効です。生成結果を使う方式では出しません。
+        if (mode == VariableChangeMode.ASSIGN) {
+            addAll(typedValueSubFields(node, type))
+        }
     }
 
     /**

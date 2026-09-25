@@ -3290,19 +3290,32 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * #2 の共通store（EXECUTION scope）へ保存し、定義も同時に記録します。
      * 値の組み立ては [resolveNodeValue] へ集約し、変数操作コマンドと共有します。
      */
+    /**
+     * 一時変数を設定します。再設定は上書きとして扱います。
+     *
+     * 変数操作コマンドと共通の4方式（ASSIGN／CALCULATE／PROPERTY／RANDOM）で生成します。
+     * PROPERTY の参照元は同一 EXECUTION scope の一時変数から読み出します。
+     * 不正な changeMode は ASSIGN へ丸めず失敗にします。
+     */
     private fun executeTemporary(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
         val name = me.awabi2048.kantancommander.model.TemporaryTemplate.normalized(node.string("name"))
         require(CommandValueRules.isVariableName(name)) { "invalid temporary name" }
         val type = ValueType.parse(
             node.string("tempType", ValueType.NUMBER.name),
         ) ?: return false
-        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
-            .getOrDefault(VariableChangeMode.ASSIGN)
-        val value = when (mode) {
-            VariableChangeMode.ASSIGN -> resolveNodeValue(type, node, session)
-            VariableChangeMode.RANDOM -> if (type == ValueType.NUMBER) generateRandomValue(node.string("range")) else null
-            else -> null
-        } ?: return false
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }.getOrNull()
+            ?: return false
+        // ASSIGN／CALCULATE は tempType 欄、PROPERTY／RANDOM は生成結果の型を採用します。
+        val effective = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
+            type
+        } else null
+        val value = resolveVariableGeneration(
+            node,
+            effective,
+            mode,
+            { reference -> session.executionVariables.get(TemporaryTemplate.normalized(reference)) },
+            session,
+        ) ?: return false
         session.executionVariables.set(name, value)
         true
     }.getOrDefault(false)

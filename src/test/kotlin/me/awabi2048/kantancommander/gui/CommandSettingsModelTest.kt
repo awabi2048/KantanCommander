@@ -151,7 +151,32 @@ class CommandSettingsModelTest {
 
         assertEquals(listOf("name", "tempType", "changeMode", "value"), CommandSettingsModel.visibleFields(node).map { it.key })
         node.params["tempType"] = ValueType.LOCATION.name
-        assertEquals(listOf("name", "tempType", "location"), CommandSettingsModel.visibleFields(node).map { it.key })
+        // 生成方法は全型で表示します。LOCATION の ASSIGN では位置設定へ進みます。
+        assertEquals(listOf("name", "tempType", "changeMode", "location"), CommandSettingsModel.visibleFields(node).map { it.key })
+    }
+
+    @Test
+    fun `temporary supports the same four generation modes`() {
+        // CALCULATE は数値のみ、PROPERTY は全型で表示します。
+        val calculate = CommandType.TEMP_SET.newNode().apply {
+            params["tempType"] = ValueType.NUMBER.name
+            params["changeMode"] = me.awabi2048.kantancommander.model.VariableChangeMode.CALCULATE.name
+        }
+        assertEquals(
+            listOf("name", "tempType", "changeMode", "value"),
+            CommandSettingsModel.visibleFields(calculate).map { it.key },
+        )
+        val property = CommandType.TEMP_SET.newNode().apply {
+            params["tempType"] = ValueType.STRING.name
+            params["changeMode"] = me.awabi2048.kantancommander.model.VariableChangeMode.PROPERTY.name
+        }
+        assertEquals(
+            listOf("name", "tempType", "changeMode", "propertySource", "property"),
+            CommandSettingsModel.visibleFields(property).map { it.key },
+        )
+        // 非数値の CALCULATE／RANDOM は検証層で拒否するため、表示上は方式選択へ戻します。
+        // 可視性自体は方式選択を維持し、保存時の検証で明示エラーにします。
+        assertTrue(CommandSettingsModel.isFieldVisible(property, "changeMode"))
     }
 
     @Test

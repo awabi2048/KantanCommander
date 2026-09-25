@@ -141,6 +141,64 @@ class TriggerModelTest {
     }
 
     @Test
+    fun `forEvent normalizes to single candidate meaning on save`() {
+        // 慣用的な探索語彙・探索条件は読み込み互換のため受け付けるが、
+        // 保存時は単体代表へ寄せ、探索文脈を除去します。
+        val idiomatic = EventTriggerConditions(
+            actorTarget = TargetSpec(
+                TargetKind.NEARBY_PLAYERS,
+                name = "steve",
+                maximumDistance = 5.0,
+                limit = 3,
+            ),
+            clickSide = TriggerClickSide.LEFT,
+        )
+        val normalized = idiomatic.forEvent(EventTriggerKind.BLOCK_CLICK)
+        assertEquals(TargetKind.NEAREST_PLAYER, normalized.actorTarget?.kind)
+        assertEquals("steve", normalized.actorTarget?.name)
+        assertNull(normalized.actorTarget?.maximumDistance)
+        assertNull(normalized.actorTarget?.limit)
+        assertEquals(TriggerClickSide.LEFT, normalized.clickSide)
+
+        // 種別外の条件は保存時に除去されます。
+        val crossKind = EventTriggerConditions(
+            entityId = UUID.randomUUID(),
+            leverState = TriggerLeverState.ON,
+        ).forEvent(EventTriggerKind.BLOCK_CLICK)
+        assertNull(crossKind.entityId)
+        assertNull(crossKind.leverState)
+    }
+
+    @Test
+    fun `validation accepts normalizable conditions but rejects invalid values`() {
+        // 正規化で除去される差はエラーにせず、互換読み込みを妨げません。
+        val idiomatic = EventTriggerConditions(
+            actorTarget = TargetSpec(TargetKind.ALL_PLAYERS, tag = "crew"),
+        )
+        assertNull(idiomatic.validationProblem(EventTriggerKind.BLOCK_BREAK))
+        assertTrue(idiomatic.normalizationWarning(EventTriggerKind.BLOCK_BREAK) != null)
+
+        // 正規化後も残る値の不正だけをエラーにします。
+        assertTrue(
+            EventTriggerConditions(blockType = "NOT_A_BLOCK")
+                .validationProblem(EventTriggerKind.BLOCK_CLICK) != null,
+        )
+        assertTrue(
+            EventTriggerConditions(actorTarget = TargetSpec(TargetKind.TEMPORARY))
+                .validationProblem(EventTriggerKind.BLOCK_BREAK) != null,
+        )
+        assertTrue(
+            EventTriggerConditions(actorTarget = TargetSpec(TargetKind.NEAREST_ENTITY))
+                .validationProblem(EventTriggerKind.BLOCK_BREAK) != null,
+        )
+        // 正規形は警告なしです。
+        assertNull(
+            EventTriggerConditions(actorTarget = TargetSpec(TargetKind.NEAREST_PLAYER, tag = "crew"))
+                .normalizationWarning(EventTriggerKind.BLOCK_BREAK),
+        )
+    }
+
+    @Test
     fun `event kinds are exactly seven`() {
         assertEquals(7, EventTriggerKind.entries.size)
         // 設置と破壊は別種別、レバー状態とクリック方向は詳細条件で選びます。

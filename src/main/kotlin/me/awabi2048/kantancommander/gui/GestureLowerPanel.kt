@@ -4258,7 +4258,7 @@ class GestureLowerPanel(
             }
         }
         GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
-            // 一時変数とワールド変数で値指定／乱数の選択を共通化します。
+            // 一時変数と変数操作コマンドで4方式（ASSIGN／CALCULATE／PROPERTY／RANDOM）を共通化します。
             val type = ValueType.parse(
                 node.string(if (node.type == CommandType.TEMP_SET) "tempType" else "type"),
             ) ?: ValueType.NUMBER
@@ -4271,17 +4271,13 @@ class GestureLowerPanel(
                 )
             buildList {
                 add(choice(VariableChangeMode.ASSIGN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN))
-                if (node.type == CommandType.TEMP_SET && type == ValueType.NUMBER) {
-                    if (CommandSettingsModel.supportsRandomNumberMode(node)) {
-                        add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
-                    }
-                } else if (node.type == CommandType.VARIABLE && type == ValueType.NUMBER) {
+                if (node.type in setOf(CommandType.TEMP_SET, CommandType.VARIABLE) && type == ValueType.NUMBER) {
                     add(choice(VariableChangeMode.CALCULATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE))
                     add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
                     if (CommandSettingsModel.supportsRandomNumberMode(node)) {
                         add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
                     }
-                } else if (node.type == CommandType.VARIABLE) {
+                } else if (node.type in setOf(CommandType.TEMP_SET, CommandType.VARIABLE)) {
                     add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
                 }
             }

@@ -663,23 +663,30 @@ object CommandSettingsModel {
         }
     }
 
-    /** 一時変数もワールド変数と同じ値指定／Range乱数の表示規則を使います。 */
+    /**
+     * 一時変数もワールド変数と同じ4方式（ASSIGN／CALCULATE／PROPERTY／RANDOM）の表示規則を使います。
+     *
+     * PROPERTY／RANDOM では生成結果の型を採用するため、値欄・型別設定は対応する
+     * 生成方法のときだけ表示します。変数操作コマンドの可視性と一致させます。
+     */
     private fun isTemporaryFieldVisible(node: CommandNode, fieldKey: String): Boolean {
         if (fieldKey in setOf("name", "tempType")) return true
         val type = ValueType.parse(node.string("tempType")) ?: return false
         val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
             .getOrDefault(VariableChangeMode.ASSIGN)
-        if (fieldKey == "changeMode") return type == ValueType.NUMBER
-        if (fieldKey == "range") return type == ValueType.NUMBER && mode == VariableChangeMode.RANDOM
-        if (fieldKey == "value") return mode == VariableChangeMode.ASSIGN &&
-            (type == ValueType.NUMBER || type == ValueType.STRING)
-        if (mode != VariableChangeMode.ASSIGN) return false
+        if (fieldKey == "changeMode") return true
+        // 生成方法別の項目は対応する生成方法のときだけ表示します。
+        if (fieldKey == "propertySource" || fieldKey == "property") return mode == VariableChangeMode.PROPERTY
+        if (fieldKey == "range") return mode == VariableChangeMode.RANDOM
         return when (fieldKey) {
-            "location", "x", "y", "z", "yaw" -> type == ValueType.LOCATION
-            "entity", "entityId" -> type == ValueType.ENTITY
-            "item", "itemData" -> type == ValueType.ITEM
-            "block" -> type == ValueType.BLOCK
-            else -> false
+            "value" -> (mode == VariableChangeMode.ASSIGN &&
+                (type == ValueType.NUMBER || type == ValueType.STRING)) ||
+                (mode == VariableChangeMode.CALCULATE && type == ValueType.NUMBER)
+            "location" -> mode == VariableChangeMode.ASSIGN && type == ValueType.LOCATION
+            "item" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ITEM
+            "block" -> mode == VariableChangeMode.ASSIGN && type == ValueType.BLOCK
+            "entity" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ENTITY
+            else -> true
         }
     }
 
@@ -955,6 +962,8 @@ object CommandSettingsModel {
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
                 "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "propertySource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "property" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 "range", "value", "location", "x", "y", "z", "yaw", "item", "block", "entity",
                 "entityId" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
@@ -1221,6 +1230,9 @@ object CommandSettingsModel {
             "tempType" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
             "changeMode" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_CHANGE_MODE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
+            // 参照元は変数名の自由入力、詳細値は候補選択、乱数範囲は数値入力です。
+            "propertySource" -> text()
+            "property" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_PROPERTY)
             "range" -> text()
             "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
             "location" -> CommandSettingDescriptor(CommandSettingEditor.LOCATION, CommandSettingRole.TEMPORARY_LOCATION)
@@ -1407,7 +1419,8 @@ object CommandSettingsModel {
         val current = ValueType.parse(node.string(key, ValueType.NUMBER.name))
         if (current != type) {
             setOf(
-                "value", "range", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
+                "value", "range", "propertySource", "property",
+                "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
                 "sound", "volume", "effect", "level", "seconds",
             ).forEach(node.params::remove)
             // 型ごとの入力を切り替えた後に、旧型の生成方法だけが残る状態を防ぎます。
@@ -1416,7 +1429,8 @@ object CommandSettingsModel {
             node.temporaryLocationPositionSpec = null
             node.temporaryLocationFacingSpec = null
             node.clearConfigured(
-                "value", "range", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
+                "value", "range", "propertySource", "property",
+                "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
                 "sound", "volume", "effect", "level", "seconds", "entity", "location",
                 "locationPosition", "locationFacing",
             )

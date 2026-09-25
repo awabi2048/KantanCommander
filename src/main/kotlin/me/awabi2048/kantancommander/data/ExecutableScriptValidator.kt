@@ -682,7 +682,7 @@ object ExecutableScriptValidator {
             CommandType.DISK_CALL -> validateDiskCall(node, path, errors, variableDefinitions, temporaryDefinitions, limits)
             CommandType.RETURN_VALUE -> validateReturnValue(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
-            CommandType.TEMP_SET -> validateTemporary(node, path, errors, temporaryDefinitions)
+            CommandType.TEMP_SET -> validateTemporary(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
             CommandType.FOR_START -> validateFor(node, path, errors, variableDefinitions, temporaryDefinitions)
             // 折り畳みノードの外側は先頭設定を写しているため、展開前の検査でも
             // 同じ項目検証を適用します。中身の構造検証は展開後グラフで行います。
@@ -2701,11 +2701,19 @@ object ExecutableScriptValidator {
         )
     }
 
-    /** 「一時変数を設定」ノードを検証します。再設定は上書きのため重複検査しません。 */
+    /**
+     * 「一時変数を設定」ノードを検証します。再設定は上書きのため重複検査しません。
+     *
+     * 変数操作コマンドと共通の4方式（ASSIGN／CALCULATE／PROPERTY／RANDOM）を受け付けます。
+     * 生成結果の型は ASSIGN／CALCULATE では tempType 欄、PROPERTY／RANDOM では生成結果を
+     * 採用します。不正な changeMode は ASSIGN へ丸めず明示エラーにします。
+     */
     private fun validateTemporary(
         node: CommandNode,
         path: String,
         errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, TypedValue>?,
+        insideForBody: Boolean,
         temporaryDefinitions: Map<String, ValueType>?,
     ) {
         val name = TemporaryTemplate.normalized(node.string("name"))
@@ -2719,21 +2727,29 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("tempType"), "一時変数の型が不正です")
             return
         }
-        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
-            .getOrDefault(VariableChangeMode.ASSIGN)
-        if (mode == VariableChangeMode.RANDOM) {
-            if (type != ValueType.NUMBER) {
-                errors += nodeError(node, path, setOf("changeMode"), "乱数は数値型の一時変数にだけ指定できます")
-            } else if (CommandValueRules.parseNumericRange(node.string("range")) == null) {
-                errors += nodeError(node, path, setOf("range"), "乱数範囲を min..max 形式で指定してください")
-            }
-            return
-        }
-        if (mode != VariableChangeMode.ASSIGN) {
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }.getOrNull()
+        if (mode == null) {
             errors += nodeError(node, path, setOf("changeMode"), "一時変数の値指定方法が不正です")
             return
         }
-        validateTypedNodeValue(node, type, path, errors, null, temporaryDefinitions)
+        // PROPERTY／RANDOM は生成結果の型を採用するため tempType 欄を参照しません。
+        val effective = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
+            type
+        } else null
+        // 一時変数同士の参照は EXECUTION scope で解決します。WORLD 定義表は
+        // CALCULATE 式中のワールド変数参照の検査に使います。
+        validateVariableGeneration(
+            node,
+            effective,
+            mode,
+            VariableScope.EXECUTION,
+            name,
+            path,
+            errors,
+            variableDefinitions,
+            insideForBody,
+            temporaryDefinitions,
+        )
     }
 
     /**

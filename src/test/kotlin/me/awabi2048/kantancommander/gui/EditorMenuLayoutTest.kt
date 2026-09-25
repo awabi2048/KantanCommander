@@ -220,13 +220,14 @@ class EditorMenuLayoutTest {
 
     @Test
     fun `temporary variable layouts provide presentation for every temporary type`() {
+        // 生成方法は全型で表示します。変数操作コマンドとの共通4方式に合わせます。
         val expectedKeys = mapOf(
             ValueType.NUMBER to setOf("name", "tempType", "changeMode", "value"),
-            ValueType.STRING to setOf("name", "tempType", "value"),
-            ValueType.LOCATION to setOf("name", "tempType", "location"),
-            ValueType.ITEM to setOf("name", "tempType", "item"),
-            ValueType.BLOCK to setOf("name", "tempType", "block"),
-            ValueType.ENTITY to setOf("name", "tempType", "entity"),
+            ValueType.STRING to setOf("name", "tempType", "changeMode", "value"),
+            ValueType.LOCATION to setOf("name", "tempType", "changeMode", "location"),
+            ValueType.ITEM to setOf("name", "tempType", "changeMode", "item"),
+            ValueType.BLOCK to setOf("name", "tempType", "changeMode", "block"),
+            ValueType.ENTITY to setOf("name", "tempType", "changeMode", "entity"),
         )
 
         expectedKeys.forEach { (type, keys) ->
