@@ -64,6 +64,8 @@ object DeclarativeTagEntries {
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
             text = data.title,
+            // タブ列以外は補完なしで即時反映します。
+            interpolationTicks = 0,
             size = 0.0060,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -83,6 +85,7 @@ object DeclarativeTagEntries {
         if (data.emptyLabel != null) {
             nodes += GestureGuiText(
                 text = data.emptyLabel,
+                interpolationTicks = 0,
                 size = 0.0052,
                 lineWidth = 200,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -108,6 +111,7 @@ object DeclarativeTagEntries {
                 // 名札のクリックはモード切替と同義にし、無反応行を作りません。
                 nodes += GestureGuiBlock(
                     blockData = data.entryBackground,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.TAG_CARD_WIDTH),
                     height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
                     id = "lower-tag-card:$index",
@@ -125,6 +129,7 @@ object DeclarativeTagEntries {
                 )
                 nodes += GestureGuiText(
                     text = Component.text(entry.tag),
+                    interpolationTicks = 0,
                     size = 0.0045,
                     lineWidth = 100,
                     alignment = GestureGuiTextAlignment.CENTER,
@@ -135,6 +140,7 @@ object DeclarativeTagEntries {
                 )
                 nodes += GestureGuiBlock(
                     blockData = entry.modeBackground,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.TAG_MODE_WIDTH),
                     height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
                     id = "lower-tag-mode-button:$index",
@@ -151,6 +157,7 @@ object DeclarativeTagEntries {
                 )
                 nodes += GestureGuiText(
                     text = entry.modeGlyph,
+                    interpolationTicks = 0,
                     size = 0.0048,
                     lineWidth = 40,
                     alignment = GestureGuiTextAlignment.CENTER,
@@ -161,6 +168,7 @@ object DeclarativeTagEntries {
                 )
                 nodes += GestureGuiBlock(
                     blockData = data.deleteBackground,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH),
                     height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
                     id = "lower-tag-delete:$index",
@@ -177,6 +185,7 @@ object DeclarativeTagEntries {
                 )
                 nodes += GestureGuiText(
                     text = Component.text("🗑", NamedTextColor.WHITE),
+                    interpolationTicks = 0,
                     size = 0.0048,
                     lineWidth = 40,
                     alignment = GestureGuiTextAlignment.CENTER,

@@ -188,6 +188,8 @@ object DeclarativeTriggers {
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
             text = data.title,
+            // タブ列以外は補完なしで即時反映します。
+            interpolationTicks = 0,
             size = 0.0060,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,

@@ -67,6 +67,8 @@ object DeclarativeDiskCall {
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
             text = data.title,
+            // タブ列以外は補完なしで即時反映します。
+            interpolationTicks = 0,
             size = 0.0060,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -86,6 +88,7 @@ object DeclarativeDiskCall {
         if (data.arguments.isEmpty()) {
             nodes += GestureGuiText(
                 text = data.emptyArgs,
+                interpolationTicks = 0,
                 size = 0.0052,
                 lineWidth = 200,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -149,6 +152,7 @@ object DeclarativeDiskCall {
         }
         nodes += GestureGuiText(
             text = data.returnLabel,
+            interpolationTicks = 0,
             size = 0.0045,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,

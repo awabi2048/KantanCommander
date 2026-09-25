@@ -88,6 +88,8 @@ object DeclarativeVariables {
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
             text = data.title,
+            // タブ列以外は補完なしで即時反映します。
+            interpolationTicks = 0,
             size = 0.0060,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -107,6 +109,7 @@ object DeclarativeVariables {
         if (data.emptyLabel != null) {
             nodes += GestureGuiText(
                 text = data.emptyLabel,
+                interpolationTicks = 0,
                 size = 0.0052,
                 lineWidth = 200,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -128,6 +131,7 @@ object DeclarativeVariables {
                 val cy = GestureLowerPanel.CHILD_CHOICE_TOP_Y - row * GestureLowerPanel.CHILD_CHOICE_PITCH
                 nodes += GestureGuiBlock(
                     blockData = data.entryBackground,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.WORLD_VARIABLE_CARD_WIDTH),
                     height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
                     id = "lower-variable:${entry.name}",
@@ -144,6 +148,7 @@ object DeclarativeVariables {
                 )
                 nodes += GestureGuiText(
                     text = entry.label,
+                    interpolationTicks = 0,
                     size = 0.0045,
                     lineWidth = 100,
                     alignment = GestureGuiTextAlignment.CENTER,
@@ -154,6 +159,7 @@ object DeclarativeVariables {
                 )
                 nodes += GestureGuiBlock(
                     blockData = if (entry.inUse) data.deleteBackgroundInUse else data.deleteBackgroundFree,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH),
                     height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
                     id = "lower-variable-delete:${entry.name}",
@@ -173,6 +179,7 @@ object DeclarativeVariables {
                         "🗑",
                         if (entry.inUse) NamedTextColor.GRAY else NamedTextColor.WHITE,
                     ),
+                    interpolationTicks = 0,
                     size = 0.0048,
                     lineWidth = 40,
                     alignment = GestureGuiTextAlignment.CENTER,
@@ -241,6 +248,7 @@ object DeclarativeVariables {
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
             text = data.title,
+            interpolationTicks = 0,
             size = 0.0060,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -251,6 +259,7 @@ object DeclarativeVariables {
         )
         nodes += GestureGuiText(
             text = data.description,
+            interpolationTicks = 0,
             size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
             lineWidth = 220,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -320,6 +329,7 @@ object DeclarativeVariables {
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
             text = data.title,
+            interpolationTicks = 0,
             size = 0.0060,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -330,6 +340,7 @@ object DeclarativeVariables {
         )
         nodes += GestureGuiText(
             text = data.body,
+            interpolationTicks = 0,
             size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
             lineWidth = 220,
             alignment = GestureGuiTextAlignment.CENTER,

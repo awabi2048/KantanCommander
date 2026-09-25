@@ -273,7 +273,12 @@ object DeclarativeSettings {
         )
     }
 
-    /** コマンド設定と詳細子画面で同じタブ列を描き、固定操作は各画面で配置します。 */
+    /**
+     * コマンド設定と詳細子画面で同じタブ列を描き、固定操作は各画面で配置します。
+     *
+     * タブ列だけは演出用の補完を受けるため interpolationTicks を指定しません。
+     * それ以外の表示物は即時反映とするため、各区画で interpolationTicks = 0 を明示します。
+     */
     fun tabColumnSection(
         nodes: MutableList<GestureGuiNode>,
         frame: ContentFrame,
@@ -352,6 +357,8 @@ object DeclarativeSettings {
     ) {
         nodes += GestureGuiText(
             text = hint,
+            // タブ列以外は補完なしで即時反映します。
+            interpolationTicks = 0,
             size = 0.010,
             lineWidth = 160,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -373,6 +380,7 @@ object DeclarativeSettings {
     ) {
         nodes += GestureGuiText(
             text = body,
+            interpolationTicks = 0,
             size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
             lineWidth = 280,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -384,6 +392,7 @@ object DeclarativeSettings {
         detail?.let {
             nodes += GestureGuiText(
                 text = it.text,
+                interpolationTicks = 0,
                 size = 0.0041,
                 lineWidth = 280,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -406,6 +415,7 @@ object DeclarativeSettings {
         rows.forEach { row ->
             nodes += GestureGuiText(
                 text = Component.text(row.label),
+                interpolationTicks = 0,
                 size = 0.0060,
                 lineWidth = 120,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -417,6 +427,7 @@ object DeclarativeSettings {
             )
             nodes += GestureGuiText(
                 text = row.value,
+                interpolationTicks = 0,
                 size = 0.0060,
                 lineWidth = 170,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -576,6 +587,7 @@ object DeclarativeSettings {
         }
         nodes += GestureGuiText(
             text = status,
+            interpolationTicks = 0,
             size = 0.004,
             lineWidth = 80,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -622,6 +634,8 @@ object DeclarativeSettings {
         val baseId = card.elementId ?: "${card.visualTag}-bg"
         nodes += GestureGuiBlock(
             blockData = card.background,
+            // 操作面・確認面はタブ列と異なり補完なしで即時反映します。
+            interpolationTicks = 0,
             width = GestureGuiSizeSpec.Fixed(card.w),
             height = GestureGuiSizeSpec.Fixed(card.h),
             outline = card.outline?.let { GestureGuiOutline(it) },
@@ -636,6 +650,7 @@ object DeclarativeSettings {
         card.label?.let { label ->
             nodes += GestureGuiText(
                 text = label,
+                interpolationTicks = 0,
                 size = card.labelSize,
                 lineWidth = card.labelWidth,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -658,6 +673,7 @@ object DeclarativeSettings {
         // ノード ID は要素 ID と同一にし、操作振分けの照合対象を維持します。
         nodes += GestureGuiBlock(
             blockData = card.background,
+            interpolationTicks = 0,
             width = GestureGuiSizeSpec.Fixed(card.w),
             height = GestureGuiSizeSpec.Fixed(SCRIPT_CARD_HEIGHT),
             id = card.elementId,
@@ -670,6 +686,7 @@ object DeclarativeSettings {
         card.icon?.let { icon ->
             nodes += GestureGuiItem(
                 item = icon,
+                interpolationTicks = 0,
                 scale = 0.08,
                 width = GestureGuiSizeSpec.Fixed(0.08),
                 height = GestureGuiSizeSpec.Fixed(0.08),
@@ -679,6 +696,7 @@ object DeclarativeSettings {
         }
         nodes += GestureGuiText(
             text = Component.text(card.label),
+            interpolationTicks = 0,
             size = 0.0052,
             lineWidth = 120,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -689,6 +707,7 @@ object DeclarativeSettings {
         )
         nodes += GestureGuiText(
             text = card.value,
+            interpolationTicks = 0,
             size = 0.0044,
             lineWidth = 170,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -709,6 +728,7 @@ object DeclarativeSettings {
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
             text = hint,
+            interpolationTicks = 0,
             size = 0.008,
             lineWidth = 230,
             alignment = GestureGuiTextAlignment.CENTER,

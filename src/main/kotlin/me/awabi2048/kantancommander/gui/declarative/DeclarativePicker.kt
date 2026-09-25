@@ -116,8 +116,10 @@ object DeclarativePicker {
             )
         }
         // 閉じるボタンはノード選択中の削除と同じ下端位置です。
+        // 左分類タブ列（上記）はタブ演出のため補完を受けます。それ以外は即時反映します。
         nodes += GestureGuiBlock(
             blockData = data.closeBackground,
+            interpolationTicks = 0,
             width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_WIDTH),
             height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
             id = "lower-close-picker",
@@ -132,6 +134,7 @@ object DeclarativePicker {
         )
         nodes += GestureGuiText(
             text = data.closeLabel,
+            interpolationTicks = 0,
             size = 0.006,
             lineWidth = 90,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -147,6 +150,7 @@ object DeclarativePicker {
         )
         nodes += GestureGuiText(
             text = data.description,
+            interpolationTicks = 0,
             size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
             lineWidth = 280,
             alignment = GestureGuiTextAlignment.CENTER,
@@ -205,6 +209,7 @@ object DeclarativePicker {
                 val x = 0.28 + if (arrowIndex == 0) -0.12 else 0.12
                 nodes += GestureGuiBlock(
                     blockData = arrow.background,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(0.18),
                     height = GestureGuiSizeSpec.Fixed(0.10),
                     // 利用不可方向は操作面を作りません。
@@ -215,6 +220,7 @@ object DeclarativePicker {
                 )
                 nodes += GestureGuiText(
                     text = arrow.glyph,
+                    interpolationTicks = 0,
                     size = 0.005,
                     lineWidth = 60,
                     alignment = GestureGuiTextAlignment.CENTER,
@@ -226,6 +232,7 @@ object DeclarativePicker {
             }
             nodes += GestureGuiText(
                 text = pager.status,
+                interpolationTicks = 0,
                 size = 0.004,
                 lineWidth = 80,
                 alignment = GestureGuiTextAlignment.CENTER,

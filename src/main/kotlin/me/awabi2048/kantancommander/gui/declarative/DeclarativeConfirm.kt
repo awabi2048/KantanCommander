@@ -55,6 +55,8 @@ object DeclarativeConfirm {
         fun label(id: String, cx: Double, cy: Double, size: Double, lineWidth: Int, text: Component): GestureGuiNode =
             GestureGuiText(
                 text = text,
+                // 確認面はタブ列と異なり補完なしで即時反映します。
+                interpolationTicks = 0,
                 size = size,
                 lineWidth = lineWidth,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -71,6 +73,7 @@ object DeclarativeConfirm {
                 label("confirm-warn", 0.0, 0.05, 0.004, 180, texts.warn),
                 GestureGuiBlock(
                     blockData = yesBackground,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(0.48),
                     height = GestureGuiSizeSpec.Fixed(0.12),
                     // 要素 ID を継承し、旧来の振分けをそのまま利用します。
@@ -82,6 +85,7 @@ object DeclarativeConfirm {
                 label("confirm-yes", -0.27, -0.08, 0.004, 100, texts.yes),
                 GestureGuiBlock(
                     blockData = noBackground,
+                    interpolationTicks = 0,
                     width = GestureGuiSizeSpec.Fixed(0.48),
                     height = GestureGuiSizeSpec.Fixed(0.12),
                     id = "confirm-cancel",

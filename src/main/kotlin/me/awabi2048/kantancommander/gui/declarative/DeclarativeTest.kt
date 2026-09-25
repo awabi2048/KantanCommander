@@ -49,6 +49,8 @@ object DeclarativeTest {
     private fun centered(frame: ContentFrame, line: CenteredLine): GestureGuiNode =
         GestureGuiText(
             text = line.text,
+            // タブ列以外は補完なしで即時反映します。
+            interpolationTicks = 0,
             size = line.size,
             lineWidth = line.lineWidth,
             alignment = GestureGuiTextAlignment.CENTER,
