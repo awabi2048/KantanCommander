@@ -94,6 +94,9 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     lateinit var summonedEntities: SummonedEntityTracker
         private set
+    /** 花火の飛行と破裂を本実行・試射で共有するサービスです。 */
+    lateinit var fireworkFlight: me.awabi2048.kantancommander.execution.FireworkFlightService
+        private set
     lateinit var particleQuota: ParticleQuotaService
         private set
     lateinit var programListMenu: ProgramListMenu
@@ -267,6 +270,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         particleQuota = ParticleQuotaService(limitProvider = {
             config.getInt("execution.max-particles-per-world-per-second", 600)
         })
+        fireworkFlight = me.awabi2048.kantancommander.execution.FireworkFlightService(this)
         executor = SequenceExecutor(this)
         testExecution = TestExecutionCoordinator(executor)
         testExecutionPreferences = TestExecutionPreferences(this)

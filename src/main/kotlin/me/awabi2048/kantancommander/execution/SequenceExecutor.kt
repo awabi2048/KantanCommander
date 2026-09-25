@@ -1963,6 +1963,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /**
      * issue #29 の花火1発分の打上げです。位置集合の各位置から呼び出します。
      *
+     * 飛行と起爆は [FireworkFlightService] へ委譲します。セッションへ予約を
+     * 登録しないため、最終ノード後の即時終了で起爆が取り消されません。
      * 高さ0は演出なしの即時破裂です。
      */
     private fun launchFireworkRocket(
@@ -1972,60 +1974,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         height: Double,
         launchAt: org.bukkit.Location,
     ) {
-        // 高さ0は演出なしの即時破裂です。
-        if (height <= 0.0) {
-            val instant = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)
-            instant.setItem(stack)
-            instant.setShotAtAngle(false)
-            instant.detonate()
-            return
-        }
-        val rocket = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)
-        rocket.setItem(stack)
-        rocket.setShotAtAngle(false)
-        // 初速を厳密値で上書きし、XZドリフト（0×1.15の恒久0）を確定します。
-        rocket.velocity = org.bukkit.util.Vector(
-            0.0,
-            FireworkSettings.INITIAL_UPWARD_VELOCITY,
-            0.0,
+        plugin.fireworkFlight.launch(
+            FireworkFlightService.Request(
+                launchAt = launchAt,
+                stack = stack,
+                height = height,
+                summonedByScript = session.rootId,
+            ),
         )
-        rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
-        try {
-            plugin.summonedEntities.register(rocket, session.rootId)
-        } catch (failure: Throwable) {
-            rocket.remove()
-            throw failure
-        }
-        val target = launchAt.clone().add(0.0, height, 0.0)
-        schedule(session, FireworkSettings.detonationTicks(height).toLong()) {
-            detonateAtTarget(rocket, target)
-        }
-    }
-
-    /**
-     * ワンショット起爆判定です。
-     *
-     * 発火時点で正確な目標座標へテレポート補正して即時起爆するため、高度は
-     * 厳密です。チャンク無効・実体無効・起爆済みの場合は20tick後に再試行し、
-     * バックストップ到達まで繰り返します。
-     */
-    private fun detonateAtTarget(rocket: org.bukkit.entity.Firework, target: Location, retriesLeft: Int = 5) {
-        val world = target.world
-        if (!rocket.isValid || rocket.isDetonated || world == null ||
-            !world.isChunkLoaded(target.blockX shr 4, target.blockZ shr 4)
-        ) {
-            if (retriesLeft > 0) {
-                plugin.server.scheduler.runTaskLater(plugin, Runnable {
-                    detonateAtTarget(rocket, target, retriesLeft - 1)
-                }, 20L)
-            } else {
-                runCatching { rocket.remove() }
-            }
-            return
-        }
-        // XZの残留ブレもここで消し、完全垂直の到達点で破裂させます。
-        rocket.teleport(target)
-        rocket.detonate()
     }
 
     /** 花火アイテムを保存値から復元します。 */

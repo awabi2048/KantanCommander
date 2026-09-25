@@ -5,8 +5,9 @@ import me.awabi2048.kantancommander.gui.EditorGuiMode
 /**
  * 既存のかんたんコマンダー制御ブロックを右クリックした後の入口を決めます。
  *
- * 通常時に制御ブロックアイテムを持っている場合はバニラの配置を優先しますが、
- * スニークは操作プレイヤーの環境に応じたエディターを開く操作として扱います。
+ * バニラの対話ブロックに則り、スニーク中の右クリックは使用をバイパスして
+ * 手持ちのブロック配置へ素通しします。非スニークの右クリックは編集入口であり、
+ * かんたんコマンダー制御ブロック所持中も配置ではなくエディターを開きます。
  * Gesture GUIは追従を初期値とし、固定化は画面上のクリップ操作へ集約します。
  * イベント処理や権限判定から表示方式の選択を分離し、スニーク時の動作が別の
  * 手持ちアイテムや固定設定に左右されないことをテスト可能にします。
@@ -24,15 +25,9 @@ internal object KantanPlacementInteractionPolicy {
         sneaking: Boolean,
         editorGuiMode: EditorGuiMode,
     ): KantanPlacementInteraction {
-        if (!sneaking && itemKind == KantanItemKind.BLOCK) {
-            return KantanPlacementInteraction.VANILLA_PLACE
-        }
+        // スニーク中は手持ちの種別を問わずバニラの使用・配置へ素通しします。
         if (sneaking) {
-            return if (editorGuiMode == EditorGuiMode.GESTURE) {
-                KantanPlacementInteraction.FOLLOWING_GESTURE
-            } else {
-                KantanPlacementInteraction.INVENTORY_EDITOR
-            }
+            return KantanPlacementInteraction.VANILLA_PLACE
         }
         if (itemKind == KantanItemKind.DISK) return KantanPlacementInteraction.WRITE_CONFIRM
         return if (editorGuiMode == EditorGuiMode.GESTURE) {

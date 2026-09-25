@@ -3247,46 +3247,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val height = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
             .toDoubleOrNull()?.takeIf(Double::isFinite) ?: FireworkSettings.HEIGHT_DEFAULT
         // 試射は操作者（Gesture GUIエディターの操作者）の位置から打ち上げ、
-        // 発射者を自機に固定して接触起爆を避けます。
-        val launchAt = player.location.clone()
-        if (height <= 0.0) {
-            val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
-            instant.setItem(stack)
-            instant.setShotAtAngle(false)
-            instant.detonate()
-            return MenuActionResult.Success(MenuUpdate.None)
-        }
-        val rocket = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
-        rocket.setItem(stack)
-        rocket.setShotAtAngle(false)
-        rocket.shooter = player
-        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
-        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
-        rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
-        val target = launchAt.clone().add(0.0, height, 0.0)
-        plugin.server.scheduler.runTaskLater(plugin, Runnable {
-            detonatePreviewAtTarget(rocket, target)
-        }, FireworkSettings.detonationTicks(height).toLong().coerceAtLeast(1L))
+        // 発射者を自機に固定して接触起爆を避けます。飛行と起爆は本実行と
+        // 同じ [me.awabi2048.kantancommander.execution.FireworkFlightService] を使います。
+        plugin.fireworkFlight.launch(
+            me.awabi2048.kantancommander.execution.FireworkFlightService.Request(
+                launchAt = player.location.clone(),
+                stack = stack,
+                height = height,
+                shooter = player,
+            ),
+        )
         return MenuActionResult.Success(MenuUpdate.None)
-    }
-
-    /** 試射のワンショット起爆判定です。本実行と同一条件で目標高度へ補正起爆します。 */
-    private fun detonatePreviewAtTarget(rocket: org.bukkit.entity.Firework, target: Location, retriesLeft: Int = 5) {
-        val world = target.world
-        if (!rocket.isValid || rocket.isDetonated || world == null ||
-            !world.isChunkLoaded(target.blockX shr 4, target.blockZ shr 4)
-        ) {
-            if (retriesLeft > 0) {
-                plugin.server.scheduler.runTaskLater(plugin, Runnable {
-                    detonatePreviewAtTarget(rocket, target, retriesLeft - 1)
-                }, 20L)
-            } else {
-                runCatching { rocket.remove() }
-            }
-            return
-        }
-        rocket.teleport(target)
-        rocket.detonate()
     }
 
     private fun renderSoundTargetPosition(player: Player, route: MenuRoute): InventoryMenuView {

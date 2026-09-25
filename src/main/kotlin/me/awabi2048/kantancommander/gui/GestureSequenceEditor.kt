@@ -3584,7 +3584,7 @@ class GestureSequenceEditor(
     /**
      * 設定中の花火をその場で打ち上げます。
      *
-     * 本実行と同じ検証済み方式（初速固定・ワンショット起爆判定）を使い、
+     * 本実行と同じ [me.awabi2048.kantancommander.execution.FireworkFlightService] を使い、
      * 保存は行わず使い捨てで発射します。召喚体台帳へは登録しません。
      */
     private fun launchFireworkPreview(player: Player, node: CommandNode): Boolean {
@@ -3605,43 +3605,15 @@ class GestureSequenceEditor(
             placement?.let(FireworkSettings::placementAbove),
             player.location,
         )
-        if (height <= 0.0) {
-            val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
-            instant.setItem(stack)
-            instant.setShotAtAngle(false)
-            instant.detonate()
-            return true
-        }
-        val rocket = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
-        rocket.setItem(stack)
-        rocket.setShotAtAngle(false)
-        rocket.shooter = player
-        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
-        rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
-        val target = launchAt.clone().add(0.0, height, 0.0)
-        plugin.server.scheduler.runTaskLater(plugin, Runnable {
-            detonatePreviewAtTarget(rocket, target)
-        }, FireworkSettings.detonationTicks(height).toLong().coerceAtLeast(1L))
+        plugin.fireworkFlight.launch(
+            me.awabi2048.kantancommander.execution.FireworkFlightService.Request(
+                launchAt = launchAt,
+                stack = stack,
+                height = height,
+                shooter = player,
+            ),
+        )
         return true
-    }
-
-    /** 試射のワンショット起爆判定です。本実行と同一条件で目標高度へ補正起爆します。 */
-    private fun detonatePreviewAtTarget(rocket: org.bukkit.entity.Firework, target: Location, retriesLeft: Int = 5) {
-        val world = target.world
-        if (!rocket.isValid || rocket.isDetonated || world == null ||
-            !world.isChunkLoaded(target.blockX shr 4, target.blockZ shr 4)
-        ) {
-            if (retriesLeft > 0) {
-                plugin.server.scheduler.runTaskLater(plugin, Runnable {
-                    detonatePreviewAtTarget(rocket, target, retriesLeft - 1)
-                }, 20L)
-            } else {
-                runCatching { rocket.remove() }
-            }
-            return
-        }
-        rocket.teleport(target)
-        rocket.detonate()
     }
 
     /** メインハンドの花火ロケットを設定値へ保存します。 */
