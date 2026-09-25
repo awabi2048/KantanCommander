@@ -855,6 +855,15 @@ object EntityDataSchema {
     fun definition(id: String): EntityPropertyDefinition? = byId[id]
 
     /**
+     * 真偽値の次状態を返します。
+     *
+     * 未設定・壊れた値はfalseとして扱いtrueへ進めます。falseも有効な設定値
+     * であるため、空欄への読み替えは行いません。ジェスチャー／インベントリ
+     * 双方のトグル操作で同じ計算を使い、表示と保存の食い違いを防ぎます。
+     */
+    fun toggledBooleanValue(raw: String): String = (!(raw.toBooleanStrictOrNull() ?: false)).toString()
+
+    /**
      * issue #10 の召喚時個別設定の保存接頭辞です。
      *
      * SUMMONノードは複数項目を持つため、単一キーではなく項目ごとに

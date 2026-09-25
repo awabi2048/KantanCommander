@@ -365,6 +365,7 @@ class GestureLowerPanel(
                     detailVisited = state.detailVisitedKeys.contains(
                         PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
                     ),
+                    summonPropertyId = summonSelectedPropertyId(state),
                 ),
                 pathLast,
             )
@@ -740,10 +741,19 @@ class GestureLowerPanel(
                 detailVisited = state.detailVisitedKeys.contains(
                     PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
                 ),
+                summonPropertyId = summonSelectedPropertyId(state),
             ),
             state.settingTreePath?.nodeIds?.lastOrNull(),
         )
         val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
+        // エンティティのデータ設定は二段階操作のため、葉の選択中にも
+        // 再クリックの案内を出します。子を持つ項目の案内を優先します。
+        val reclickHint = if (screen == GestureSettingScreen.ENTITY_DATA_ROOT ||
+            screen == GestureSettingScreen.SUMMON_DATA_ROOT
+        ) {
+            choices.firstOrNull { it.selected && !it.hasChildren }
+                ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_RECLICK_APPLY) }
+        } else null
         val warning = attentionWarning(player, node, fieldKey, attentionFields)
         val detailHint = selectedDetail
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
@@ -758,6 +768,10 @@ class GestureLowerPanel(
                 )
                 !detailHint.isNullOrBlank() -> DescriptionDetail(
                     Component.text(detailHint, NamedTextColor.GRAY),
+                    SETTING_DETAIL_ANCHOR_Y,
+                )
+                !reclickHint.isNullOrBlank() -> DescriptionDetail(
+                    Component.text(reclickHint, NamedTextColor.GRAY),
                     SETTING_DETAIL_ANCHOR_Y,
                 )
                 else -> null
@@ -2030,11 +2044,28 @@ class GestureLowerPanel(
                     detailVisited = state.detailVisitedKeys.contains(
                         PresetSelectionDisplay.detailVisitKey(field.key, settingContext.role),
                     ),
+                    summonPropertyId = summonSelectedPropertyId(state),
                 ),
                 state.settingTreePath?.nodeIds?.lastOrNull(),
             )
         }.orEmpty()
-        val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
+        // 候補数が多い対象種別でも全行を画面内へ収めるため、子画面と同じ
+        // 10件単位でページ分割します。子画面とページ番号を共有し、入室・
+        // 帰還で先頭へ戻る動作を統一します。
+        val pageSize = SETTING_CHOICE_PAGE_SIZE
+        val pageCount = ((settingChoices.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.settingChoicePage.coerceIn(0, pageCount - 1)
+        val pageChoices = settingChoices.drop(page * pageSize).take(pageSize)
+        val selectedDetail = pageChoices.firstOrNull { it.selected && it.hasChildren }
+        // エンティティのデータ設定は二段階操作のため、子を持たない葉の
+        // 選択中にも再クリックの案内を出します。子を持つ項目の案内を優先し、
+        // 表示中のページの選択だけを対象にします。
+        val reclickHint = if (settingScreen == GestureSettingScreen.ENTITY_DATA_ROOT ||
+            settingScreen == GestureSettingScreen.SUMMON_DATA_ROOT
+        ) {
+            pageChoices.firstOrNull { it.selected && !it.hasChildren }
+                ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_RECLICK_APPLY) }
+        } else null
         val warning = attentionWarning(player, node, field.key, attentionFields)
         val detailHint = selectedDetail
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
@@ -2049,6 +2080,10 @@ class GestureLowerPanel(
                 )
                 !detailHint.isNullOrBlank() -> DescriptionDetail(
                     Component.text(detailHint, NamedTextColor.GRAY),
+                    compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
+                )
+                !reclickHint.isNullOrBlank() -> DescriptionDetail(
+                    Component.text(reclickHint, NamedTextColor.GRAY),
                     compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
                 )
                 else -> null
@@ -2076,12 +2111,37 @@ class GestureLowerPanel(
             appendSettingChoiceCards(
                 nodes,
                 frame,
-                settingChoices,
+                pageChoices,
                 fieldKey = field.key,
                 player = player,
                 child = false,
                 suppressHighlight = suppressHighlight,
             )
+            if (pageCount > 1) {
+                DeclarativeSettings.pagerSection(
+                    nodes,
+                    frame,
+                    idPrefix = "setting-choice",
+                    elementPrefix = "lower-setting-choice-page",
+                    page = page,
+                    pageCount = pageCount,
+                    centerX = 0.25,
+                    centerY = -0.43,
+                    arrowBackgrounds = listOf(page - 1, page + 1).map { targetPage ->
+                        Bukkit.createBlockData(
+                            if (targetPage in 0 until pageCount) Material.CYAN_CONCRETE
+                            else DisabledGuiVisualPolicy.material,
+                        )
+                    },
+                    arrowGlyphs = listOf("◀", "▶").mapIndexed { arrowIndex, glyph ->
+                        val targetPage = if (arrowIndex == 0) page - 1 else page + 1
+                        Component.text(glyph).color(
+                            if (targetPage in 0 until pageCount) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                        )
+                    },
+                    status = Component.text("${page + 1}/$pageCount"),
+                )
+            }
         }
         appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight, fieldPreviews)
         // 「アイテムを配置」の上書き設定は独立タブを持たず、配置先タブの
@@ -3782,7 +3842,10 @@ class GestureLowerPanel(
         inChild: Boolean = false,
         // 詳細入室後はプリセットの選択表示を詳細側へ移します（保存値は不変）。
         detailVisited: Boolean = false,
-    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild, detailVisited)
+        // 召喚時個別設定の有限候補子画面で表示する項目IDです。召喚には
+        // 項目パス欄がないため、保存値ではなく経路記憶から受け取ります。
+        summonPropertyId: String? = null,
+    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild, detailVisited, summonPropertyId)
         .map { decorateSettingChoice(node, context, fieldKey, it, attentionFields) }
 
     private fun rawSettingTreeNodes(
@@ -3793,6 +3856,7 @@ class GestureLowerPanel(
         player: Player,
         inChild: Boolean = false,
         detailVisited: Boolean = false,
+        summonPropertyId: String? = null,
     ): List<GestureSettingTreeNode> = when (screen) {
         GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player, inChild, detailVisited)
@@ -3860,8 +3924,18 @@ class GestureLowerPanel(
                 else -> choice
             }
         }
-        else -> settingChoices(node, context, screen, fieldKey, player, detailVisited)
+        else -> settingChoices(node, context, screen, fieldKey, player, detailVisited, summonPropertyId)
     }
+
+    /**
+     * 召喚時個別設定で選択中の項目IDを経路記憶から復元します。
+     *
+     * 召喚には項目パス欄がないため、有限候補子画面の表示対象は保存値から
+     * 決められません。親画面の行選択だけを根拠にし、接頭辞のない経路では
+     * nullを返して空表示にします。
+     */
+    internal fun summonSelectedPropertyId(state: GestureEditorState): String? =
+        summonPropertyIdFromPath(state.settingTreePath?.nodeIds?.lastOrNull())
 
     /**
      * 生の選択肢へドメインの選択方式と値状態を付与します。
@@ -4185,7 +4259,7 @@ class GestureLowerPanel(
         val fieldKey = state.settingFieldKey ?: return GestureSettingInteractionMode.SELECT
         val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId)
             ?: return GestureSettingInteractionMode.SELECT
-        return settingTreeNodes(node, context, screen, fieldKey, player)
+        return settingTreeNodes(node, context, screen, fieldKey, player, summonPropertyId = summonSelectedPropertyId(state))
             .firstNotNullOfOrNull { it.find(choiceId) }
             ?.effectiveInteractionMode
             ?: GestureSettingInteractionMode.SELECT
@@ -4210,7 +4284,7 @@ class GestureLowerPanel(
         val screen = state.settingScreen ?: return false
         val fieldKey = state.settingFieldKey ?: return false
         val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId) ?: return false
-        return settingTreeNodes(node, context, screen, fieldKey, player)
+        return settingTreeNodes(node, context, screen, fieldKey, player, summonPropertyId = summonSelectedPropertyId(state))
             .firstNotNullOfOrNull { it.find(choiceId) }
             ?.selected == true
     }
@@ -4242,6 +4316,7 @@ class GestureLowerPanel(
         fieldKey: String,
         player: Player,
         detailVisited: Boolean = false,
+        summonPropertyId: String? = null,
     ): List<GestureSettingTreeNode> = when (screen) {
         GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
         GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
@@ -4285,6 +4360,21 @@ class GestureLowerPanel(
         // issue #10: 召喚時個別設定の一覧画面です。召喚種類が確定できる場合のみ
         // 適用可能な項目を表示し、和集合表示は行いません。
         GestureSettingScreen.SUMMON_DATA_ROOT -> summonDataRootChoices(node, player)
+        // 召喚時個別設定の有限候補子画面です。召喚には項目パス欄がないため、
+        // 保存値ではなく経路記憶の項目IDから候補を生成します。不正な項目IDでは
+        // 空にして、未知選択肢の保存経路を作りません。
+        GestureSettingScreen.SUMMON_PROPERTY_VALUE -> {
+            val definition = summonPropertyId?.let { EntityDataSchema.definition(it) }
+            if (definition?.valueKind == EntityPropertyValueKind.ENUM) {
+                definition.enumChoices.map { choice ->
+                    SettingChoice(
+                        "summonDataValue:${definition.id}:${choice.id}",
+                        KcI18n.text(player, choice.optionKey),
+                        node.string(EntityDataSchema.summonDataKey(definition.id)) == choice.id,
+                    )
+                }
+            } else emptyList()
+        }
         // attribute子画面です。選択→変更後の値入力フローであり、
         // ID自体の自由入力欄は持ちません。
         GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT -> {

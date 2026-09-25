@@ -257,6 +257,18 @@ internal fun settingSelectionAction(
     GestureSettingInteractionMode.DETAILS_ONLY -> GestureSettingSelectionAction.ENTER_CHILD
 }
 
+/**
+ * 召喚時個別設定で選択中の項目IDを経路末尾から復元します。
+ *
+ * 召喚には項目パス欄がないため、有限候補子画面の表示対象は保存値から
+ * 決められません。親画面の行選択だけを根拠にし、接頭辞のない経路では
+ * nullを返して空表示にします。
+ */
+internal fun summonPropertyIdFromPath(pathLastNodeId: String?): String? {
+    if (pathLastNodeId == null || !pathLastNodeId.startsWith("summonData:")) return null
+    return pathLastNodeId.removePrefix("summonData:").takeIf(String::isNotBlank)
+}
+
 internal fun settingSelectionAction(
     wasSelected: Boolean,
     hasChildren: Boolean,

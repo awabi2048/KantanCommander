@@ -128,7 +128,7 @@ enum class CommandSettingEditor {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
-    /** 統合選択画面（設定する項目の一覧）です。旧3択を置換します。 */
+    /** 統合選択画面（エンティティのデータ設定の一覧）です。旧3択を置換します。 */
     ENTITY_DATA_ROOT,
     /** issue #10: 召喚時個別設定の一覧画面です。適用可能な項目だけを列挙します。 */
     SUMMON_DATA_ROOT,

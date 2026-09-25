@@ -131,6 +131,17 @@ class GestureSettingTreeTest {
     }
 
     @Test
+    fun `summon child resolves its property only from the selected row`() {
+        // 召喚には項目パス欄がないため、有限候補子画面は経路記憶の行だけを根拠にします。
+        assertEquals("rabbit_type", summonPropertyIdFromPath("summonData:rabbit_type"))
+        // 接頭辞のない経路・空項目IDでは空表示にして、未知選択肢の保存経路を作りません。
+        assertNull(summonPropertyIdFromPath(null))
+        assertNull(summonPropertyIdFromPath("entityData:property:gravity"))
+        assertNull(summonPropertyIdFromPath("summonData:"))
+        assertNull(summonPropertyIdFromPath(""))
+    }
+
+    @Test
     fun `path selection applies exclusively within the current choices`() {
         val preset = GestureSettingTreeNode("target-preset:NEARBY_PLAYERS", "周囲", selected = true)
         val detail = GestureSettingTreeNode("target-detail", "詳細")

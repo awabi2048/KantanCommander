@@ -1134,7 +1134,7 @@ object ExecutableScriptValidator {
             is EntityDataPath.Parsed.Tag -> validateEntityTagEntries(node, path, errors, temporaryDefinitions)
             is EntityDataPath.Parsed.Attribute -> validateEntityAttribute(node, path, parsed.attributeId, errors)
             is EntityDataPath.Parsed.Property -> validateEntityData(node, path, parsed.propertyId, errors, temporaryDefinitions)
-            null -> errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "設定する項目が未選択です")
+            null -> errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "エンティティのデータ設定が未選択です")
         }
     }
 

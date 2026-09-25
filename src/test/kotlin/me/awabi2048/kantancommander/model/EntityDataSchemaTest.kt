@@ -17,6 +17,18 @@ import org.bukkit.entity.EntityType
  */
 class EntityDataSchemaTest {
     @Test
+    fun `boolean toggle flips strictly and treats unset as false`() {
+        // 両GUIのトグル操作で同じ計算を使うため、境界値を固定します。
+        assertEquals("true", EntityDataSchema.toggledBooleanValue("false"))
+        assertEquals("false", EntityDataSchema.toggledBooleanValue("true"))
+        // 未設定・壊れた値はfalseとして扱いtrueへ進めます。
+        // 厳密真偽値ではない大文字Trueも未設定扱いです。
+        assertEquals("true", EntityDataSchema.toggledBooleanValue(""))
+        assertEquals("true", EntityDataSchema.toggledBooleanValue("yes"))
+        assertEquals("true", EntityDataSchema.toggledBooleanValue("True"))
+    }
+
+    @Test
     fun `unknown property id resolves to null without fallback`() {
         assertNull(EntityDataSchema.definition("no_such_property"))
         assertNull(EntityDataSchema.definition(""))

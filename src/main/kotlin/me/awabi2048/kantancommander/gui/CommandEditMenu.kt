@@ -342,7 +342,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                         CommandSettingsModel.setParameter(
                                             it,
                                             EntityDataSchema.PARAM_VALUE,
-                                            (!(it.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull() ?: false)).toString(),
+                                            // ジェスチャーGUIと同じトグル計算を使い、表示と保存を一致させます。
+                                            // 保存時点の値から求めるため、ラムダ内で評価します。
+                                            EntityDataSchema.toggledBooleanValue(it.string(EntityDataSchema.PARAM_VALUE)),
                                         )
                                     }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                                     return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)

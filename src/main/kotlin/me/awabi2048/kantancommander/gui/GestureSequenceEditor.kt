@@ -381,6 +381,8 @@ enum class GestureSettingScreen {
     ENTITY_ATTRIBUTE_SELECT,
     ENTITY_TAG_LIST,
     ENTITY_PROPERTY_VALUE,
+    /** 召喚時個別設定の有限候補子画面です。選択項目は経路記憶で保持します。 */
+    SUMMON_PROPERTY_VALUE,
     PLACE_DESTINATION,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
@@ -6694,6 +6696,18 @@ class GestureSequenceEditor(
         }
 
         /**
+         * 保存失敗を操作者へ明示します。
+         *
+         * リビジョン競合や古い画面からの操作は従来そのまま再描画され、
+         * クリックが無反応に見える原因になっていました。失敗時は経路記憶を
+         * 更新せず、最新表示へ戻して再選択させます。
+         */
+        fun notifySaveFailed() {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+            showSettingScreen()
+        }
+
+        /**
          * 一時変数名の二段階入力を集約します。
          *
          * 対象・位置・向きの一時変数入力は「初回＝方式選択、再クリック＝変数名入力」の
@@ -8006,14 +8020,20 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.ENTITY_DATA_ROOT -> {
                 if (group != "entityData") return
-                // タグ・attribute・有限候補は子画面を持つ親項目であり、
-                // 同一項目への連続クリックで入室します。永続選択とのOR判定は
-                // 使わず、切替操作（別項目の選択）が誤入室しないようにします。
-                // 真偽値・文字列・整数は葉としてその場で確定します。
-                // 直前のクリック記憶は遷移専用であり、選択表示とは分離します。
+                // 項目選択と内容確定の二段階契約です。1回目は項目の選択だけを
+                // 行い、同じ項目への連続クリックで内容を確定します。永続選択との
+                // OR判定は使わず、切替操作（別項目の選択）が誤入室・誤切替しない
+                // ようにします。保存は1クリック1回に統一し、同一ハンドラ内の
+                // 連続保存によるリビジョン競合を作りません。失敗時は経路記憶を
+                // 更新せず、最新表示へ戻します。
                 val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
                 if (value == "attribute") {
                     val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    if (!consecutive) {
+                        rememberSettingNode(encoded, interactionMode)
+                        showSettingScreen()
+                        return
+                    }
                     rememberSettingNode(encoded, interactionMode)
                     if (settingSelectionAction(consecutive, interactionMode) !=
                         GestureSettingSelectionAction.ENTER_CHILD
@@ -8034,19 +8054,19 @@ class GestureSequenceEditor(
                 }
                 if (value == "tag") {
                     val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                    val persistedTag = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH)) is EntityDataPath.Parsed.Tag
+                    if (!consecutive || !persistedTag) {
+                        if (!updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
+                            }) {
+                            notifySaveFailed()
+                            return
+                        }
+                        rememberSettingNode(encoded, interactionMode)
+                        showSettingScreen()
+                        return
+                    }
                     rememberSettingNode(encoded, interactionMode)
-                    if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
-                        }) {
-                        showSettingScreen()
-                        return
-                    }
-                    if (settingSelectionAction(consecutive, interactionMode) !=
-                        GestureSettingSelectionAction.ENTER_CHILD
-                    ) {
-                        showSettingScreen()
-                        return
-                    }
                     pushSettingFrame(
                         player,
                         GestureSettingFrame(
@@ -8061,76 +8081,91 @@ class GestureSequenceEditor(
                 }
                 if (!value.startsWith("property:")) return
                 val propertyId = value.removePrefix("property:")
-                val definition = EntityDataSchema.definition(propertyId) ?: return
+                val definition = EntityDataSchema.definition(propertyId)
+                if (definition == null) {
+                    // 古い画面に残った未知項目の操作を受け付けず、最新表示へ戻します。
+                    notifySaveFailed()
+                    return
+                }
                 val previous = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
                 val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                if (!consecutive || previous != propertyId) {
+                    if (!updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
+                            // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
+                            if (previous != null && previous != propertyId) {
+                                CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, "")
+                            }
+                        }) {
+                        notifySaveFailed()
+                        return
+                    }
+                    rememberSettingNode(encoded, interactionMode)
+                    showSettingScreen()
+                    return
+                }
                 rememberSettingNode(encoded, interactionMode)
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
-                        // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
-                        if (previous != propertyId) {
-                            CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, "")
+                when (definition.valueKind) {
+                    // 真偽値は項目選択と分離した単一保存で切り替えます。子画面を持ちません。
+                    EntityPropertyValueKind.BOOLEAN -> {
+                        val toggled = EntityDataSchema.toggledBooleanValue(node.string(EntityDataSchema.PARAM_VALUE))
+                        if (!updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, toggled)
+                            }) {
+                            notifySaveFailed()
+                            return
                         }
-                    }) {
-                    when (definition.valueKind) {
-                        // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
-                        EntityPropertyValueKind.BOOLEAN -> {
-                            val current = node.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull()
-                            val toggled = if (previous == propertyId && current != null) (!current).toString() else "true"
-                            if (updateSettingNode(player, settingContext) {
-                                    CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, toggled)
-                                }) showSettingScreen()
+                        showSettingScreen()
+                    }
+                    EntityPropertyValueKind.ENUM -> {
+                        if (settingSelectionAction(consecutive, interactionMode) !=
+                            GestureSettingSelectionAction.ENTER_CHILD
+                        ) {
+                            showSettingScreen()
+                            return
                         }
-                        EntityPropertyValueKind.ENUM -> {
-                            if (settingSelectionAction(consecutive, interactionMode) !=
-                                GestureSettingSelectionAction.ENTER_CHILD
-                            ) {
-                                showSettingScreen()
-                                return
-                            }
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(
-                                    settingContext,
-                                    EntityDataPath.PARAM_PATH,
-                                    GestureSettingScreen.ENTITY_PROPERTY_VALUE,
-                                ),
-                                encoded,
-                            )
-                        }
-                        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
-                            // 保存前のnode参照では項目が古いままになり、入力仕様が
-                            // 解決できず例外になるため、保存後のノードを再取得します。
-                            val fresh = plugin.scripts.load(settingContext.scriptId)
+                        pushSettingFrame(
+                            player,
+                            GestureSettingFrame(
+                                settingContext,
+                                EntityDataPath.PARAM_PATH,
+                                GestureSettingScreen.ENTITY_PROPERTY_VALUE,
+                            ),
+                            encoded,
+                        )
+                    }
+                    EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
+                        // 保存前のnode参照では項目が古いままになり、入力仕様が
+                        // 解決できず例外になるため、保存後のノードを再取得します。
+                        val fresh = plugin.scripts.load(settingContext.scriptId)
+                            ?.graph?.nodes?.get(settingContext.nodeId)
+                            ?: return
+                        beginSettingInput(
+                            player,
+                            requireNotNull(CommandDialogSpecs.field(fresh, EntityDataSchema.PARAM_VALUE)),
+                            fresh.string(EntityDataSchema.PARAM_VALUE, ""),
+                        ) { raw ->
+                            val normalized = CommandDialogSpecs.normalize(EntityDataSchema.PARAM_VALUE, raw)
+                            // 入力確定時にも取り直します。Dialog表示中に項目が
+                            // 変わっていた場合は例外にせず保存失敗として扱います。
+                            val current = plugin.scripts.load(settingContext.scriptId)
                                 ?.graph?.nodes?.get(settingContext.nodeId)
-                                ?: return
-                            beginSettingInput(
-                                player,
-                                requireNotNull(CommandDialogSpecs.field(fresh, EntityDataSchema.PARAM_VALUE)),
-                                fresh.string(EntityDataSchema.PARAM_VALUE, ""),
-                            ) { raw ->
-                                val normalized = CommandDialogSpecs.normalize(EntityDataSchema.PARAM_VALUE, raw)
-                                // 入力確定時にも取り直します。Dialog表示中に項目が
-                                // 変わっていた場合は例外にせず保存失敗として扱います。
-                                val current = plugin.scripts.load(settingContext.scriptId)
-                                    ?.graph?.nodes?.get(settingContext.nodeId)
-                                val spec = current?.let { CommandDialogSpecs.field(it, EntityDataSchema.PARAM_VALUE) }
-                                    ?: return@beginSettingInput KcI18n.text(
-                                        player,
-                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
-                                    )
-                                val validationError = spec.validateInput(normalized)
-                                if (validationError != null) {
-                                    KcI18n.text(player, validationError)
-                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityDataSchema.PARAM_VALUE)) {
-                                        CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, normalized)
-                                    }) {
-                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                                } else null
-                            }
+                            val spec = current?.let { CommandDialogSpecs.field(it, EntityDataSchema.PARAM_VALUE) }
+                                ?: return@beginSettingInput KcI18n.text(
+                                    player,
+                                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                                )
+                            val validationError = spec.validateInput(normalized)
+                            if (validationError != null) {
+                                KcI18n.text(player, validationError)
+                            } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityDataSchema.PARAM_VALUE)) {
+                                    CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, normalized)
+                                }) {
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                            } else null
                         }
                     }
-                } else showSettingScreen()
+                }
             }
             GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT -> {
                 // 選択→変更後の値入力フローです。attribute IDを確定して値Dialogを開きます。
@@ -8138,7 +8173,7 @@ class GestureSequenceEditor(
                 if (!updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.attributePath(value))
                     }) {
-                    showSettingScreen()
+                    notifySaveFailed()
                     return
                 }
                 val fresh = plugin.scripts.load(settingContext.scriptId)
@@ -8181,25 +8216,75 @@ class GestureSequenceEditor(
                 if (definition.enumChoices.none { it.id == value }) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, value)
-                    }) showSettingScreen()
+                    }) {
+                    showSettingScreen()
+                } else {
+                    notifySaveFailed()
+                }
+            }
+            // 召喚時個別設定の有限候補子画面です。選択肢ID自体に項目IDを
+            // 含むため、経路記憶がずれていても保存先を誤りません。
+            GestureSettingScreen.SUMMON_PROPERTY_VALUE -> {
+                if (group != "summonDataValue") return
+                val separator = value.indexOf(':')
+                if (separator <= 0) return
+                val propertyId = value.substring(0, separator)
+                val choice = value.substring(separator + 1)
+                val definition = EntityDataSchema.definition(propertyId) ?: return
+                if (definition.valueKind != EntityPropertyValueKind.ENUM) return
+                if (definition.enumChoices.none { it.id == choice }) return
+                val summonType = EntityDataSchema.knownSummonType(node.string("summonEntity"))
+                if (EntityDataSchema.staticSupport(summonType, propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) {
+                    notifySaveFailed()
+                    return
+                }
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, EntityDataSchema.summonDataKey(propertyId), choice)
+                    }) {
+                    showSettingScreen()
+                } else {
+                    notifySaveFailed()
+                }
             }
             // issue #10: 召喚時個別設定の一覧画面です。既存Entity編集と同じ
-            // 操作契約で、保存先だけを召喚時個別設定へ振り替えます。
-            // 真偽値は選択→クリックで直接切り替え、有限候補は行内の選択肢で
-            // 確定し、文字列・整数はDialog入力へ進みます。
+            // 二段階操作契約で、保存先だけを召喚時個別設定へ振り替えます。
+            // 1回目は行選択の記憶だけを行い、同じ行への連続クリックで内容を
+            // 確定します。真偽値は単一保存で切り替え、有限候補は子画面の
+            // 選択肢で確定し、文字列・整数はDialog入力へ進みます。
             GestureSettingScreen.SUMMON_DATA_ROOT -> {
                 if (group == "summonData") {
-                    val definition = EntityDataSchema.definition(value) ?: return
+                    val definition = EntityDataSchema.definition(value)
+                    if (definition == null) {
+                        notifySaveFailed()
+                        return
+                    }
                     // 召喚種類の変更後に残った非対応項目は選択できません。
                     val summonType = EntityDataSchema.knownSummonType(node.string("summonEntity"))
-                    if (EntityDataSchema.staticSupport(summonType, value) == EntityPropertySupport.STATICALLY_UNSUPPORTED) return
+                    if (EntityDataSchema.staticSupport(summonType, value) == EntityPropertySupport.STATICALLY_UNSUPPORTED) {
+                        plugin.logger.fine(
+                            "[KantanCommander] summonData選択を拒否しました: summonType=$summonType property=$value",
+                        )
+                        notifySaveFailed()
+                        return
+                    }
+                    val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
+                    if (!consecutive) {
+                        rememberSettingNode(encoded)
+                        showSettingScreen()
+                        return
+                    }
+                    rememberSettingNode(encoded)
                     when (definition.valueKind) {
                         EntityPropertyValueKind.BOOLEAN -> {
                             val key = EntityDataSchema.summonDataKey(value)
-                            val toggled = (!(node.string(key).toBooleanStrictOrNull() ?: false)).toString()
+                            val toggled = EntityDataSchema.toggledBooleanValue(node.string(key))
                             if (updateSettingNode(player, settingContext) {
                                     CommandSettingsModel.setParameter(it, key, toggled)
-                                }) showSettingScreen()
+                                }) {
+                                showSettingScreen()
+                            } else {
+                                notifySaveFailed()
+                            }
                         }
                         EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
                             val key = EntityDataSchema.summonDataKey(value)
@@ -8229,8 +8314,18 @@ class GestureSequenceEditor(
                                 } else null
                             }
                         }
-                        // 有限候補は行内の選択肢で確定し、行自体のクリックでは保存しません。
-                        EntityPropertyValueKind.ENUM -> showSettingScreen()
+                        // 有限候補は子画面の選択肢で確定し、行自体のクリックでは保存しません。
+                        EntityPropertyValueKind.ENUM -> {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext,
+                                    "summonData",
+                                    GestureSettingScreen.SUMMON_PROPERTY_VALUE,
+                                ),
+                                encoded,
+                            )
+                        }
                     }
                     return
                 }
@@ -8243,10 +8338,17 @@ class GestureSequenceEditor(
                     if (definition.valueKind != EntityPropertyValueKind.ENUM) return
                     if (definition.enumChoices.none { it.id == choice }) return
                     val summonType = EntityDataSchema.knownSummonType(node.string("summonEntity"))
-                    if (EntityDataSchema.staticSupport(summonType, propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) return
+                    if (EntityDataSchema.staticSupport(summonType, propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) {
+                        notifySaveFailed()
+                        return
+                    }
                     if (updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setParameter(it, EntityDataSchema.summonDataKey(propertyId), choice)
-                        }) showSettingScreen()
+                        }) {
+                        showSettingScreen()
+                    } else {
+                        notifySaveFailed()
+                    }
                     return
                 }
             }
