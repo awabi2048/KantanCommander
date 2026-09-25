@@ -380,6 +380,29 @@ object PersistedScriptValidator {
         requireEnum(item, "kind", triggerPath, enumNames<TriggerKind>(), errors)
         optionalEnum(item, "event", triggerPath, enumNames<EventTriggerKind>(), errors)
         optionalFiniteNumber(item, "intervalSeconds", triggerPath, errors)
+        optionalObject(item, "conditions", triggerPath, errors)?.let { conditions ->
+            val conditionPath = "$triggerPath/conditions"
+            listOf("actorId", "entityId").forEach { optionalUuid(conditions, it, conditionPath, errors) }
+            optionalString(conditions, "blockType", conditionPath, errors)
+            optionalEnum(conditions, "clickSide", conditionPath,
+                enumNames<me.awabi2048.kantancommander.model.TriggerClickSide>(), errors)
+            optionalEnum(conditions, "leverState", conditionPath,
+                enumNames<me.awabi2048.kantancommander.model.TriggerLeverState>(), errors)
+            listOf("actorTarget", "entityTarget").forEach { field ->
+                optionalObject(conditions, field, conditionPath, errors)?.let {
+                    validateTarget(it, "$conditionPath/$field", errors)
+                }
+            }
+            optionalObject(conditions, "blockIdentity", conditionPath, errors)?.let { identity ->
+                val identityPath = "$conditionPath/blockIdentity"
+                requireString(identity, "world", identityPath, errors)
+                listOf("x", "y", "z").forEach { axis ->
+                    // 位置は整数ブロック座標で保存し、小数・文字列を拒否します。
+                    if (!identity.has(axis)) errors += "$identityPath/$axis: 必須です"
+                    else optionalInteger(identity, axis, identityPath, errors)
+                }
+            }
+        }
     }
 
     /** 折りたたみfor開始IDなど、任意のUUID配列を受け付けます。欠落・nullは旧形式として許容します。 */

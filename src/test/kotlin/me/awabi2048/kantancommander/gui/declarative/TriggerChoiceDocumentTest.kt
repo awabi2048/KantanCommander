@@ -58,18 +58,15 @@ class TriggerChoiceDocumentTest {
     }
 
     @Test
-    fun `event document pages ten events without overlap`() {
+    fun `event document pages seven events without overlap`() {
         val names = listOf(
             "BLOCK_BREAK",
             "BLOCK_PLACE",
             "BUTTON_ON",
-            "LEVER_ON",
-            "LEVER_OFF",
+            "LEVER_CLICK",
             "PRESSURE_PLATE_ON",
-            "ENTITY_LEFT_CLICK",
-            "ENTITY_RIGHT_CLICK",
-            "BLOCK_LEFT_CLICK",
-            "BLOCK_RIGHT_CLICK",
+            "ENTITY_CLICK",
+            "BLOCK_CLICK",
         )
         val first = KantanLayoutBridge.compile(
             DeclarativeTriggers.eventDocument(
@@ -91,7 +88,7 @@ class TriggerChoiceDocumentTest {
         // 戻る操作と重ならないよう、ページャは候補の上部にあります。
         assertTrue(firstIds.contains("lower-setting-back"))
         val selected = data(*names.toTypedArray()).copy(
-            options = data(*names.toTypedArray()).options.map { it.copy(selected = it.key == "BLOCK_LEFT_CLICK") },
+            options = data(*names.toTypedArray()).options.map { it.copy(selected = it.key == "BLOCK_CLICK") },
             page = 1,
             pageCount = 2,
             pagerAvailableBackground = blockData(),
@@ -100,8 +97,8 @@ class TriggerChoiceDocumentTest {
         val second = KantanLayoutBridge.compile(DeclarativeTriggers.eventDocument(selected, panel), onAction = {})
         assertTrue(second.diagnostics.isEmpty(), "diagnostics: ${second.diagnostics}")
         val secondIds = second.elements.map { it.elementId }.toSet()
-        assertEquals(4, secondIds.count { it.startsWith("lower-trigger-event:") })
-        assertTrue("lower-trigger-event:BLOCK_LEFT_CLICK" in secondIds)
+        assertEquals(1, secondIds.count { it.startsWith("lower-trigger-event:") })
+        assertTrue("lower-trigger-event:BLOCK_CLICK" in secondIds)
         assertTrue("lower-trigger-event:BLOCK_BREAK" !in secondIds)
     }
 
@@ -127,8 +124,44 @@ class TriggerChoiceDocumentTest {
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         assertEquals(
-            setOf("lower-trigger-detail-confirm", "lower-setting-back"),
+            setOf("lower-trigger-detail-confirm", "lower-setting-back", "lower-trigger-detail-tab:event"),
             compiled.elements.map { it.elementId }.toSet(),
         )
+    }
+
+    @Test
+    fun `detail screen exposes condition tabs and actions without overlapping ids`() {
+        val data = TriggerDetailData(
+            title = Component.text("details"),
+            eventLabel = "event",
+            eventName = Component.text("lever"),
+            description = Component.text("description"),
+            confirmLabel = Component.text("confirm"),
+            backLabel = Component.text("back"),
+            tabBackground = blockData(),
+            tabOutline = blockData(),
+            confirmBackground = blockData(),
+            backBackground = blockData(),
+            tabs = listOf(
+                TriggerDetailTab("who", Component.text("who"), true),
+                TriggerDetailTab("target", Component.text("target"), false),
+                TriggerDetailTab("operation", Component.text("operation"), true),
+            ),
+            selectedTab = 2,
+            actions = listOf(
+                TriggerDetailAction("any", Component.text("any"), blockData()),
+                TriggerDetailAction("on", Component.text("on"), blockData()),
+                TriggerDetailAction("off", Component.text("off"), blockData()),
+            ),
+        )
+        val compiled = KantanLayoutBridge.compile(DeclarativeTriggers.detailDocument(data, panel), onAction = {})
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        val ids = compiled.elements.map { it.elementId }.toSet()
+        assertTrue(ids.containsAll(setOf(
+            "lower-trigger-detail-tab:who", "lower-trigger-detail-tab:target",
+            "lower-trigger-detail-tab:operation", "lower-trigger-detail-action:any",
+            "lower-trigger-detail-action:on", "lower-trigger-detail-action:off",
+            "lower-trigger-detail-confirm", "lower-setting-back",
+        )))
     }
 }

@@ -72,11 +72,11 @@ class EventTriggerClassificationTest {
         // ボタンは押した時だけを提供し、戻った時は起動しません（issue #7 の初期一覧どおり）。
         assertNull(EventTriggerClassification.eventFor(RedstoneTriggerCategory.BUTTON, on = false))
         assertEquals(
-            EventTriggerKind.LEVER_ON,
+            EventTriggerKind.LEVER_CLICK,
             EventTriggerClassification.eventFor(RedstoneTriggerCategory.LEVER, on = true),
         )
         assertEquals(
-            EventTriggerKind.LEVER_OFF,
+            EventTriggerKind.LEVER_CLICK,
             EventTriggerClassification.eventFor(RedstoneTriggerCategory.LEVER, on = false),
         )
         assertEquals(

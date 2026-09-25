@@ -2243,6 +2243,11 @@ object CommandSettingsModel {
         require(normalized.kind != TriggerKind.EVENT || normalized.event != null) {
             "イベント起動には種別の指定が必要です"
         }
+        if (normalized.kind == TriggerKind.EVENT && normalized.event != null) {
+            require(normalized.conditions.validationProblem(normalized.event) == null) {
+                normalized.conditions.validationProblem(normalized.event).orEmpty()
+            }
+        }
         return updateScript(
             plugin,
             scriptId,

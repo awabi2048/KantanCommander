@@ -50,7 +50,17 @@ data class TriggerDetailData(
     val tabOutline: BlockData,
     val confirmBackground: BlockData,
     val backBackground: BlockData,
+    val tabs: List<TriggerDetailTab> = emptyList(),
+    val selectedTab: Int = 0,
+    val values: List<SettingsValueRow> = emptyList(),
+    val actions: List<TriggerDetailAction> = emptyList(),
 )
+
+/** 詳細画面の左タブです。設定済みと選択中は別の状態として保持します。 */
+data class TriggerDetailTab(val key: String, val label: Component, val configured: Boolean)
+
+/** 詳細画面右側の操作です。値はNameに含めず、上部の値行へ出します。 */
+data class TriggerDetailAction(val key: String, val label: Component, val background: BlockData, val outline: BlockData? = null)
 
 /**
  * issue #7 の起動方法の選択子画面の宣言区画です。
@@ -65,7 +75,7 @@ object DeclarativeTriggers {
     /**
      * イベント選択の1ページあたり候補数です。
      *
-     * 2列×3行で戻る操作・ページャと重なりません。10候補は2ページ（6＋4）です。
+     * 2列×3行で戻る操作・ページャと重なりません。7候補は2ページ（6＋1）です。
      */
     const val EVENT_PAGE_SIZE = 6
 
@@ -85,32 +95,41 @@ object DeclarativeTriggers {
     fun detailDocument(data: TriggerDetailData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
         val frame = contentFrame(panel)
         val nodes = mutableListOf<GestureGuiNode>()
-        val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, true)
-        val tabCenterX = GestureSettingVisualPolicy.selectedTabCenterX(
-            GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-            GestureLowerPanel.SETTINGS_TAB_WIDTH,
-            true,
-        )
-        nodes += GestureGuiBlock(
-            blockData = data.tabBackground,
-            interpolationTicks = 0,
-            width = GestureGuiSizeSpec.Fixed(tabWidth),
-            height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-            outline = GestureGuiOutline(data.tabOutline),
-            id = "trigger-detail-tab",
-            absolute = placed(frame, tabCenterX, GestureLowerPanel.SETTINGS_TAB_TOP_Y, tabWidth, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-        )
-        nodes += GestureGuiText(
-            text = data.title,
-            interpolationTicks = 0,
-            size = 0.0049,
-            lineWidth = 90,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "trigger-detail-tab-label",
-            width = GestureGuiSizeSpec.Fixed(tabWidth),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_TOP_Y - 0.02, tabWidth, 0.0049 * 3.0),
-        )
+        val tabs = data.tabs.ifEmpty { listOf(TriggerDetailTab("event", data.title, false)) }
+        tabs.forEachIndexed { index, tab ->
+            val selected = index == data.selectedTab
+            val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, selected)
+            val tabCenterX = GestureSettingVisualPolicy.selectedTabCenterX(
+                GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_WIDTH, selected,
+            )
+            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - index * GestureLowerPanel.SETTINGS_TAB_PITCH
+            nodes += GestureGuiBlock(
+                blockData = data.tabBackground,
+                interpolationTicks = 0,
+                width = GestureGuiSizeSpec.Fixed(tabWidth),
+                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+                outline = when {
+                    selected -> GestureGuiOutline(data.tabOutline)
+                    tab.configured -> GestureGuiOutline(data.confirmBackground)
+                    else -> null
+                },
+                id = "lower-trigger-detail-tab:${tab.key}",
+                actionId = "lower-trigger-detail-tab:${tab.key}",
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                absolute = placed(frame, tabCenterX, cy, tabWidth, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            )
+            nodes += GestureGuiText(
+                text = tab.label,
+                interpolationTicks = 0,
+                size = 0.0049,
+                lineWidth = 90,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "trigger-detail-tab-label-$index",
+                width = GestureGuiSizeSpec.Fixed(tabWidth),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, tabWidth, 0.0049 * 3.0),
+            )
+        }
         DeclarativeSettings.descriptionSection(
             nodes,
             frame,
@@ -122,8 +141,29 @@ object DeclarativeTriggers {
         DeclarativeSettings.valueRowsSection(
             nodes,
             frame,
-            rows = listOf(SettingsValueRow("trigger-detail-event", data.eventLabel, data.eventName, GestureLowerPanel.SETTING_VALUE_ANCHOR_Y)),
+            rows = listOf(SettingsValueRow("trigger-detail-event", data.eventLabel, data.eventName, GestureLowerPanel.SETTING_VALUE_ANCHOR_Y)) + data.values,
         )
+        data.actions.forEachIndexed { index, action ->
+            DeclarativeSettings.actionCardSection(
+                nodes, frame,
+                SettingsActionCard(
+                    elementId = "lower-trigger-detail-action:${action.key}",
+                    label = action.label,
+                    background = action.background,
+                    outline = action.outline,
+                    cx = 0.28,
+                    cy = 0.06 - index * 0.12,
+                    w = 0.55,
+                    h = 0.10,
+                    labelSize = 0.0048,
+                    labelWidth = 100,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = null,
+                    hover = null,
+                    visualTag = "trigger-detail-action-${action.key}",
+                ),
+            )
+        }
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
@@ -132,7 +172,7 @@ object DeclarativeTriggers {
                 label = data.confirmLabel,
                 background = data.confirmBackground,
                 cx = 0.28,
-                cy = -0.25,
+                cy = -0.34,
                 w = 0.55,
                 h = 0.10,
                 labelSize = 0.0048,

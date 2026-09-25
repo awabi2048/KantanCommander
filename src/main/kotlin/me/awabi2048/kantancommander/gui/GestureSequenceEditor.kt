@@ -99,6 +99,10 @@ import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.toggleControlBlockState
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerKind
+import me.awabi2048.kantancommander.model.EventTriggerConditions
+import me.awabi2048.kantancommander.model.TriggerBlockIdentity
+import me.awabi2048.kantancommander.model.TriggerClickSide
+import me.awabi2048.kantancommander.model.TriggerLeverState
 import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.declaredArguments
@@ -112,6 +116,7 @@ import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.attribute.Attribute
 import org.bukkit.block.data.BlockData
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
@@ -208,6 +213,9 @@ data class GestureEditorState(
     /** 起動方法の選択画面で確定前に選択している候補です。 */
     /** イベント選択画面で確定前に選択している候補です。 */
     var pendingTriggerEvent: EventTriggerKind? = null,
+    /** 詳細画面の仮設定です。確定まで保存値を変更しません。 */
+    var pendingTriggerConditions: EventTriggerConditions = EventTriggerConditions(),
+    var triggerDetailTab: String = "who",
     /** issue #8: ディスク設定の引数ページ番号です。 */
     var diskSettingsArgsPage: Int = 0,
     /** テスト実行中だけ共有する表示・復元状態です。 */
@@ -231,7 +239,7 @@ enum class GestureLowerMode {
     /**
      * issue #7: イベント種別の選択子画面です。
      *
-     * 初期10種をページ表示し、同じ候補の再クリックで起動方法として確定します。
+     * 7種をページ表示し、同じ候補の再クリックで詳細設定へ進みます。
      */
     TRIGGER_EVENT,
     /** イベント候補を再クリックした後だけ開く、左右分割の詳細設定子画面です。 */
@@ -4542,8 +4550,195 @@ class GestureSequenceEditor(
 
     /** イベントを選択済み候補として再クリックした時だけ詳細子画面へ進みます。 */
     private fun openTriggerDetail(player: Player) {
-        if (state.pendingTriggerEvent == null) return
+        val event = state.pendingTriggerEvent ?: return
+        val saved = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
+        state.pendingTriggerConditions = if (saved?.kind == TriggerKind.EVENT && saved.event == event) {
+            saved.conditions.forEvent(event)
+        } else EventTriggerConditions()
+        state.triggerDetailTab = "who"
         state.lowerMode = GestureLowerMode.TRIGGER_DETAIL
+        updateLower(player)
+    }
+
+    /** 詳細タブの操作は仮設定だけを変え、確定ボタンで一度だけ保存します。 */
+    private fun handleTriggerDetailAction(player: Player, key: String) {
+        val event = state.pendingTriggerEvent ?: return
+        val current = state.pendingTriggerConditions
+        when (state.triggerDetailTab) {
+            "operation" -> {
+                state.pendingTriggerConditions = when (event) {
+                    EventTriggerKind.LEVER_CLICK -> when (key) {
+                        "any" -> current.copy(leverState = null)
+                        "on" -> current.copy(leverState = TriggerLeverState.ON)
+                        "off" -> current.copy(leverState = TriggerLeverState.OFF)
+                        else -> return
+                    }
+                    EventTriggerKind.ENTITY_CLICK, EventTriggerKind.BLOCK_CLICK -> when (key) {
+                        "any" -> current.copy(clickSide = null)
+                        "left" -> current.copy(clickSide = TriggerClickSide.LEFT)
+                        "right" -> current.copy(clickSide = TriggerClickSide.RIGHT)
+                        else -> return
+                    }
+                    else -> return
+                }
+                updateLower(player)
+            }
+            "who" -> when (key) {
+                "edit" -> showTriggerActorDialog(player)
+                "clear" -> {
+                    state.pendingTriggerConditions = current.copy(actorId = null, actorTarget = null)
+                    updateLower(player)
+                }
+            }
+            "target" -> when (key) {
+                "edit" -> if (event == EventTriggerKind.ENTITY_CLICK) showTriggerEntityDialog(player)
+                    else showTriggerBlockDialog(player)
+                "capture" -> captureTriggerTarget(player, event)
+                "clear" -> {
+                    state.pendingTriggerConditions = if (event == EventTriggerKind.ENTITY_CLICK) {
+                        current.copy(entityId = null, entityTarget = null)
+                    } else current.copy(blockType = null, blockIdentity = null)
+                    updateLower(player)
+                }
+            }
+        }
+    }
+
+    /** 汎用TargetSpecのプレイヤー絞り込みと個体IDを、発生した操作者1人へ適用します。 */
+    private fun showTriggerActorDialog(player: Player) {
+        val current = state.pendingTriggerConditions
+        val target = current.actorTarget
+        val fields = listOf(
+            Triple("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, target?.name.orEmpty()),
+            Triple("tag", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, target?.tag.orEmpty()),
+            Triple("gameMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE, target?.gameMode.orEmpty()),
+            Triple("individual", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, current.actorId?.toString().orEmpty()),
+        )
+        showTriggerConditionDialog(player, fields) { values ->
+            val name = values.getValue("name").ifBlank { null }
+            val tag = values.getValue("tag").ifBlank { null }
+            val gameMode = values.getValue("gameMode").ifBlank { null }
+            val id = values.getValue("individual").ifBlank { null }
+            if (tag != null && !CommandValueRules.isTag(tag)) return@showTriggerConditionDialog false
+            if (gameMode != null && gameMode.uppercase() !in setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) {
+                return@showTriggerConditionDialog false
+            }
+            val parsedId = id?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: return@showTriggerConditionDialog false }
+            state.pendingTriggerConditions = state.pendingTriggerConditions.copy(
+                actorTarget = if (name != null || tag != null || gameMode != null) {
+                    TargetSpec(TargetKind.NEAREST_PLAYER, name = name, tag = tag, gameMode = gameMode)
+                } else null,
+                actorId = parsedId,
+            )
+            true
+        }
+    }
+
+    /** 汎用TargetSpecの種類・名前・タグと個体IDを、クリックされた1体へ適用します。 */
+    private fun showTriggerEntityDialog(player: Player) {
+        val current = state.pendingTriggerConditions
+        val target = current.entityTarget
+        val fields = listOf(
+            Triple("entityType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, target?.entityType.orEmpty()),
+            Triple("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, target?.name.orEmpty()),
+            Triple("tag", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, target?.tag.orEmpty()),
+            Triple("individual", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, current.entityId?.toString().orEmpty()),
+        )
+        showTriggerConditionDialog(player, fields) { values ->
+            val type = values.getValue("entityType").ifBlank { null }
+            val name = values.getValue("name").ifBlank { null }
+            val tag = values.getValue("tag").ifBlank { null }
+            val id = values.getValue("individual").ifBlank { null }
+            if (type != null && !CommandValueRules.isEntityTypeId(type)) return@showTriggerConditionDialog false
+            if (tag != null && !CommandValueRules.isTag(tag)) return@showTriggerConditionDialog false
+            val parsedId = id?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: return@showTriggerConditionDialog false }
+            state.pendingTriggerConditions = state.pendingTriggerConditions.copy(
+                entityTarget = if (type != null || name != null || tag != null) {
+                    TargetSpec(TargetKind.NEAREST_ENTITY, entityType = type, name = name, tag = tag)
+                } else null,
+                entityId = parsedId,
+            )
+            true
+        }
+    }
+
+    /** 素材とブロック個体の条件は独立です。AIRは素材として指定できます。 */
+    private fun showTriggerBlockDialog(player: Player) {
+        val current = state.pendingTriggerConditions
+        val identity = current.blockIdentity
+        val fields = listOf(
+            Triple("block", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, current.blockType.orEmpty()),
+            Triple("world", KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WORLD, identity?.world.orEmpty()),
+            Triple("x", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, identity?.x?.toString().orEmpty()),
+            Triple("y", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, identity?.y?.toString().orEmpty()),
+            Triple("z", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, identity?.z?.toString().orEmpty()),
+        )
+        showTriggerConditionDialog(player, fields) { values ->
+            val block = values.getValue("block").ifBlank { null }
+                ?.let { CommandValueRules.material(it)?.takeIf(Material::isBlock) ?: return@showTriggerConditionDialog false }
+            val world = values.getValue("world")
+            val coordinates = listOf(values.getValue("x"), values.getValue("y"), values.getValue("z"))
+            val identityValue = if (world.isBlank() && coordinates.all(String::isBlank)) null else {
+                if (world.isBlank() || coordinates.any(String::isBlank) || Bukkit.getWorld(world) == null) {
+                    return@showTriggerConditionDialog false
+                }
+                val numbers = coordinates.map { it.toIntOrNull() ?: return@showTriggerConditionDialog false }
+                TriggerBlockIdentity(world, numbers[0], numbers[1], numbers[2])
+            }
+            state.pendingTriggerConditions = state.pendingTriggerConditions.copy(
+                blockType = block?.name,
+                blockIdentity = identityValue,
+            )
+            true
+        }
+    }
+
+    private fun showTriggerConditionDialog(
+        player: Player,
+        fields: List<Triple<String, LocalizationKey<String>, String>>,
+        apply: (Map<String, String>) -> Boolean,
+    ) {
+        observedRevision = plugin.scripts.load(state.scriptId)?.revision ?: return
+        val inputs = fields.map { (id, label, initial) ->
+            CommandDialogSpecs.input(
+                player, id, initial,
+                CommandDialogSpecs.Spec(label, if (id == "name") 256 else 128),
+                // X/Y/Zは別欄として識別できるよう、軸名を固定ラベルに使います。
+                if (id in setOf("x", "y", "z")) Component.text(id.uppercase()) else KcI18n.component(player, label),
+            )
+        }
+        showInputDialog(
+            player = player,
+            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
+            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PRESET_TARGET_DETAIL)),
+            inputs = inputs,
+            afterSubmit = { updateLower(player) },
+        ) { response ->
+            val values = fields.associate { (id, _, _) -> id to response.textValue(id).trim() }
+            if (apply(values)) null else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT)
+        }
+    }
+
+    /** 見ている対象を個体条件へ格納します。種類等の既存絞り込みは残します。 */
+    private fun captureTriggerTarget(player: Player, event: EventTriggerKind) {
+        val current = state.pendingTriggerConditions
+        val reach = (player.getAttribute(Attribute.BLOCK_INTERACTION_RANGE)?.value ?: 4.5).coerceAtLeast(1.0)
+        if (event == EventTriggerKind.ENTITY_CLICK) {
+            val entityReach = (player.getAttribute(Attribute.ENTITY_INTERACTION_RANGE)?.value ?: 3.0).coerceAtLeast(1.0)
+            val entity = player.getTargetEntity(kotlin.math.ceil(entityReach).toInt()) ?: run {
+                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT))
+                return
+            }
+            state.pendingTriggerConditions = current.copy(entityId = entity.uniqueId)
+        } else {
+            val block = player.getTargetBlockExact(kotlin.math.ceil(reach).toInt()) ?: run {
+                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT))
+                return
+            }
+            state.pendingTriggerConditions = current.copy(
+                blockIdentity = TriggerBlockIdentity(block.world.name, block.x, block.y, block.z),
+            )
+        }
         updateLower(player)
     }
 
@@ -8522,7 +8717,18 @@ class GestureSequenceEditor(
             context.elementId == "lower-trigger-detail-confirm" && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val event = state.pendingTriggerEvent ?: return
-                saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event))
+                saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event, conditions = state.pendingTriggerConditions))
+            }
+            context.elementId.startsWith("lower-trigger-detail-tab:") && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val tab = context.elementId.removePrefix("lower-trigger-detail-tab:")
+                if (tab !in setOf("who", "target", "operation")) return
+                state.triggerDetailTab = tab
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-trigger-detail-action:") && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                handleTriggerDetailAction(player, context.elementId.removePrefix("lower-trigger-detail-action:"))
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_DETAIL &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {

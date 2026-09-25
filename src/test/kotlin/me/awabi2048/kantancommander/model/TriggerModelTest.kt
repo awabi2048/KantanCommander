@@ -58,7 +58,7 @@ class TriggerModelTest {
 
         val redstone = ScriptTrigger(
             TriggerKind.REDSTONE,
-            event = EventTriggerKind.LEVER_ON,
+            event = EventTriggerKind.LEVER_CLICK,
             intervalSeconds = 10.0,
         ).normalized()
         assertNull(redstone.event)
@@ -75,7 +75,8 @@ class TriggerModelTest {
         assertEquals(TriggerKind.EVENT, TriggerKind.parse(" event "))
         assertNull(TriggerKind.parse("fancy"))
         assertNull(TriggerKind.parse(null))
-        assertEquals(EventTriggerKind.LEVER_ON, EventTriggerKind.parse("lever_on"))
+        assertEquals(EventTriggerKind.LEVER_CLICK, EventTriggerKind.parse("lever_click"))
+        assertNull(EventTriggerKind.parse("lever_on"))
         assertNull(EventTriggerKind.parse("redstone"))
         // 廃止した種別は読み替えず、保存時の検証で破損として隔離します。
         assertNull(EventTriggerKind.parse("BUTTON_OFF"))
@@ -117,8 +118,7 @@ class TriggerModelTest {
         // ボタンは押した時だけを提供します（戻った時は提供しません）。
         listOf(
             EventTriggerKind.BUTTON_ON,
-            EventTriggerKind.LEVER_ON,
-            EventTriggerKind.LEVER_OFF,
+            EventTriggerKind.LEVER_CLICK,
             EventTriggerKind.PRESSURE_PLATE_ON,
         ).forEach { event ->
             val table = EventTriggerArguments.seedTypesFor(event)
@@ -129,37 +129,30 @@ class TriggerModelTest {
     }
 
     @Test
-    fun `clicks are separated by left and right kinds`() {
-        // 左右はイベント種別そのもので選び分けます。
-        val left = EventTriggerArguments.seedTypesFor(EventTriggerKind.ENTITY_LEFT_CLICK)
-        assertEquals(ValueType.ENTITY, left[EventTriggerArguments.ACTOR])
-        assertEquals(ValueType.ENTITY, left[EventTriggerArguments.TARGET])
+    fun `clicks share kinds and retain event arguments`() {
+        val entity = EventTriggerArguments.seedTypesFor(EventTriggerKind.ENTITY_CLICK)
+        assertEquals(ValueType.ENTITY, entity[EventTriggerArguments.ACTOR])
+        assertEquals(ValueType.ENTITY, entity[EventTriggerArguments.TARGET])
 
-        val right = EventTriggerArguments.seedTypesFor(EventTriggerKind.ENTITY_RIGHT_CLICK)
-        assertEquals(ValueType.ENTITY, right[EventTriggerArguments.TARGET])
-
-        val blockLeft = EventTriggerArguments.seedTypesFor(EventTriggerKind.BLOCK_LEFT_CLICK)
-        assertEquals(ValueType.ENTITY, blockLeft[EventTriggerArguments.ACTOR])
-        assertEquals(ValueType.BLOCK, blockLeft[EventTriggerArguments.BLOCK])
-        assertEquals(ValueType.LOCATION, blockLeft[EventTriggerArguments.POSITION])
-
-        val blockRight = EventTriggerArguments.seedTypesFor(EventTriggerKind.BLOCK_RIGHT_CLICK)
-        assertEquals(ValueType.BLOCK, blockRight[EventTriggerArguments.BLOCK])
+        val block = EventTriggerArguments.seedTypesFor(EventTriggerKind.BLOCK_CLICK)
+        assertEquals(ValueType.ENTITY, block[EventTriggerArguments.ACTOR])
+        assertEquals(ValueType.BLOCK, block[EventTriggerArguments.BLOCK])
+        assertEquals(ValueType.LOCATION, block[EventTriggerArguments.POSITION])
     }
 
     @Test
-    fun `initial event kinds are exactly ten`() {
-        assertEquals(10, EventTriggerKind.entries.size)
-        // ボタンは押した時だけを持ち、オン／オフと左右の区別はレバーとクリックで行うことを固定します。
+    fun `event kinds are exactly seven`() {
+        assertEquals(7, EventTriggerKind.entries.size)
+        // 設置と破壊は別種別、レバー状態とクリック方向は詳細条件で選びます。
         assertTrue(EventTriggerKind.entries.containsAll(
             listOf(
+                EventTriggerKind.BLOCK_BREAK,
+                EventTriggerKind.BLOCK_PLACE,
                 EventTriggerKind.BUTTON_ON,
-                EventTriggerKind.LEVER_ON,
-                EventTriggerKind.LEVER_OFF,
-                EventTriggerKind.ENTITY_LEFT_CLICK,
-                EventTriggerKind.ENTITY_RIGHT_CLICK,
-                EventTriggerKind.BLOCK_LEFT_CLICK,
-                EventTriggerKind.BLOCK_RIGHT_CLICK,
+                EventTriggerKind.LEVER_CLICK,
+                EventTriggerKind.PRESSURE_PLATE_ON,
+                EventTriggerKind.ENTITY_CLICK,
+                EventTriggerKind.BLOCK_CLICK,
             ),
         ))
     }

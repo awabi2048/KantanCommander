@@ -206,6 +206,14 @@ object ExecutableScriptValidator {
                     code = ErrorCode.CONFIG_INVALID, phase = phase,
                 )
             }
+            if (explicit.kind == TriggerKind.EVENT && explicit.event != null) {
+                explicit.conditions.validationProblem(explicit.event)?.let { problem ->
+                    this += ScriptValidationError(
+                        "root", null, setOf("trigger"), problem,
+                        code = ErrorCode.CONFIG_INVALID, phase = phase,
+                    )
+                }
+            }
         } else {
             if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
                 this += ScriptValidationError(

@@ -32,7 +32,7 @@ internal object EventTriggerClassification {
     /** 指定した変化辺（`on` が真なら通電）に対応する起動種別を返します。 */
     fun eventFor(category: RedstoneTriggerCategory, on: Boolean): EventTriggerKind? = when (category) {
         RedstoneTriggerCategory.BUTTON -> if (on) EventTriggerKind.BUTTON_ON else null
-        RedstoneTriggerCategory.LEVER -> if (on) EventTriggerKind.LEVER_ON else EventTriggerKind.LEVER_OFF
+        RedstoneTriggerCategory.LEVER -> EventTriggerKind.LEVER_CLICK
         RedstoneTriggerCategory.PRESSURE_PLATE -> if (on) EventTriggerKind.PRESSURE_PLATE_ON else null
     }
 }

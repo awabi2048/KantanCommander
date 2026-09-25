@@ -4,30 +4,41 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.EventTriggerArguments
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.SavedLocation
+import me.awabi2048.kantancommander.model.TriggerBlockIdentity
+import me.awabi2048.kantancommander.model.TriggerClickSide
 import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.TriggerLeverState
 import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.effectiveTrigger
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent
 import org.bukkit.Bukkit
 import org.bukkit.Location
+import org.bukkit.Material
 import org.bukkit.World
+import org.bukkit.attribute.Attribute
 import org.bukkit.block.Block
+import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
+import org.bukkit.event.Event
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.block.Action
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockPlaceEvent
-import org.bukkit.event.block.BlockRedstoneEvent
-import org.bukkit.event.entity.EntityDamageByEntityEvent
 import org.bukkit.event.player.PlayerInteractEntityEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.event.world.ChunkLoadEvent
 import org.bukkit.event.world.ChunkUnloadEvent
 import org.bukkit.inventory.EquipmentSlot
+import org.bukkit.event.block.BlockRedstoneEvent
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+/** AIR操作の位置はブロック中心ではなく、視線とinteraction_rangeの交点です。 */
+internal fun airInteractionEndpoint(eye: Location, reach: Double): Location =
+    eye.clone().add(eye.direction.multiply(reach.coerceAtLeast(0.0)))
 
 /**
  * issue #7 のイベント起動リスナーです。
@@ -54,6 +65,10 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
     )
 
     private val index = ConcurrentHashMap<String, Registration>()
+
+    /** 信号イベントには操作者がないため、同tickの実際の操作だけを座標で関連付けます。 */
+    private data class RecentInteraction(val tick: Int, val playerId: UUID)
+    private val recentInteractions = mutableMapOf<TriggerBlockIdentity, RecentInteraction>()
 
     fun start() {
         rebuild()
@@ -135,6 +150,7 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
             event.block.world,
             actor = event.player,
             arguments = blockArguments(event.block, event.player),
+            block = event.block,
         )
     }
 
@@ -145,6 +161,7 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
             event.blockPlaced.world,
             actor = event.player,
             arguments = blockArguments(event.blockPlaced, event.player),
+            block = event.blockPlaced,
         )
     }
 
@@ -165,44 +182,55 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
         val now = event.newCurrent > 0
         if (was == now) return
         val kind = EventTriggerClassification.eventFor(category, now) ?: return
+        val identity = blockIdentity(event.block)
+        val actor = recentInteractions[identity]
+            ?.takeIf { it.tick == Bukkit.getCurrentTick() }
+            ?.playerId?.let(Bukkit::getPlayer)
         fire(
             kind,
             event.block.world,
-            actor = null,
+            actor = actor,
             arguments = blockArguments(event.block),
+            block = event.block,
+            leverState = if (category == RedstoneTriggerCategory.LEVER) {
+                if (now) TriggerLeverState.ON else TriggerLeverState.OFF
+            } else null,
         )
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onEntityInteract(event: PlayerInteractEntityEvent) {
+        // エンティティ操作も両手で届くため、ブロック操作と同じく主手だけを採用します。
+        if (event.hand != EquipmentSlot.HAND) return
         fire(
-            EventTriggerKind.ENTITY_RIGHT_CLICK,
+            EventTriggerKind.ENTITY_CLICK,
             event.player.world,
             actor = event.player,
             arguments = mapOf(
                 EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = event.player.uniqueId),
                 EventTriggerArguments.TARGET to TypedValue(ValueType.ENTITY, entityId = event.rightClicked.uniqueId),
             ),
+            target = event.rightClicked,
+            clickSide = TriggerClickSide.RIGHT,
         )
     }
 
-    /**
-     * エンティティへの左クリック（攻撃）を検出します。
-     *
-     * ダメージ自体はキャンセルせず観測だけ行います。実行可否の確定後に
-     * キャンセルされた攻撃では起動しないよう、キャンセル済みは無視します。
-     */
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    fun onEntityDamage(event: EntityDamageByEntityEvent) {
-        val damager = event.damager as? Player ?: return
+    /** ダメージ成立前のクリックを観測し、無敵・攻撃不可の個体もクリック対象に含めます。 */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
+    fun onEntityAttack(event: PrePlayerAttackEntityEvent) {
+        // willAttack=false はPaperが初めからキャンセルする場合があるため、クリックとして扱います。
+        if (event.willAttack() && event.isCancelled) return
+        val damager = event.player
         fire(
-            EventTriggerKind.ENTITY_LEFT_CLICK,
+            EventTriggerKind.ENTITY_CLICK,
             damager.world,
             actor = damager,
             arguments = mapOf(
                 EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = damager.uniqueId),
-                EventTriggerArguments.TARGET to TypedValue(ValueType.ENTITY, entityId = event.entity.uniqueId),
+                EventTriggerArguments.TARGET to TypedValue(ValueType.ENTITY, entityId = event.attacked.uniqueId),
             ),
+            target = event.attacked,
+            clickSide = TriggerClickSide.LEFT,
         )
     }
 
@@ -212,21 +240,60 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
      * 両手で二重発火しないようメインハンドだけを採用します。制御ブロックへの
      * 操作は編集画面の入口であり、利用者スクリプトの起動対象にしません。
      */
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
+    fun rememberRedstoneActor(event: PlayerInteractEvent) {
+        // ブロックの実際の状態変更はInteractイベントの後に発生します。
+        // 他プラグインのイベントハンドラ内で変更されても関連付くよう、先に記録します。
+        if (event.action !in setOf(Action.RIGHT_CLICK_BLOCK, Action.PHYSICAL)) return
+        val clicked = event.clickedBlock ?: return
+        if (EventTriggerClassification.redstoneCategory(clicked.blockData, clicked.type.name) == null) return
+        recentInteractions[blockIdentity(clicked)] = RecentInteraction(Bukkit.getCurrentTick(), event.player.uniqueId)
+        if (recentInteractions.size > 128) recentInteractions.entries.removeIf { it.value.tick < Bukkit.getCurrentTick() }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
     fun onBlockInteract(event: PlayerInteractEvent) {
+        val clicked = event.clickedBlock
         if (event.hand != EquipmentSlot.HAND) return
-        val kind = when (event.action) {
-            Action.LEFT_CLICK_BLOCK -> EventTriggerKind.BLOCK_LEFT_CLICK
-            Action.RIGHT_CLICK_BLOCK -> EventTriggerKind.BLOCK_RIGHT_CLICK
+        val side = when (event.action) {
+            Action.LEFT_CLICK_BLOCK -> TriggerClickSide.LEFT
+            Action.RIGHT_CLICK_BLOCK, Action.RIGHT_CLICK_AIR -> TriggerClickSide.RIGHT
             else -> return
         }
-        val block = event.clickedBlock ?: return
-        if (plugin.placements.isRegistered(block.world, block.x, block.y, block.z)) return
+        // AIRはPaperが予測キャンセル状態で送ることがあるため、通常のキャンセル判定から分けます。
+        if (clicked != null && event.useInteractedBlock() == Event.Result.DENY) return
+        if (clicked != null && plugin.placements.isRegistered(clicked.world, clicked.x, clicked.y, clicked.z)) return
+        val air = clicked == null && event.action == Action.RIGHT_CLICK_AIR
+        if (clicked == null && !air) return
+        val endpoint = if (air) airEndpoint(event.player) else null
+        val arguments = if (clicked != null) blockArguments(clicked, event.player) else airArguments(requireNotNull(endpoint), event.player)
         fire(
-            kind,
-            block.world,
+            EventTriggerKind.BLOCK_CLICK,
+            event.player.world,
             actor = event.player,
-            arguments = blockArguments(block, event.player),
+            arguments = arguments,
+            block = clicked,
+            clickSide = side,
+        )
+    }
+
+    private fun blockIdentity(block: Block): TriggerBlockIdentity =
+        TriggerBlockIdentity(block.world.name, block.x, block.y, block.z)
+
+    /** AIRにはクリック対象がないため、interaction_range の視線先端を位置引数にします。 */
+    private fun airEndpoint(player: Player): Location {
+        val reach = player.getAttribute(Attribute.BLOCK_INTERACTION_RANGE)?.value ?: 4.5
+        return airInteractionEndpoint(player.eyeLocation, reach)
+    }
+
+    private fun airArguments(endpoint: Location, actor: Player): Map<String, TypedValue> {
+        return mapOf(
+            EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = actor.uniqueId),
+            EventTriggerArguments.BLOCK to TypedValue(ValueType.BLOCK, block = Material.AIR.name),
+            EventTriggerArguments.POSITION to TypedValue(
+                ValueType.LOCATION,
+                location = SavedLocation(endpoint.x, endpoint.y, endpoint.z, 0f, 0f),
+            ),
         )
     }
 
@@ -255,6 +322,10 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
         world: World,
         actor: Player?,
         arguments: Map<String, TypedValue>,
+        block: Block? = null,
+        target: Entity? = null,
+        clickSide: TriggerClickSide? = null,
+        leverState: TriggerLeverState? = null,
     ) {
         // 引数契約との不一致は未定義のまま実行せず、起動しません。
         // 検証層と同じ表で確認するため、静的検証を通過した引数だけが実行されます。
@@ -283,6 +354,9 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
                     index.remove(registration.placementKey)
                     return@forEach
                 }
+                if (!EventTriggerMatcher.matches(
+                        effective.conditions, actor, block, target, clickSide, leverState,
+                    )) return@forEach
                 val origin = Location(world, registration.x + 0.5, registration.y + 0.5, registration.z + 0.5)
                 val normalExecution = plugin.testExecution.beginNormal(registration.placementKey) ?: return@forEach
                 runCatching {

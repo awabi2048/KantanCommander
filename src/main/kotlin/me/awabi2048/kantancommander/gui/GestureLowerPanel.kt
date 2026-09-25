@@ -1222,7 +1222,7 @@ class GestureLowerPanel(
     /**
      * issue #7 のイベント種別の選択子画面を生成します。
      *
-     * 初期10種を変更前のカード配置でページ表示し、同じ候補の再クリックで詳細へ進みます。
+     * 7種を従来のカード配置でページ表示し、同じ候補の再クリックで詳細へ進みます。
      */
     fun buildTriggerEventChild(
         state: GestureEditorState,
@@ -1272,19 +1272,122 @@ class GestureLowerPanel(
     /** 再クリック後のイベント詳細だけを、一般コマンド設定と同じ左右構成で表示します。 */
     fun buildTriggerDetailChild(state: GestureEditorState, player: Player): GestureGuiView {
         val event = requireNotNull(state.pendingTriggerEvent) { "詳細画面のイベントが選択されていません" }
+        val conditions = state.pendingTriggerConditions
+        val hasOperation = event in setOf(EventTriggerKind.LEVER_CLICK, EventTriggerKind.ENTITY_CLICK, EventTriggerKind.BLOCK_CLICK)
+        val tabs = buildList {
+            add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailTab(
+                "who", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_WHO),
+                conditions.actorId != null || conditions.actorTarget != null,
+            ))
+            add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailTab(
+                "target", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                if (event == EventTriggerKind.ENTITY_CLICK) {
+                    conditions.entityId != null || conditions.entityTarget != null
+                } else conditions.blockType != null || conditions.blockIdentity != null,
+            ))
+            if (hasOperation) add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailTab(
+                "operation", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OPERATION),
+                conditions.clickSide != null || conditions.leverState != null,
+            ))
+        }
+        val selectedTab = tabs.indexOfFirst { it.key == state.triggerDetailTab }.coerceAtLeast(0)
+        val tab = tabs[selectedTab]
+        val unset = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY)
+        fun labeled(label: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): String? =
+            value?.let { "${KcI18n.text(player, label)}: $it" }
+        val value = when (tab.key) {
+            "who" -> listOfNotNull(
+                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, conditions.actorTarget?.name),
+                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, conditions.actorTarget?.tag),
+                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE, conditions.actorTarget?.gameMode),
+                labeled(KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, conditions.actorId?.toString()),
+            ).joinToString(" / ").ifBlank { unset }
+            "target" -> if (event == EventTriggerKind.ENTITY_CLICK) {
+                listOfNotNull(
+                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, conditions.entityTarget?.entityType),
+                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, conditions.entityTarget?.name),
+                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, conditions.entityTarget?.tag),
+                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_INDIVIDUAL, conditions.entityId?.toString()),
+                ).joinToString(" / ").ifBlank { unset }
+            } else {
+                listOfNotNull(
+                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, conditions.blockType),
+                    labeled(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                        conditions.blockIdentity?.let { "${it.world} ${it.x} ${it.y} ${it.z}" }),
+                ).joinToString(" / ").ifBlank { unset }
+            }
+            else -> when {
+                conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.LEFT ->
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_LEFT)
+                conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.RIGHT ->
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_RIGHT)
+                conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.ON ->
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ON)
+                conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.OFF ->
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OFF)
+                else -> unset
+            }
+        }
+        val actionBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE)
+        val actions = when (tab.key) {
+            "operation" -> {
+                val choices = if (event == EventTriggerKind.LEVER_CLICK) {
+                    listOf(
+                        "any" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY,
+                        "on" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ON,
+                        "off" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_OFF,
+                    )
+                } else listOf(
+                    "any" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_ANY,
+                    "left" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_LEFT,
+                    "right" to KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_RIGHT,
+                )
+                choices.map { (key, label) ->
+                    val selected = when (key) {
+                        "any" -> conditions.clickSide == null && conditions.leverState == null
+                        "left" -> conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.LEFT
+                        "right" -> conditions.clickSide == me.awabi2048.kantancommander.model.TriggerClickSide.RIGHT
+                        "on" -> conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.ON
+                        else -> conditions.leverState == me.awabi2048.kantancommander.model.TriggerLeverState.OFF
+                    }
+                    me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
+                        key, KcI18n.component(player, label), actionBackground,
+                        if (selected) Bukkit.createBlockData(Material.WHITE_CONCRETE) else null,
+                    )
+                }
+            }
+            else -> buildList {
+                add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
+                    "edit", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_EDIT), actionBackground,
+                ))
+                if (tab.key == "target") add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
+                    "capture", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_DETAIL_CAPTURE), actionBackground,
+                ))
+                add(me.awabi2048.kantancommander.gui.declarative.TriggerDetailAction(
+                    "clear", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR), actionBackground,
+                ))
+            }
+        }
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.detailDocument(
                 me.awabi2048.kantancommander.gui.declarative.TriggerDetailData(
                     title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS)),
                     eventLabel = TriggerDisplay.kindName(player, TriggerKind.EVENT),
                     eventName = Component.text(TriggerDisplay.eventName(player, event)),
-                    description = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY)),
+                    description = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PRESET_TARGET_DETAIL)),
                     confirmLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM)),
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     tabBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
                     tabOutline = Bukkit.createBlockData(Material.WHITE_CONCRETE),
                     confirmBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                    tabs = tabs,
+                    selectedTab = selectedTab,
+                    values = listOf(SettingsValueRow(
+                        "trigger-detail-value", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE),
+                        Component.text(value), GestureLowerPanel.SETTING_VALUE_ANCHOR_Y - 0.105,
+                    )),
+                    actions = actions,
                 ),
             ),
             GestureLowerMode.TRIGGER_DETAIL,

@@ -23,25 +23,17 @@ enum class TriggerKind {
 }
 
 /**
- * issue #7 の初期イベント種別です。
- *
- * Issueの初期一覧どおり10種に限定します。起動設定そのもので操作を選び分けるため、
- * ボタンは押した時だけを提供し（戻った時は提供しません）、レバーはオン／オフ、
- * クリックは左右を別種別とします。
- * 感圧板は「踏まれた時」だけを提供します（離した時に起動させません）。
- * 追加のイベント種別は、引数契約と登録解除の検証と合わせて拡張します。
+ * イベントの種類です。クリックの左右とレバーの結果は詳細条件に保持します。
+ * ブロックの設置と破壊は異なる出来事なので統合しません。
  */
 enum class EventTriggerKind {
     BLOCK_BREAK,
     BLOCK_PLACE,
     BUTTON_ON,
-    LEVER_ON,
-    LEVER_OFF,
+    LEVER_CLICK,
     PRESSURE_PLATE_ON,
-    ENTITY_LEFT_CLICK,
-    ENTITY_RIGHT_CLICK,
-    BLOCK_LEFT_CLICK,
-    BLOCK_RIGHT_CLICK,
+    ENTITY_CLICK,
+    BLOCK_CLICK,
     ;
 
     companion object {
@@ -49,6 +41,71 @@ enum class EventTriggerKind {
             raw?.trim()?.uppercase()?.let { normalized ->
                 entries.firstOrNull { it.name == normalized }
             }
+    }
+}
+
+/** 未指定なら左右の両方、指定すればその操作だけに一致します。 */
+enum class TriggerClickSide { LEFT, RIGHT }
+
+/** 未指定ならオン・オフの両方、指定すれば変更後の状態だけに一致します。 */
+enum class TriggerLeverState { ON, OFF }
+
+/** ブロック個体は素材名だけでは特定できないため、ワールドと整数座標で識別します。 */
+data class TriggerBlockIdentity(val world: String, val x: Int, val y: Int, val z: Int)
+
+/** 詳細画面で指定する任意条件です。null は「絞り込まない」を表します。 */
+data class EventTriggerConditions(
+    /** 汎用対象指定を、実際に発生した操作者1人へ適用します。 */
+    val actorTarget: TargetSpec? = null,
+    val actorId: java.util.UUID? = null,
+    val blockType: String? = null,
+    val blockIdentity: TriggerBlockIdentity? = null,
+    /** 汎用対象指定を、実際にクリックされたエンティティ1体へ適用します。 */
+    val entityTarget: TargetSpec? = null,
+    val entityId: java.util.UUID? = null,
+    val clickSide: TriggerClickSide? = null,
+    val leverState: TriggerLeverState? = null,
+) {
+    /** 他のイベント種別の条件を持ち越さないよう、種別に属さない欄は保存時に消します。 */
+    fun forEvent(event: EventTriggerKind): EventTriggerConditions = copy(
+        blockType = blockType.takeIf { event != EventTriggerKind.ENTITY_CLICK },
+        blockIdentity = blockIdentity.takeIf { event != EventTriggerKind.ENTITY_CLICK },
+        entityTarget = entityTarget.takeIf { event == EventTriggerKind.ENTITY_CLICK },
+        entityId = entityId.takeIf { event == EventTriggerKind.ENTITY_CLICK },
+        clickSide = clickSide.takeIf { event == EventTriggerKind.ENTITY_CLICK || event == EventTriggerKind.BLOCK_CLICK },
+        leverState = leverState.takeIf { event == EventTriggerKind.LEVER_CLICK },
+    )
+
+    /** UI・保存・実行前検証が共有する、イベント候補1体へ適用できる条件契約です。 */
+    fun validationProblem(event: EventTriggerKind): String? {
+        if (this != forEvent(event)) return "イベント種別に適用できない詳細条件があります"
+        if (blockType != null && CommandValueRules.material(blockType)?.isBlock != true) {
+            return "対象ブロックの種類が不正です"
+        }
+        if (blockIdentity != null && blockIdentity.world.isBlank()) return "対象ブロックのワールドが未設定です"
+        fun targetProblem(spec: TargetSpec?, playerOnly: Boolean): String? {
+            if (spec == null) return null
+            val validKinds = if (playerOnly) setOf(
+                TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER,
+            ) else setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)
+            if (spec.kind !in validKinds) return "イベント条件の対象分類が不正です"
+            // 起動前には一時変数・探索基準・領域を解決できません。詳細画面が受け付ける
+            // 単体候補の属性条件だけに限定し、保存値と実行時判定を一致させます。
+            if (spec.tempName != null || spec.searchOrigin != null || spec.region != null ||
+                spec.minimumDistance != null || spec.maximumDistance != null ||
+                spec.dx != null || spec.dy != null || spec.dz != null || spec.limit != null ||
+                spec.sort != TargetSort.NEAREST
+            ) return "イベント条件では探索・距離・領域の対象設定を使用できません"
+            if (spec.entityType != null && !CommandValueRules.isEntityTypeId(spec.entityType)) {
+                return "対象エンティティの種類が不正です"
+            }
+            if (spec.tag != null && !CommandValueRules.isTag(spec.tag)) return "対象タグが不正です"
+            if (spec.name != null && spec.name.length > 256) return "対象名が長すぎます"
+            if (spec.gameMode != null && spec.gameMode.uppercase() !in
+                setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) return "対象ゲームモードが不正です"
+            return null
+        }
+        return targetProblem(actorTarget, true) ?: targetProblem(entityTarget, false)
     }
 }
 
@@ -64,6 +121,7 @@ data class ScriptTrigger(
     val kind: TriggerKind = TriggerKind.REDSTONE,
     val event: EventTriggerKind? = null,
     val intervalSeconds: Double = DEFAULT_TIMER_SECONDS,
+    val conditions: EventTriggerConditions = EventTriggerConditions(),
 ) {
     /**
      * 保存前の正規化です。
@@ -75,12 +133,13 @@ data class ScriptTrigger(
     fun normalized(): ScriptTrigger = when (kind) {
         TriggerKind.TIMER -> copy(
             event = null,
+            conditions = EventTriggerConditions(),
             intervalSeconds = intervalSeconds
                 .takeIf { CommandValueRules.isTimerSeconds(it) }
                 ?: DEFAULT_TIMER_SECONDS,
         )
-        TriggerKind.REDSTONE -> copy(event = null, intervalSeconds = DEFAULT_TIMER_SECONDS)
-        TriggerKind.EVENT -> copy(intervalSeconds = DEFAULT_TIMER_SECONDS)
+        TriggerKind.REDSTONE -> copy(event = null, intervalSeconds = DEFAULT_TIMER_SECONDS, conditions = EventTriggerConditions())
+        TriggerKind.EVENT -> copy(intervalSeconds = DEFAULT_TIMER_SECONDS, conditions = event?.let(conditions::forEvent) ?: EventTriggerConditions())
     }
 }
 
@@ -115,9 +174,7 @@ data class EventTriggerArgument(
  *
  * 引数の正式名称・型はこの表が単一正本です。実行層の引数生成と検証層の
  * 定義表はどちらもここから導出し、名称・型の食い違いを作りません。
- * ボタン／レバー／感圧板は信号変化の観測であり操作者を特定できないため、
- * 操作者（actor）を持ちません。オン／オフや左右はイベント種別そのもので
- * 選び分けるため、状態や操作方向の引数は持ちません。
+ * 操作者を特定できない信号変化には actor を渡さず、条件との照合でも一致させません。
  */
 object EventTriggerArguments {
     const val ACTOR = "event_actor"
@@ -133,17 +190,17 @@ object EventTriggerArguments {
             EventTriggerArgument(POSITION, ValueType.LOCATION),
         )
         EventTriggerKind.BUTTON_ON,
-        EventTriggerKind.LEVER_ON, EventTriggerKind.LEVER_OFF,
+        EventTriggerKind.LEVER_CLICK,
         EventTriggerKind.PRESSURE_PLATE_ON,
         -> listOf(
             EventTriggerArgument(BLOCK, ValueType.BLOCK),
             EventTriggerArgument(POSITION, ValueType.LOCATION),
         )
-        EventTriggerKind.ENTITY_LEFT_CLICK, EventTriggerKind.ENTITY_RIGHT_CLICK -> listOf(
+        EventTriggerKind.ENTITY_CLICK -> listOf(
             EventTriggerArgument(ACTOR, ValueType.ENTITY),
             EventTriggerArgument(TARGET, ValueType.ENTITY),
         )
-        EventTriggerKind.BLOCK_LEFT_CLICK, EventTriggerKind.BLOCK_RIGHT_CLICK -> listOf(
+        EventTriggerKind.BLOCK_CLICK -> listOf(
             EventTriggerArgument(ACTOR, ValueType.ENTITY),
             EventTriggerArgument(BLOCK, ValueType.BLOCK),
             EventTriggerArgument(POSITION, ValueType.LOCATION),
