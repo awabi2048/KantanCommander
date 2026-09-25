@@ -4,13 +4,11 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
-import me.awabi2048.kantancommander.gui.GestureSettingVisualPolicy
 import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
 
@@ -47,6 +45,7 @@ data class TriggerDetailData(
     val confirmLabel: Component,
     val backLabel: Component,
     val tabBackground: BlockData,
+    val selectedTabBackground: BlockData,
     val tabOutline: BlockData,
     val confirmBackground: BlockData,
     val backBackground: BlockData,
@@ -91,45 +90,30 @@ object DeclarativeTriggers {
     fun eventDocument(data: TriggerChoiceData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =
         choiceDocument(data, idPrefix = "trigger-event", visualTag = "trigger-event", panel = panel)
 
-    /** 左タブ・右設定の配置は、イベントを再クリックした後の詳細子画面だけに適用します。 */
+    /** イベント詳細の左列は、一般コマンド設定が実際に使うタブ列で描画します。 */
     fun detailDocument(data: TriggerDetailData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
         val frame = contentFrame(panel)
         val nodes = mutableListOf<GestureGuiNode>()
         val tabs = data.tabs.ifEmpty { listOf(TriggerDetailTab("event", data.title, false)) }
-        tabs.forEachIndexed { index, tab ->
-            val selected = index == data.selectedTab
-            val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, selected)
-            val tabCenterX = GestureSettingVisualPolicy.selectedTabCenterX(
-                GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_WIDTH, selected,
-            )
-            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - index * GestureLowerPanel.SETTINGS_TAB_PITCH
-            nodes += GestureGuiBlock(
-                blockData = data.tabBackground,
-                interpolationTicks = 0,
-                width = GestureGuiSizeSpec.Fixed(tabWidth),
-                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-                outline = when {
-                    selected -> GestureGuiOutline(data.tabOutline)
-                    tab.configured -> GestureGuiOutline(data.confirmBackground)
-                    else -> null
-                },
-                id = "lower-trigger-detail-tab:${tab.key}",
-                actionId = "lower-trigger-detail-tab:${tab.key}",
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                absolute = placed(frame, tabCenterX, cy, tabWidth, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-            )
-            nodes += GestureGuiText(
-                text = tab.label,
-                interpolationTicks = 0,
-                size = 0.0049,
-                lineWidth = 90,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = "trigger-detail-tab-label-$index",
-                width = GestureGuiSizeSpec.Fixed(tabWidth),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, tabWidth, 0.0049 * 3.0),
-            )
-        }
+        DeclarativeSettings.tabColumnSection(
+            nodes,
+            frame,
+            tabs = tabs.mapIndexed { index, tab ->
+                val selected = index == data.selectedTab
+                SettingsTabEntry(
+                    label = tab.label,
+                    selected = selected,
+                    attentionHover = null,
+                    background = if (selected) data.selectedTabBackground else data.tabBackground,
+                    outline = when {
+                        selected -> GestureGuiOutline(data.tabOutline)
+                        tab.configured -> GestureGuiOutline(data.confirmBackground)
+                        else -> null
+                    },
+                    elementId = "lower-trigger-detail-tab:${tab.key}",
+                )
+            },
+        )
         DeclarativeSettings.descriptionSection(
             nodes,
             frame,

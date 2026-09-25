@@ -1,10 +1,15 @@
 package me.awabi2048.kantancommander.gui.declarative
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Proxy
@@ -114,6 +119,7 @@ class TriggerChoiceDocumentTest {
                     confirmLabel = Component.text("confirm"),
                     backLabel = Component.text("back"),
                     tabBackground = blockData(),
+                    selectedTabBackground = blockData(),
                     tabOutline = blockData(),
                     confirmBackground = blockData(),
                     backBackground = blockData(),
@@ -139,6 +145,7 @@ class TriggerChoiceDocumentTest {
             confirmLabel = Component.text("confirm"),
             backLabel = Component.text("back"),
             tabBackground = blockData(),
+            selectedTabBackground = blockData(),
             tabOutline = blockData(),
             confirmBackground = blockData(),
             backBackground = blockData(),
@@ -163,5 +170,60 @@ class TriggerChoiceDocumentTest {
             "lower-trigger-detail-action:on", "lower-trigger-detail-action:off",
             "lower-trigger-detail-confirm", "lower-setting-back",
         )))
+    }
+
+    @Test
+    fun `detail tabs use the same column geometry and text as command settings`() {
+        val idleBackground = blockData()
+        val selectedBackground = blockData()
+        val data = TriggerDetailData(
+            title = Component.text("details"),
+            eventLabel = "event",
+            eventName = Component.text("lever"),
+            description = Component.text("description"),
+            confirmLabel = Component.text("confirm"),
+            backLabel = Component.text("back"),
+            tabBackground = idleBackground,
+            selectedTabBackground = selectedBackground,
+            tabOutline = blockData(),
+            confirmBackground = blockData(),
+            backBackground = blockData(),
+            tabs = listOf(
+                TriggerDetailTab("who", Component.text("who"), true),
+                TriggerDetailTab("target", Component.text("target"), false),
+            ),
+            selectedTab = 1,
+        )
+        val detailNodes = (DeclarativeTriggers.detailDocument(data, panel).root as GestureGuiBox).children
+        val commandNodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
+        DeclarativeSettings.tabColumnSection(
+            commandNodes,
+            contentFrame(panel),
+            listOf(
+                SettingsTabEntry(Component.text("who"), false, null, idleBackground),
+                SettingsTabEntry(Component.text("target"), true, null, selectedBackground),
+            ),
+        )
+        val detailTabs = detailNodes.filterIsInstance<GestureGuiBlock>()
+            .filter { it.id?.startsWith("lower-trigger-detail-tab:") == true }
+        val commandTabs = commandNodes.filterIsInstance<GestureGuiBlock>()
+        assertEquals(2, detailTabs.size)
+        detailTabs.zip(commandTabs).forEach { (detail, command) ->
+            assertEquals(command.absolute, detail.absolute)
+            assertEquals(command.width, detail.width)
+            assertEquals(command.height, detail.height)
+            assertSame(command.blockData, detail.blockData)
+            assertNotNull(detail.outline, "選択中または設定済みの詳細タブには枠が必要です")
+        }
+        val detailLabels = detailNodes.filterIsInstance<GestureGuiText>()
+            .filter { it.id?.endsWith("-label") == true && it.id?.startsWith("lower-trigger-detail-tab:") == true }
+        val commandLabels = commandNodes.filterIsInstance<GestureGuiText>()
+        detailLabels.zip(commandLabels).forEach { (detail, command) ->
+            assertEquals(command.absolute, detail.absolute)
+            assertEquals(command.size, detail.size)
+            assertEquals(command.width, detail.width)
+        }
+        assertEquals(2, detailLabels.size)
+        assertTrue(detailNodes.none { it.id == "lower-delete" || it.id == "lower-duplicate" })
     }
 }

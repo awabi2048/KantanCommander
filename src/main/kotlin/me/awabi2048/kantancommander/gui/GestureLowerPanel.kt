@@ -1378,6 +1378,7 @@ class GestureLowerPanel(
                     confirmLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM)),
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     tabBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                    selectedTabBackground = Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(true)),
                     tabOutline = Bukkit.createBlockData(Material.WHITE_CONCRETE),
                     confirmBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),

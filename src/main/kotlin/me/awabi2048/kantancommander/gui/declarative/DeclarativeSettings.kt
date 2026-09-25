@@ -46,6 +46,10 @@ data class SettingsTabEntry(
     val selected: Boolean,
     val attentionHover: GestureGuiHoverText?,
     val background: BlockData,
+    /** 画面固有の保存状態を示す枠です。通常のコマンドタブでは使用しません。 */
+    val outline: GestureGuiOutline? = null,
+    /** 子画面でも同じタブ描画を使えるよう、操作先だけを差し替えます。 */
+    val elementId: String? = null,
 )
 
 /** 説明ブロックの2行目です。警告（赤）または案内（灰）のどちらかです。 */
@@ -205,63 +209,7 @@ object DeclarativeSettings {
         deleteBackground: BlockData,
         executionTabIndex: Int? = null,
     ) {
-        val executionTab = executionTabIndex?.let { tabs.getOrNull(it) }
-        tabs.forEachIndexed { index, tab ->
-            if (index == executionTabIndex) return@forEachIndexed
-            val position = if (executionTabIndex != null && index > executionTabIndex) index - 1 else index
-            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - position * GestureLowerPanel.SETTINGS_TAB_PITCH
-            val width = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, tab.selected)
-            val cx = GestureSettingVisualPolicy.selectedTabCenterX(
-                GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-                GestureLowerPanel.SETTINGS_TAB_WIDTH,
-                tab.selected,
-            )
-            nodes += GestureGuiBlock(
-                blockData = tab.background,
-                width = GestureGuiSizeSpec.Fixed(width),
-                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-                id = "lower-tab:$index",
-                actionId = "lower-tab:$index",
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                hover = tab.attentionHover?.let(::hoverSpecOf),
-                absolute = placed(frame, cx, cy, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-            )
-            nodes += GestureGuiText(
-                text = tab.label,
-                size = 0.0055,
-                lineWidth = 90,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = "tab-$index",
-                width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, 1.0, 0.0055 * 3.0),
-            )
-        }
-        executionTab?.let { tab ->
-            // 実行位置行は幅を広げるアニメーションを行わず、選択色・ホバー・注意表示だけを残します。
-            val width = GestureLowerPanel.SETTINGS_TAB_WIDTH
-            val cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X
-            nodes += GestureGuiBlock(
-                blockData = tab.background,
-                width = GestureGuiSizeSpec.Fixed(width),
-                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-                id = "lower-tab:exec",
-                actionId = "lower-tab:exec",
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                hover = tab.attentionHover?.let(::hoverSpecOf),
-                absolute = placed(frame, cx, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-            )
-            nodes += GestureGuiText(
-                text = tab.label,
-                size = 0.0055,
-                lineWidth = 90,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = "tab-exec",
-                width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y - 0.02, 1.0, 0.0055 * 3.0),
-            )
-        }
+        tabColumnSection(nodes, frame, tabs, executionTabIndex)
         val halfWidth = GestureLowerPanel.SETTINGS_TAB_WIDTH / 2.0
         if (duplicateLabel != null && duplicateBackground != null) {
             appendActionCard(
@@ -323,6 +271,74 @@ object DeclarativeSettings {
                 visualTag = "delete",
             ),
         )
+    }
+
+    /** コマンド設定と詳細子画面で同じタブ列を描き、固定操作は各画面で配置します。 */
+    fun tabColumnSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        tabs: List<SettingsTabEntry>,
+        executionTabIndex: Int? = null,
+    ) {
+        val executionTab = executionTabIndex?.let { tabs.getOrNull(it) }
+        tabs.forEachIndexed { index, tab ->
+            if (index == executionTabIndex) return@forEachIndexed
+            val position = if (executionTabIndex != null && index > executionTabIndex) index - 1 else index
+            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - position * GestureLowerPanel.SETTINGS_TAB_PITCH
+            val width = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, tab.selected)
+            val cx = GestureSettingVisualPolicy.selectedTabCenterX(
+                GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+                GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                tab.selected,
+            )
+            nodes += GestureGuiBlock(
+                blockData = tab.background,
+                outline = tab.outline,
+                width = GestureGuiSizeSpec.Fixed(width),
+                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+                id = tab.elementId ?: "lower-tab:$index",
+                actionId = tab.elementId ?: "lower-tab:$index",
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                hover = tab.attentionHover?.let(::hoverSpecOf),
+                absolute = placed(frame, cx, cy, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            )
+            nodes += GestureGuiText(
+                text = tab.label,
+                size = 0.0055,
+                lineWidth = 90,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = tab.elementId?.let { "$it-label" } ?: "tab-$index",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, 1.0, 0.0055 * 3.0),
+            )
+        }
+        executionTab?.let { tab ->
+            // 実行位置行は幅を広げるアニメーションを行わず、選択色・ホバー・注意表示だけを残します。
+            val width = GestureLowerPanel.SETTINGS_TAB_WIDTH
+            val cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X
+            nodes += GestureGuiBlock(
+                blockData = tab.background,
+                outline = tab.outline,
+                width = GestureGuiSizeSpec.Fixed(width),
+                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+                id = tab.elementId ?: "lower-tab:exec",
+                actionId = tab.elementId ?: "lower-tab:exec",
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                hover = tab.attentionHover?.let(::hoverSpecOf),
+                absolute = placed(frame, cx, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            )
+            nodes += GestureGuiText(
+                text = tab.label,
+                size = 0.0055,
+                lineWidth = 90,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = tab.elementId?.let { "$it-label" } ?: "tab-exec",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y - 0.02, 1.0, 0.0055 * 3.0),
+            )
+        }
     }
 
     /** 設定項目なしの案内文を配置します。固定操作は tabsSection 側で配置します。 */
