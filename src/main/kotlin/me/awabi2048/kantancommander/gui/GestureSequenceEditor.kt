@@ -812,7 +812,7 @@ class GestureSequenceEditor(
                 secondaryInputEnabled = false,
                 // 画面外を含む左右クリックを外部ブロック／エンティティへ漏らしません。
                 suppressWorldClicks = true,
-                // エディター全体の高さを0.5ブロック下げます。
+                // エディター全体の高さ補正です。初期高さの基準とするため0.0とします。
                 verticalOffset = EDITOR_VERTICAL_OFFSET,
                 // 画面の上下傾きを半分にします。
                 tiltScale = EDITOR_TILT_SCALE,
@@ -9823,8 +9823,9 @@ class GestureSequenceEditor(
         /**
          * エディター画面全体へ適用するY方向の補正です(ブロック単位)。
          * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。
+         * 初期高さの基準とするため、補正なしの0.0とします。
          */
-        const val EDITOR_VERTICAL_OFFSET: Double = -0.25
+        const val EDITOR_VERTICAL_OFFSET: Double = 0.0
         /**
          * エディター画面の上下傾き倍率です。1.0で従来配置、0.5で半減します。
          * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。
