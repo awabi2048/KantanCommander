@@ -3476,11 +3476,6 @@ class GestureLowerPanel(
                 else -> null
             }
         }
-        choice.id.startsWith("overwrite:") -> KcI18n.text(
-            player,
-            if (choice.id.endsWith(":true")) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED
-            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
-        )
         choice.id.startsWith("tagOperation:") -> suffixKeyDescription(player, choice.id, "tagOperation:") { suffix ->
             when (suffix) {
                 "add" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
@@ -3533,16 +3528,6 @@ class GestureLowerPanel(
                 "FIXED" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_FIXED
                 "TEMPORARY" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_TEMPORARY
                 "WORLD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_WORLD
-                else -> null
-            }
-        }
-        // 条件の反転設定は、選択肢の意味を編集中のタブ（fieldKey）へ投影します。
-        choice.id.startsWith("invert:") -> suffixKeyDescription(player, choice.id, "invert:") { suffix ->
-            when {
-                suffix == "true" ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_ON
-                suffix == "false" ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_OFF
                 else -> null
             }
         }
@@ -4024,7 +4009,6 @@ class GestureLowerPanel(
         choiceId.startsWith("summonDataValue:") -> setOf("summonData")
         choiceId.startsWith("summonData:") -> setOf("summonData")
         choiceId.startsWith("equipmentSlot:") -> setOf("slot")
-        choiceId.startsWith("overwrite:") -> setOf("overwrite")
         choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
         choiceId.startsWith("type:") -> setOf("type")
         choiceId.startsWith("operation:") -> setOf("operation")
@@ -4033,7 +4017,7 @@ class GestureLowerPanel(
         choiceId.startsWith("soundScope:") -> setOf("soundScope")
         choiceId.startsWith("value:") -> setOf("value")
         // forの参照元・包含判定は、その画面を開いたタブ自身（fieldKey）へ投影します。
-        choiceId.startsWith("source:") || choiceId.startsWith("invert:") -> setOf(fieldKey)
+        choiceId.startsWith("source:") -> setOf(fieldKey)
         else -> setOf(fieldKey)
     }
 
@@ -4200,9 +4184,6 @@ class GestureLowerPanel(
             id.startsWith("placeDestination:") -> choice.selected &&
                 node.string("placeDestination", PlaceItemDestination.EQUIPMENT.paramValue) == id.removePrefix("placeDestination:") &&
                 CommandSettingsModel.isFieldConfigured(node, "placeDestination")
-            id.startsWith("overwrite:") -> choice.selected &&
-                node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean() &&
-                CommandSettingsModel.isFieldConfigured(node, "overwrite")
             id.startsWith("tagOperation:") -> choice.selected &&
                 node.string("tagOperation", "add") == id.removePrefix("tagOperation:") &&
                 CommandSettingsModel.isFieldConfigured(node, "tagOperation")
@@ -4416,10 +4397,6 @@ class GestureLowerPanel(
         ).map { (slot, label) ->
             SettingChoice("equipmentSlot:$slot", KcI18n.text(player, label), explicitSelected(node, fieldKey, context.role, node.string("slot", "HAND") == slot))
         }
-        GestureSettingScreen.ENTITY_OVERWRITE -> listOf(
-            SettingChoice("overwrite:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED), explicitSelected(node, fieldKey, context.role, node.boolean("overwrite"))),
-            SettingChoice("overwrite:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED), explicitSelected(node, fieldKey, context.role, !node.boolean("overwrite"))),
-        )
         GestureSettingScreen.CAMERA_SHAKE_TYPE -> listOf(
             SettingChoice("shake:positional", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_POSITIONAL), explicitSelected(node, fieldKey, context.role, node.string("shakeType", "positional") == "positional")),
             SettingChoice("shake:rotational", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_ROTATIONAL), explicitSelected(node, fieldKey, context.role, node.string("shakeType", "positional") == "rotational")),
@@ -4627,12 +4604,6 @@ class GestureLowerPanel(
                     ),
                 )
             }
-        }
-        GestureSettingScreen.CONDITION_INVERSION -> {
-            listOf(
-                SettingChoice("invert:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_ON), explicitSelected(node, fieldKey, context.role, node.boolean(fieldKey, false))),
-                SettingChoice("invert:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF), explicitSelected(node, fieldKey, context.role, !node.boolean(fieldKey, false))),
-            )
         }
         // issue #11: 建造物の回転・反転は明示選択肢です。保存値は小文字文字列のため、
         // ここで各enumへ解決し直して選択表示と照合します。
@@ -5520,16 +5491,6 @@ class GestureLowerPanel(
             ?.let { positionKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.FACING -> CommandSettingsModel.facingSpec(node, context.role)?.kind
             ?.let { facingKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-        GestureSettingScreen.CONDITION_INVERSION -> {
-            KcI18n.text(
-                player,
-                if (node.boolean(fieldKey, false)) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_ON
-                } else {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF
-                },
-            )
-        }
         else -> node.string(fieldKey).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
     }
 

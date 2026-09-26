@@ -365,7 +365,9 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.ENTITY_PROPERTY_VALUE -> GestureSettingScreen.ENTITY_PROPERTY_VALUE
     CommandSettingEditor.PLACE_DESTINATION -> GestureSettingScreen.PLACE_DESTINATION
     CommandSettingEditor.ENTITY_EQUIPMENT_SLOT -> GestureSettingScreen.ENTITY_EQUIPMENT_SLOT
-    CommandSettingEditor.ENTITY_OVERWRITE -> GestureSettingScreen.ENTITY_OVERWRITE
+    // 上書き・条件反転はCHECKBOX表示のため、選択肢画面を持たず
+    // 親画面のチェックボックストグルだけで操作します。
+    CommandSettingEditor.ENTITY_OVERWRITE -> null
     CommandSettingEditor.VARIABLE_SCOPE -> GestureSettingScreen.VARIABLE_SCOPE
     CommandSettingEditor.VARIABLE_NAME -> GestureSettingScreen.VARIABLE_NAME
     CommandSettingEditor.VARIABLE_PROPERTY -> GestureSettingScreen.VARIABLE_PROPERTY
@@ -373,7 +375,7 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.VARIABLE_OPERATION -> GestureSettingScreen.VARIABLE_OPERATION
     CommandSettingEditor.VARIABLE_CHANGE_MODE -> GestureSettingScreen.VARIABLE_CHANGE_MODE
     CommandSettingEditor.VARIABLE_VALUE -> GestureSettingScreen.VARIABLE_VALUE
-    CommandSettingEditor.CONDITION_INVERSION -> GestureSettingScreen.CONDITION_INVERSION
+    CommandSettingEditor.CONDITION_INVERSION -> null
     CommandSettingEditor.CAMERA_SHAKE_TYPE -> GestureSettingScreen.CAMERA_SHAKE_TYPE
     CommandSettingEditor.SOUND_SCOPE -> GestureSettingScreen.SOUND_SCOPE
     CommandSettingEditor.SOUND_OPERATION -> GestureSettingScreen.SOUND_OPERATION

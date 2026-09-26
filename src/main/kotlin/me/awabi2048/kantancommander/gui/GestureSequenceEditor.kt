@@ -385,7 +385,6 @@ enum class GestureSettingScreen {
     SUMMON_PROPERTY_VALUE,
     PLACE_DESTINATION,
     ENTITY_EQUIPMENT_SLOT,
-    ENTITY_OVERWRITE,
     VARIABLE_SCOPE,
     VARIABLE_NAME,
     VARIABLE_PROPERTY,
@@ -393,7 +392,6 @@ enum class GestureSettingScreen {
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
     VARIABLE_VALUE,
-    CONDITION_INVERSION,
     CAMERA_SHAKE_TYPE,
     SOUND_SCOPE,
     SOUND_OPERATION,
@@ -8348,12 +8346,6 @@ class GestureSequenceEditor(
                         CommandSettingsModel.setParameter(it, "slot", value)
                     }) showSettingScreen()
             }
-            GestureSettingScreen.ENTITY_OVERWRITE -> {
-                if (group != "overwrite" || value !in setOf("true", "false")) return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "overwrite", value)
-                    }) showSettingScreen()
-            }
             GestureSettingScreen.CAMERA_SHAKE_TYPE -> {
                 if (group != "shake" || value !in setOf("positional", "rotational")) return
                 if (updateSettingNode(player, settingContext) {
@@ -8534,12 +8526,6 @@ class GestureSequenceEditor(
                             CommandSettingsModel.setParameter(it, "value", "\${CURRENT_LOOP_COUNT}")
                         }) showSettingScreen()
                 }
-            }
-            GestureSettingScreen.CONDITION_INVERSION -> {
-                if (group != "invert") return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, fieldKey, value.toBoolean().toString())
-                    }) showSettingScreen()
             }
         }
     }
