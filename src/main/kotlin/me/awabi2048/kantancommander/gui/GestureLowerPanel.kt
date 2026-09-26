@@ -2760,7 +2760,7 @@ class GestureLowerPanel(
                 elementId = "lower-toggle:$fieldKey",
                 label = Component.text(labelText),
                 background = Bukkit.createBlockData(
-                    if (checked) Material.LIME_CONCRETE else Material.GRAY_CONCRETE,
+                    GestureSettingVisualPolicy.booleanChoiceMaterial(checked),
                 ),
                 cx = centerX,
                 cy = centerY ?: inputCenterY,
@@ -3260,16 +3260,11 @@ class GestureLowerPanel(
 
     /**
      * 操作不能な設定候補は、候補専用の共通ポリシーで赤コンクリートへ変更します。
-     * 通常の設定項目や空欄の無効表示とは意味が異なるため、無効な選択肢だけを
-     * DisabledChoiceVisualPolicyへ通します。
+     * Boolean値を表示する選択肢はON／OFFを背景色で示し、それ以外は薄灰色へ統一します。
+     * 択一／複数選択、初期／設定済みの区別は背景色へ反映しません。
      */
     internal fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
-        if (choice.enabled) {
-            // 択一／複数選択、初期／設定済みの区別は背景色へ反映しません。
-            Material.LIGHT_GRAY_CONCRETE
-        } else {
-            DisabledChoiceVisualPolicy.material
-        }
+        GestureSettingVisualPolicy.choiceMaterial(choice)
 
     /** 表示時間はグループ名をタブへ、表示継続時間は内部の現在値ラベルへ分離します。 */
     internal fun fieldTabLabel(player: Player, node: CommandNode, field: EditorField): String =
@@ -4158,8 +4153,8 @@ class GestureLowerPanel(
                 controlState != null && controlState in node.selectedControlBlockStates()
             }
             id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "sneaking")
-            // issue #5: Boolean直接条件は演算子なしで成立します。
-            id == "condition-direct" -> node.string("operator").isBlank()
+            // issue #5: Boolean直接条件は演算子なしで成立します。直接条件の有効・無効は
+            // 選択肢の背景色で示すため、ここでは明示設定済み判定のみを扱います。
             // issue #5: 条件の領域とその子選択肢はノードの領域指定から導出します。
             // 対象絞り込み側と同じ共有判定を使い、分岐を増やしません。
             id == "condition-region" -> CommandSettingsModel.isRegionConfigured(node.regionSpec, "region")
@@ -4173,6 +4168,9 @@ class GestureLowerPanel(
             id.startsWith("condition-block") -> CommandSettingsModel.isFieldConfigured(node, "block")
             id.startsWith("condition-item-data") -> CommandSettingsModel.isFieldConfigured(node, "itemData")
             id.startsWith("condition-item") -> CommandSettingsModel.isFieldConfigured(node, "item")
+            // 枠線表示のON／OFFは背景色で示します。明示設定済みかどうかだけを
+            // 空色枠へ投影し、既定ONの実効値を設定済みへ見せません。
+            id == "wireframe:toggle" -> node.isExplicitlyConfigured(ParticleGeometry.PARAM_WIREFRAME)
             id.startsWith("changeMode:") -> choice.selected &&
                 node.string("changeMode", "ASSIGN") == id.removePrefix("changeMode:") &&
                 CommandSettingsModel.isFieldConfigured(node, "changeMode")
@@ -4189,8 +4187,8 @@ class GestureLowerPanel(
                 }
             }
             id.startsWith("summonData:") -> {
-                // selectedは切替状態（真偽値ならON）を表すため、設定済み判定には使いません。
-                // 明示的なfalseも有効な保存値として扱います。
+                // selectedは現在の操作経路、真偽値は背景色で表すため、
+                // 設定済み判定にはどちらも使いません。明示的なfalseも有効な保存値です。
                 val propertyId = id.removePrefix("summonData:")
                 val definition = EntityDataSchema.definition(propertyId)
                 val raw = node.string(EntityDataSchema.summonDataKey(propertyId))
@@ -4482,9 +4480,9 @@ class GestureLowerPanel(
             )
             if (ParticleGeometry.shape(node) == ParticleShape.BOX) {
                 // 枠線表示は条件の演算子と同じく、押すたびに切り替わる単一選択肢です。
-                // 初期時点では未設定とし、明示選択だけを反映します。
+                // ON／OFFの実効値は背景色で示し、選択表示（白枠）へは流用しません。
+                // 明示設定の有無はvalueState経由の空色枠に残します。
                 val wireframe = node.params[ParticleGeometry.PARAM_WIREFRAME]?.toBooleanStrictOrNull() ?: true
-                val wireframeExplicit = node.isExplicitlyConfigured(ParticleGeometry.PARAM_WIREFRAME)
                 add(
                     SettingChoice(
                         "wireframe:toggle",
@@ -4497,7 +4495,8 @@ class GestureLowerPanel(
                                 else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
                             ),
                         ),
-                        wireframe && wireframeExplicit,
+                        selected = false,
+                        toggleValue = wireframe,
                     ),
                 )
             }
@@ -4782,15 +4781,28 @@ class GestureLowerPanel(
                     rawValue = currentValue,
                 )
                 when (definition.valueKind) {
-                    // 操作対象の選択と真偽値を分けます。falseでも現在の対象項目として選択表示し、
-                    // 実際のON/OFFは値欄、明示設定の有無はvalueStateで示します。
-                    EntityPropertyValueKind.BOOLEAN -> add(
-                        SettingChoice(
-                            "entityData:property:${definition.id}",
-                            KcI18n.text(player, definition.optionKey),
-                            propertyState.selected,
-                        ),
-                    )
+                    // 操作対象の選択（白枠）と真偽値（背景色）を分けます。falseでも
+                    // 現在の対象項目として選択表示し、明示設定の有無はvalueStateで示します。
+                    // 操作対象外や値未設定の行は中立色のままです。
+                    EntityPropertyValueKind.BOOLEAN -> {
+                        val toggle = currentValue.toBooleanStrictOrNull()
+                            .takeIf { propertyState.selected }
+                        add(
+                            SettingChoice(
+                                "entityData:property:${definition.id}",
+                                KcI18n.text(player, definition.optionKey),
+                                propertyState.selected,
+                                description = toggle?.let { enabled ->
+                                    KcI18n.text(
+                                        player,
+                                        if (enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED
+                                        else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
+                                    )
+                                }.orEmpty(),
+                                toggleValue = toggle,
+                            ),
+                        )
+                    }
                     EntityPropertyValueKind.ENUM -> add(
                         GestureSettingTreeNode(
                             id = "entityData:property:${definition.id}",
@@ -4835,12 +4847,14 @@ class GestureLowerPanel(
                 val key = me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey(definition.id)
                 val current = entries[definition.id]
                 when (definition.valueKind) {
-                    // 真偽値はON状態を選択表示し、トグル操作と一致させます。子画面を持ちません。
+                    // 真偽値は1クリックで即時反転する単純トグルです。操作経路の選択状態は
+                    // 保持せず、ON／OFFは背景色で示します。未設定は中立色のままです。
+                    // 子画面を持ちません。
                     me.awabi2048.kantancommander.model.EntityPropertyValueKind.BOOLEAN -> add(
                         SettingChoice(
                             "summonData:${definition.id}",
                             KcI18n.text(player, definition.optionKey),
-                            // ON/OFFは保存値表示に使い、操作選択として白枠へ流用しません。
+                            // ON/OFFは保存値の背景色表示に使い、操作選択として白枠へ流用しません。
                             selected = false,
                             description = current?.toBooleanStrictOrNull()?.let { enabled ->
                                 KcI18n.text(
@@ -4849,6 +4863,7 @@ class GestureLowerPanel(
                                     else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
                                 )
                             }.orEmpty(),
+                            toggleValue = current?.toBooleanStrictOrNull(),
                         ),
                     )
                     me.awabi2048.kantancommander.model.EntityPropertyValueKind.ENUM -> add(
@@ -5381,6 +5396,8 @@ class GestureLowerPanel(
                             else -> null
                         },
                     ),
+                    // 状態条件は3値巡回のため、未設定は中立色のままにします。
+                    toggleValue = node.string("sneaking").toBooleanStrictOrNull(),
                 ),
                 SettingChoice("condition-item", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION, node.string("item"))),
             )
@@ -5411,11 +5428,13 @@ class GestureLowerPanel(
                 add(SettingChoice("condition-left", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("leftName"))))
                 val operator = node.string("operator")
                 if (operator.isBlank()) {
+                    // Boolean直接条件はON／OFFを背景色で示し、選択表示へ流用しません。
                     add(
                         SettingChoice(
                             "condition-direct",
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
-                            selected = true,
+                            selected = false,
+                            toggleValue = true,
                         ),
                     )
                 } else {
@@ -5441,6 +5460,7 @@ class GestureLowerPanel(
                             "condition-direct",
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
                             selected = false,
+                            toggleValue = false,
                         ),
                     )
                 }

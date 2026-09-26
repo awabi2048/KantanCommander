@@ -8218,11 +8218,10 @@ class GestureSequenceEditor(
                     notifySaveFailed()
                 }
             }
-            // issue #10: 召喚時個別設定の一覧画面です。既存Entity編集と同じ
-            // 二段階操作契約で、保存先だけを召喚時個別設定へ振り替えます。
-            // 1回目は行選択の記憶だけを行い、同じ行への連続クリックで内容を
-            // 確定します。真偽値は単一保存で切り替え、有限候補は子画面の
-            // 選択肢で確定し、文字列・整数はDialog入力へ進みます。
+            // issue #10: 召喚時個別設定の一覧画面です。真偽値は選択経路を持たない
+            // 単純トグルのため1クリックで即時反転・保存します。文字列・整数は
+            // 行選択の記憶を経て連続クリックでDialog入力、有限候補は子画面の
+            // 選択肢で確定します（既存Entity編集と同じ二段階契約）。
             GestureSettingScreen.SUMMON_DATA_ROOT -> {
                 if (group == "summonData") {
                     val definition = EntityDataSchema.definition(value)
@@ -8239,6 +8238,20 @@ class GestureSequenceEditor(
                         notifySaveFailed()
                         return
                     }
+                    // 真偽値はチェックボックスと同じく1クリックで反転・保存します。
+                    // 選択経路の記憶へは載せず、ON／OFFは背景色だけで表示します。
+                    if (definition.valueKind == EntityPropertyValueKind.BOOLEAN) {
+                        val key = EntityDataSchema.summonDataKey(value)
+                        val toggled = EntityDataSchema.toggledBooleanValue(node.string(key))
+                        if (updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(it, key, toggled)
+                            }) {
+                            showSettingScreen()
+                        } else {
+                            notifySaveFailed()
+                        }
+                        return
+                    }
                     val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
                     if (!consecutive) {
                         rememberSettingNode(encoded)
@@ -8247,17 +8260,8 @@ class GestureSequenceEditor(
                     }
                     rememberSettingNode(encoded)
                     when (definition.valueKind) {
-                        EntityPropertyValueKind.BOOLEAN -> {
-                            val key = EntityDataSchema.summonDataKey(value)
-                            val toggled = EntityDataSchema.toggledBooleanValue(node.string(key))
-                            if (updateSettingNode(player, settingContext) {
-                                    CommandSettingsModel.setParameter(it, key, toggled)
-                                }) {
-                                showSettingScreen()
-                            } else {
-                                notifySaveFailed()
-                            }
-                        }
+                        // 真偽値は上の即時反転で処理済みのため到達しません。
+                        EntityPropertyValueKind.BOOLEAN -> Unit
                         EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
                             val key = EntityDataSchema.summonDataKey(value)
                             val fresh = plugin.scripts.load(settingContext.scriptId)

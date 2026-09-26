@@ -320,4 +320,61 @@ class GestureSettingTreeTest {
             ),
         )
     }
+
+    @Test
+    fun `boolean choice color comes from the value channel not the selection`() {
+        // Boolean値を表示する選択肢は、値を背景色（ON=緑・OFF=灰）で示します。
+        // 選択枠・設定済み枠とは別チャネルです。
+        assertEquals(
+            org.bukkit.Material.LIME_CONCRETE,
+            GestureSettingVisualPolicy.choiceMaterial(
+                GestureSettingTreeNode("summonData:ai", "AI", toggleValue = true),
+            ),
+        )
+        assertEquals(
+            org.bukkit.Material.GRAY_CONCRETE,
+            GestureSettingVisualPolicy.choiceMaterial(
+                GestureSettingTreeNode("summonData:ai", "AI", toggleValue = false),
+            ),
+        )
+        // 値が未設定の選択肢は中立の薄灰色のままです。
+        assertEquals(
+            org.bukkit.Material.LIGHT_GRAY_CONCRETE,
+            GestureSettingVisualPolicy.choiceMaterial(
+                GestureSettingTreeNode("summonData:ai", "AI", toggleValue = null),
+            ),
+        )
+        // 選択中の白枠は背景色のON/OFFと独立しています。
+        assertEquals(
+            org.bukkit.Material.GRAY_CONCRETE,
+            GestureSettingVisualPolicy.choiceMaterial(
+                GestureSettingTreeNode("entityData:property:ai", "AI", selected = true, toggleValue = false),
+            ),
+        )
+        assertEquals(
+            org.bukkit.Material.WHITE_CONCRETE,
+            GestureSettingVisualPolicy.choiceOutlineMaterial(
+                GestureSettingTreeNode("entityData:property:ai", "AI", selected = true, toggleValue = false),
+            ),
+        )
+        // 明示設定済みの空色枠も背景色と独立しています。
+        assertEquals(
+            org.bukkit.Material.LIGHT_BLUE_CONCRETE,
+            GestureSettingVisualPolicy.choiceOutlineMaterial(
+                GestureSettingTreeNode(
+                    "wireframe:toggle",
+                    "枠線",
+                    toggleValue = true,
+                    valueState = GestureSettingValueState.CONFIGURED,
+                ),
+            ),
+        )
+        // 操作不能な選択肢はBoolean値よりも無効色を優先します。
+        assertEquals(
+            org.bukkit.Material.RED_CONCRETE,
+            GestureSettingVisualPolicy.choiceMaterial(
+                GestureSettingTreeNode("summonData:ai", "AI", enabled = false, toggleValue = true),
+            ),
+        )
+    }
 }

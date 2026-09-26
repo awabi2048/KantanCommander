@@ -54,6 +54,14 @@ data class GestureSettingTreeNode(
      * 詳細だけを開く項目では DETAILS_ONLY を指定し、選択表示や選択値の変更を行いません。
      */
     val interactionMode: GestureSettingInteractionMode? = null,
+    /**
+     * Boolean値そのものを表示・反転する選択肢の現在値です。
+     *
+     * 非nullのとき描画は背景色でON／OFFを示し、選択枠（白）・設定済み枠（空色）とは
+     * 別チャネルで値だけを表します。未設定を中立色で残す項目ではnullを指定します。
+     * 値を選択状態（selected）へ流用してはいけません。
+     */
+    val toggleValue: Boolean? = null,
 ) {
     val hasChildren: Boolean
         get() = children.isNotEmpty()
@@ -177,6 +185,26 @@ internal object GestureSettingVisualPolicy {
     /** タブ内部・子画面の選択項目の外周枠に使う素材です。 */
     fun nonTabOutlineMaterial(selected: Boolean): Material? =
         if (selected) Material.WHITE_CONCRETE else null
+
+    /**
+     * Boolean値を直接表示する選択肢の背景素材です。
+     *
+     * ON=LIME・OFF=GRAYは下部のチェックボックストグルと同じ色対応で、
+     * 選択中の白枠・設定済みの空色枠とは別チャネルとして値だけを示します。
+     * 無効な選択肢はDisabledChoiceVisualPolicyが優先します。
+     */
+    fun booleanChoiceMaterial(value: Boolean): Material =
+        if (value) Material.LIME_CONCRETE else Material.GRAY_CONCRETE
+
+    /**
+     * 設定選択肢の背景素材です。
+     * 無効な選択肢は選択肢専用ポリシー、Boolean表示は値色、それ以外は薄灰色です。
+     */
+    fun choiceMaterial(choice: GestureSettingTreeNode): Material = when {
+        !choice.enabled -> DisabledChoiceVisualPolicy.material
+        choice.toggleValue != null -> booleanChoiceMaterial(choice.toggleValue)
+        else -> material(choice.selectionMode, choice.valueState)
+    }
 
     /**
      * 選択状態と保存状態から設定カードの枠素材を決めます。
