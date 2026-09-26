@@ -35,6 +35,8 @@ import java.util.UUID
  * ワールド上で対象を直接選択し、選択後の操作は原則としてInventory GUIから行います。
  * 選択操作そのものと右クリックが競合する場合は、選択操作を優先します。
  * wand所持中のクリックは世界へ作用させず、常にキャンセルして選択操作にします。
+ * ただし、かんたんコマンダー制御ブロックへのスニーク右クリックだけは例外とし、
+ * バニラの使用・配置へ素通しするため横取りしません。
  *
  * かんたんコマンダーの使用権限と同期させるため、全てのwand操作は
  * 配置アクセス判定のALLOWを要求します。Chanpon側の提出ロック・バックアップ状態は
@@ -91,6 +93,14 @@ class OperationToolListener(
         if (event.hand != EquipmentSlot.HAND) return
         val player = event.player
         if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
+        // かんたんコマンダー制御ブロックへのスニーク右クリックは、KantanInteractionListenerが
+        // バニラの使用・配置へ素通しします。wandの選択操作で横取りせず、所有権をそちらへ寄せます。
+        // 非スニークはKantan側が先にキャンセルするため、ここへは到達しません。
+        if (player.isSneaking && event.action == Action.RIGHT_CLICK_BLOCK &&
+            event.clickedBlock?.let { plugin.placements.find(it.location) } != null
+        ) {
+            return
+        }
         if (!requireManage(player)) {
             event.isCancelled = true
             return

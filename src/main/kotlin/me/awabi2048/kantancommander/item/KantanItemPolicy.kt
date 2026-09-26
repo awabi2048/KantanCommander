@@ -8,10 +8,12 @@ enum class KantanItemAction {
 }
 
 /**
- * かんたんコマンダー制御ブロックはバニラのブロック配置（BlockPlaceEvent）で設置するため、手に持った操作は一切処理しない。
- * プログラムディスクは表示専用の成果物とし、単体右クリックから編集画面を開かない。
- * 空のかんたんコマンダー制御ブロックへの書き込みは、右クリック対象が配置物の場合にonInteract側で分岐する。
- * ディスクによる設置（Shift+右クリック）は仕様として廃止している。
+ * 手に持った単体操作だけでは何も処理しません。
+ * かんたんコマンダー制御ブロックの設置はバニラのブロック配置（BlockPlaceEvent）で行い、
+ * 配置物への右クリックはonInteract側でスニーク有無により振り分けます。
+ * スニーク中はバニラの使用・配置へ素通しし、非スニークは編集入口としてGUIを開きます。
+ * プログラムディスクは表示専用の成果物とし、単体右クリックから編集画面を開きません。
+ * ディスク自体の設置は仕様として扱いません。
  */
 object KantanItemPolicy {
     fun itemAction(kind: KantanItemKind, action: Action, sneaking: Boolean): KantanItemAction = KantanItemAction.NONE

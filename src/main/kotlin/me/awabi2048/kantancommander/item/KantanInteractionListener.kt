@@ -151,9 +151,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 sneaking = player.isSneaking,
                 editorGuiMode = editorGuiMode,
             )
-            // かんたんコマンダー制御ブロックを手に持った通常右クリックは、従来どおり
-            // バニラのブロック配置を優先します。スニーク時は同じアイテムを持っていても
-            // 環境に対応したエディターを開くため、この分岐へ進みます。
+            // スニーク中の右クリックはバニラの使用・配置へ素通しします。
+            // 非スニークの右クリックは編集入口であり、かんたんコマンダー制御ブロックを
+            // 手に持っていても配置ではなく環境に対応したエディターを開くため、この分岐へ進みます。
             if (placementInteraction == KantanPlacementInteraction.VANILLA_PLACE) return
             // GUIを開く経路はイベントと使用結果をキャンセルするため、バニラが送る腕振りが
             // 発生しません。実際に編集／ディスク挿入を受け付ける右クリックだけ、
@@ -385,6 +385,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     /**
      * 破壊時の後始末。内容をスポイト操作と同じプログラム入り制御ブロックとして出力し、
      * 表示・配置・スクリプトを削除する。
+     *
+     * 破壊者が同内容のプログラム入り制御ブロックを既に持つ場合は、重複付与しません。
      */
     private fun outputBlockAndRemove(player: Player, block: Block, placement: DiskPlacement) {
         val world = block.world
@@ -394,7 +396,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         var outputItem: org.bukkit.inventory.ItemStack? = null
         // ノードがなくても、名前またはタイマーを明示編集したスクリプトは出力します。
         // 内容がない場合のスキップは定型のため記録しません。
-        if (source?.hasDiskContent() == true) {
+        val duplicateHeld = source != null && source.hasDiskContent() &&
+            BlockProgramIdentity.alreadyHeld(player, source)
+        if (source?.hasDiskContent() == true && !duplicateHeld) {
             val copiedScript = runCatching { plugin.scripts.copyForItem(source) }.getOrElse {
                 // 複製失敗は内容なし破壊へ劣化するため、操作者へ異常系通知します。
                 // コンソールへは出しません。

@@ -57,7 +57,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "bfc980b2acd8b7ec4ed66debde9325e84ec0283ba7d384b54962bbe5ce8ac395"
+    "1f46d7a94f673e31e23537a4656e172620bdde9db85b798eb8a760dc6236310b"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -93,6 +93,9 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var testExecutionPreferences: TestExecutionPreferences
         private set
     lateinit var summonedEntities: SummonedEntityTracker
+        private set
+    /** 花火の飛行と破裂を本実行・試射で共有するサービスです。 */
+    lateinit var fireworkFlight: me.awabi2048.kantancommander.execution.FireworkFlightService
         private set
     lateinit var particleQuota: ParticleQuotaService
         private set
@@ -267,6 +270,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         particleQuota = ParticleQuotaService(limitProvider = {
             config.getInt("execution.max-particles-per-world-per-second", 600)
         })
+        fireworkFlight = me.awabi2048.kantancommander.execution.FireworkFlightService(this)
         executor = SequenceExecutor(this)
         testExecution = TestExecutionCoordinator(executor)
         testExecutionPreferences = TestExecutionPreferences(this)

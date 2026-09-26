@@ -162,6 +162,8 @@ class GestureEditorFacade(
             // issue #13: 編集開始時は presence を即時更新します。
             presence.open(state.scriptId, player.uniqueId)
             refreshPresenceFor()
+            // Axiom有効プレイヤーには、エディターを開くたび併用警告を表示します。
+            me.awabi2048.kantancommander.util.AxiomUsageWarning.warnIfActive(plugin, player)
         }
     }
 
