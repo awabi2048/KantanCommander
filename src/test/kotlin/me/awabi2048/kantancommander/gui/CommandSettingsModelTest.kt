@@ -527,6 +527,36 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `summon data field follows the per-property entries`() {
+        // issue #10: 表示フィールド名 "summonData" の実保存キーは
+        // summonData_<propertyId> です。件数があれば設定済み、空値は除外します。
+        val node = CommandType.SUMMON_ENTITY.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "summonData"))
+
+        node.params["summonData"] = "probevalue"
+        assertFalse(
+            CommandSettingsModel.isFieldConfigured(node, "summonData"),
+            "表示名そのもののparams値は保存経路ではないため未設定のままです",
+        )
+
+        CommandSettingsModel.setParameter(
+            node,
+            me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("ai"),
+            "false",
+        )
+        assertTrue(
+            CommandSettingsModel.isFieldConfigured(node, "summonData"),
+            "明示的なfalseも設定済みの個別値です",
+        )
+
+        node.params[me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("ai")] = ""
+        assertFalse(
+            CommandSettingsModel.isFieldConfigured(node, "summonData"),
+            "空値は未設定と同等に扱います",
+        )
+    }
+
+    @Test
     fun `literal params fields are display-consistent across all command types`() {
         // v17改名の再発防止試験です。同名キーの意味衝突（保存先と表示判定の
         // 不一致）を全種別×可視項目で機械検証します。構造値・複合項目は
@@ -543,6 +573,9 @@ class CommandSettingsModelTest {
             "fireworkContents",
             // issue #11: 設置位置（structurePlace）は構造値のため表示試験の対象外です。
             "structurePlace",
+            // issue #10: 召喚時個別設定は summonData_<propertyId> の複数キーへ
+            // 分散保存される複合項目のため、単一params値の探査は対象外です。
+            "summonData",
         )
         for (type in CommandType.entries) {
             val keys = CommandSettingsModel.visibleFields(type.newNode()).map { it.key }.toSet()

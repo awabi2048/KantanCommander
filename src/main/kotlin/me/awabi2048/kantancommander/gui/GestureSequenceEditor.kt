@@ -4087,7 +4087,9 @@ class GestureSequenceEditor(
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         if (SettingSpec.presentationFor(node, fieldKey, descriptor) != GesturePresentation.CHECKBOX) return
         val next = (!node.boolean(fieldKey)).toString()
-        updateSettingNode(player, settingContext) {
+        // 設定済み記録はタブのフィールドではなく、実際に反転したトグル対象の
+        // フィールドへ付けます。明示的なfalseも設定値として残せるようにします。
+        updateSettingNode(player, settingContext, configuredFields = setOf(fieldKey)) {
             CommandSettingsModel.setParameter(it, fieldKey, next)
         }
     }
@@ -7790,6 +7792,15 @@ class GestureSequenceEditor(
                     handleConditionRegion(player, settingContext, node, encoded)
                     return
                 }
+                // 制御ブロック状態の選択肢IDは「condition-control-block-state:<状態名>」の
+                // 形です。完全一致では到達しないため、接頭辞判定で状態名を取り出します。
+                if (encoded.startsWith("condition-control-block-state:")) {
+                    val controlState = runCatching { ControlBlockStateKind.valueOf(value) }.getOrNull() ?: return
+                    if (updateSettingNode(player, settingContext) {
+                            it.toggleControlBlockState(controlState)
+                        }) updateLower(player)
+                    return
+                }
                 when (encoded) {
                     "condition-target" -> {
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
@@ -7837,12 +7848,6 @@ class GestureSequenceEditor(
                                     else -> ""
                                 }
                                 CommandSettingsModel.setParameter(it, "sneaking", next)
-                            }) updateLower(player)
-                    }
-                    "condition-control-block-state" -> {
-                        val controlState = runCatching { ControlBlockStateKind.valueOf(value) }.getOrNull() ?: return
-                        if (updateSettingNode(player, settingContext) {
-                                it.toggleControlBlockState(controlState)
                             }) updateLower(player)
                     }
                     "condition-operator" -> {
@@ -8283,7 +8288,7 @@ class GestureSequenceEditor(
                                 val validationError = spec.validateInput(normalized)
                                 if (validationError != null) {
                                     KcI18n.text(player, validationError)
-                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(key)) {
+                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf("summonData")) {
                                         CommandSettingsModel.setParameter(it, key, normalized)
                                     }) {
                                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)

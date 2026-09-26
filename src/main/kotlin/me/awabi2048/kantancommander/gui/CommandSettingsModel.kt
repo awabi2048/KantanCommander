@@ -1791,6 +1791,10 @@ object CommandSettingsModel {
             // #30: 図形の終点・対角点は表示位置として独立タブで編集します。
             "geometryEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
+            // issue #10: 召喚時個別設定は summonData_<propertyId> の形式で保存されるため、
+            // 表示フィールド名 "summonData" の汎用分岐では判定できません。
+            // 1件でも有効な個別値があれば設定済みとします。
+            "summonData" -> EntityDataSchema.summonDataEntries(node.params).isNotEmpty()
             "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
             "executionPosition" -> isPositionSpecConfigured(node.executionPositionSpec)
             // issue #11: 建造物名・回転・反転・設置位置の明示設定です。

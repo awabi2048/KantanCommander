@@ -4402,7 +4402,8 @@ class GestureLowerPanel(
             SettingChoice(
                 "placeDestination:${destination.paramValue}",
                 KcI18n.text(player, destination.labelKey),
-                node.string("placeDestination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue,
+                // 未設定でも既定値（装備）と一致するため、明示設定がある場合だけ選択表示します。
+                explicitSelected(node, fieldKey, context.role, node.string("placeDestination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue),
             )
         }
         GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
