@@ -7,6 +7,7 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import net.kyori.adventure.text.Component
@@ -112,7 +113,7 @@ object DeclarativeTriggers {
             frame,
             body = data.description,
             detail = data.descriptionDetail,
-            centerX = 0.28,
+            centerX = GestureChoicePane.PARENT.centerX,
             hoverY = GestureLowerPanel.ACTION_DESCRIPTION_Y,
         )
         DeclarativeSettings.valueRowsSection(
@@ -128,7 +129,7 @@ object DeclarativeTriggers {
                 elementId = "lower-trigger-detail-confirm",
                 label = data.confirmLabel,
                 background = data.confirmBackground,
-                cx = 0.28,
+                cx = GestureChoicePane.PARENT.centerX,
                 cy = -0.47,
                 w = 0.92,
                 h = 0.08,

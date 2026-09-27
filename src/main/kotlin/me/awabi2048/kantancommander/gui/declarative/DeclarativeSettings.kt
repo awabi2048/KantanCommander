@@ -16,6 +16,7 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiItem
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
 import me.awabi2048.kantancommander.gui.GestureSettingVisualPolicy
@@ -88,7 +89,7 @@ data class SettingsChoiceCard(
     val labelWidth: Int,
     /** 旧ホバー規則の解決値をそのまま渡します。 */
     val hover: GestureGuiHoverText?,
-    /** 常設説明の置換要否です（子画面のみ true）。 */
+    /** 常設説明の置換要否です。設定候補カードは親子とも常設説明を置き換えます。 */
     val replacesDescription: Boolean,
     /** 視覚 ID の接頭辞です（例 setting-choice / position-target-choice）。 */
     val visualTag: String,
@@ -351,7 +352,7 @@ object DeclarativeSettings {
         nodes: MutableList<GestureGuiNode>,
         frame: ContentFrame,
         hint: Component,
-        x: Double = 0.28,
+        x: Double = GestureChoicePane.PARENT.centerX,
         y: Double = 0.20,
         id: String = "lower-hint",
     ) {
@@ -375,7 +376,7 @@ object DeclarativeSettings {
         frame: ContentFrame,
         body: Component,
         detail: DescriptionDetail?,
-        centerX: Double = 0.28,
+        centerX: Double = GestureChoicePane.PARENT.centerX,
         hoverY: Double = GestureLowerPanel.ACTION_DESCRIPTION_Y,
     ) {
         nodes += GestureGuiText(
@@ -554,13 +555,15 @@ object DeclarativeSettings {
         arrowBackgrounds: List<BlockData>,
         arrowGlyphs: List<Component>,
         status: Component,
+        arrowOffset: Double = 0.12,
+        arrowWidth: Double = 0.18,
     ) {
         require(arrowBackgrounds.size == 2 && arrowGlyphs.size == 2) {
             "pager requires exactly two arrows"
         }
         listOf(page - 1 to 0, page + 1 to 1).forEach { (targetPage, arrowIndex) ->
             val available = targetPage in 0 until pageCount
-            val x = centerX + if (arrowIndex == 0) -0.12 else 0.12
+            val x = centerX + if (arrowIndex == 0) -arrowOffset else arrowOffset
             appendActionCard(
                 nodes,
                 frame,
@@ -570,7 +573,7 @@ object DeclarativeSettings {
                     background = arrowBackgrounds[arrowIndex],
                     cx = x,
                     cy = centerY,
-                    w = 0.18,
+                    w = arrowWidth,
                     h = 0.10,
                     labelSize = 0.005,
                     labelWidth = 60,

@@ -8,8 +8,9 @@ import org.junit.jupiter.api.Test
 
 class DisabledChoiceVisualPolicyTest {
     @Test
-    fun `無効な選択肢は赤コンクリートと灰色文字へ統一されます`() {
-        assertEquals(Material.RED_CONCRETE, DisabledChoiceVisualPolicy.material)
+    fun `無効な選択肢は一般の無効部品と同じ素材と灰色文字へ統一されます`() {
+        assertEquals(Material.LIGHT_GRAY_TERRACOTTA, DisabledChoiceVisualPolicy.material)
+        assertEquals(DisabledGuiVisualPolicy.material, DisabledChoiceVisualPolicy.material)
         assertEquals(NamedTextColor.GRAY, DisabledChoiceVisualPolicy.textColor)
         assertEquals(GuiNameStyle.MUTED, DisabledChoiceVisualPolicy.nameStyle)
     }

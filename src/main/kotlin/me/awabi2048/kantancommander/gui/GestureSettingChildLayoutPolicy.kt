@@ -3,10 +3,12 @@ package me.awabi2048.kantancommander.gui
 import kotlin.math.floor
 
 /**
- * 設定候補の子画面で、戻る操作・通常候補・下揃え候補の配置領域を分けます。
+ * 設定候補カードのページ分割・縦配置を親画面（右ペイン）と子画面で共通に決めます。
  *
- * 戻るボタンを先に固定してその上を本文領域として扱うことで、候補数が増減しても
+ * 下端の操作行を先に固定してその上を本文領域として扱うことで、候補数が増減しても
  * 詳細設定や一時変数参照が戻る操作へ重ならない配置を保ちます。
+ * 操作行はページャーが左列・戻るが右列の範囲に固定し、ページ数や件数で変えません。
+ * X方向の寸法は [GestureChoicePane] が画面区分ごとに持ちます。
  */
 internal object GestureSettingChildLayoutPolicy {
     const val TOP_CHOICE_Y = 0.08
@@ -76,6 +78,84 @@ internal object GestureSettingChildLayoutPolicy {
     }
 
     private fun rowsFor(choiceCount: Int): Int = (choiceCount + COLUMN_COUNT - 1) / COLUMN_COUNT
+}
+
+/**
+ * 設定候補カード2列の画面区分ごとの横方向寸法です。
+ *
+ * 親画面（右ペイン）と子画面で列中心・カード幅だけが異なり、
+ * 縦配置・ページ分割は [GestureSettingChildLayoutPolicy] を共有します。
+ * 下端の操作行は「ページャー＝左列の範囲、戻る＝右列の範囲」に固定します。
+ */
+internal enum class GestureChoicePane(
+    val leftX: Double,
+    val rightX: Double,
+    val centerX: Double,
+    val cardWidth: Double,
+    val labelWidth: Int,
+    val pagerArrowLeftX: Double,
+    val pagerArrowRightX: Double,
+    val pagerArrowWidth: Double,
+    val pagerStatusX: Double,
+    val backX: Double,
+    val backWidth: Double,
+) {
+    /** 親画面の右ペインです。 */
+    PARENT(
+        leftX = -0.10,
+        rightX = 0.67,
+        centerX = 0.285,
+        cardWidth = 0.66,
+        labelWidth = 115,
+        pagerArrowLeftX = -0.33,
+        pagerArrowRightX = 0.13,
+        pagerArrowWidth = 0.20,
+        pagerStatusX = -0.10,
+        backX = 0.67,
+        backWidth = 0.66,
+    ),
+
+    /** タブ列のない子画面（全面）です。 */
+    CHILD(
+        leftX = -0.53,
+        rightX = 0.53,
+        centerX = 0.0,
+        cardWidth = 0.92,
+        labelWidth = 160,
+        pagerArrowLeftX = -0.85,
+        pagerArrowRightX = -0.21,
+        pagerArrowWidth = 0.28,
+        pagerStatusX = -0.53,
+        backX = 0.53,
+        backWidth = 0.92,
+    );
+
+    /** 列番号（0=左・1=右）のカード中心Xです。 */
+    fun columnX(column: Int): Double {
+        require(column in 0 until GestureSettingChildLayoutPolicy.COLUMN_COUNT) {
+            "設定候補の列番号は0または1です: $column"
+        }
+        return if (column == 0) leftX else rightX
+    }
+
+    /** 左列の左端から右列の右端までの幅です。2列全体へ広げる操作行に使います。 */
+    val columnsSpanWidth: Double
+        get() = rightX + cardWidth / 2.0 - (leftX - cardWidth / 2.0)
+
+    /**
+     * ページャー状態文字から左右矢印中心までのずらし幅です。
+     * `pagerSection` の「centerX±offset」形式で使います。
+     */
+    val pagerArrowOffset: Double
+        get() = pagerStatusX - pagerArrowLeftX
+
+    /** 左列カードの横範囲（左端・右端）です。 */
+    val leftColumnRange: ClosedFloatingPointRange<Double>
+        get() = (leftX - cardWidth / 2.0)..(leftX + cardWidth / 2.0)
+
+    /** 右列カードの横範囲（左端・右端）です。 */
+    val rightColumnRange: ClosedFloatingPointRange<Double>
+        get() = (rightX - cardWidth / 2.0)..(rightX + cardWidth / 2.0)
 }
 
 /** 設定経路の親フレーム数から、物理的に開く子画面の識別子を決めます。 */

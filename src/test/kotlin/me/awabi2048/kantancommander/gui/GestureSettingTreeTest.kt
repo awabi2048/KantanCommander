@@ -452,7 +452,7 @@ class GestureSettingTreeTest {
         )
         // 操作不能な選択肢はBoolean値よりも無効色を優先します。
         assertEquals(
-            org.bukkit.Material.RED_CONCRETE,
+            org.bukkit.Material.LIGHT_GRAY_TERRACOTTA,
             GestureSettingVisualPolicy.choiceMaterial(
                 GestureSettingTreeNode("summonData:ai", "AI", enabled = false, toggleValue = true),
             ),

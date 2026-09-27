@@ -9,16 +9,17 @@ import org.bukkit.Material
 
 /** 一般の操作不能なUI部品の見た目です。選択肢専用の表示はDisabledChoiceVisualPolicyを使います。 */
 internal object DisabledGuiVisualPolicy {
-    val material: Material = Material.LIGHT_GRAY_CONCRETE
+    val material: Material = Material.LIGHT_GRAY_TERRACOTTA
 }
 
 /**
  * 「選択肢だが現在の状態では選べない」項目の共通表示です。
- * 背景や単なる実行不能ボタンはDisabledGuiVisualPolicyのまま扱い、選択肢だけを
- * 赤コンクリートと灰色文字で明示します。両GUIで同じ意味を同じ外観へ投影します。
+ * 赤は警告・危険の意味に限るため、無効な選択肢は赤コンクリートを使わず、
+ * 一般の無効部品と同じ素材（DisabledGuiVisualPolicy）と灰色文字で示します。
+ * 両GUIで同じ意味を同じ外観へ投影します。
  */
 internal object DisabledChoiceVisualPolicy {
-    val material: Material = Material.RED_CONCRETE
+    val material: Material = DisabledGuiVisualPolicy.material
     val textColor: NamedTextColor = NamedTextColor.GRAY
     val nameStyle: GuiNameStyle = GuiNameStyle.MUTED
 
