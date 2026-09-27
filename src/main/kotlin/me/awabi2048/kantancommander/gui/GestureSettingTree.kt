@@ -247,7 +247,14 @@ internal object GestureSettingVisualPolicy {
     }
 }
 
-/** 木構造上の現在位置。表示状態と戻る経路を同じ値から復元します。 */
+/**
+ * 木構造上の選択記憶です。各深さの候補IDを保持し、戻る経路を復元します。
+ *
+ * 各要素は「その深さのフレームで最後に選択した候補ID」であり、現在画面の
+ * 識別子ではありません。現在画面は `settingRoute` 末尾の
+ * `GestureSettingFrame.screen`（＝`settingScreen`）だけを正本とし、
+ * 経路末尾の候補IDから推測しません。
+ */
 data class GestureSettingTreePath(
     val fieldKey: String,
     val role: CommandSettingRole?,
@@ -261,13 +268,36 @@ data class GestureSettingTreePath(
         return copy(nodeIds = ids)
     }
 
-    /** 子フレームへ進む経路を追加します。既に選択済みなら重複させません。 */
+    /** 子フレームへ進む契機となった親フレームの選択を経路へ記録します。既に選択済みなら重複させません。 */
     fun enterChild(nodeId: String): GestureSettingTreePath =
         if (nodeIds.lastOrNull() == nodeId) this else copy(nodeIds = nodeIds + nodeId)
 
     /** 親フレームへ戻るため、末尾の選択を一つ取り除きます。 */
     fun leaveChild(): GestureSettingTreePath = copy(nodeIds = nodeIds.dropLast(1))
 }
+
+/**
+ * 現在フレーム内で最後に選択された候補IDを返します。
+ *
+ * 経路末尾のIDは「現在画面」ではなく現在フレームの選択記憶です。
+ * 現在画面の判定は `settingRoute` 末尾のフレームで行い、この値は
+ * 同一項目の連続クリック判定と同階層の排他選択表示だけに使います。
+ * 未選択の子画面では、末尾に残る親フレームの候補IDを
+ * 現在フレームの選択へ誤用しないよう、現在の深さで読みます。
+ */
+fun GestureEditorState.currentFrameSelectionId(): String? =
+    settingTreePath?.nodeIds?.getOrNull(settingRoute.size - 1)
+
+/**
+ * 召喚時個別設定の有限候補子画面が対象とする項目IDを現在フレームから返します。
+ *
+ * 召喚には項目パス欄がないため、表示対象は保存値や経路末尾の候補IDから
+ * 推測できません。フレームへ明示的に保持した項目IDだけを根拠にします。
+ */
+fun GestureEditorState.currentSummonPropertyId(): String? =
+    settingRoute.lastOrNull()
+        ?.takeIf { it.screen == GestureSettingScreen.SUMMON_PROPERTY_VALUE }
+        ?.summonPropertyId
 
 /**
  * 設定木の直下項目を押した後の共通遷移です。
@@ -293,18 +323,6 @@ internal fun settingSelectionAction(
     GestureSettingInteractionMode.SELECT -> GestureSettingSelectionAction.STAY_ON_FRAME
     GestureSettingInteractionMode.DETAILS_ONLY -> GestureSettingSelectionAction.ENTER_CHILD
     GestureSettingInteractionMode.TOGGLE -> GestureSettingSelectionAction.STAY_ON_FRAME
-}
-
-/**
- * 召喚時個別設定で選択中の項目IDを経路末尾から復元します。
- *
- * 召喚には項目パス欄がないため、有限候補子画面の表示対象は保存値から
- * 決められません。親画面の行選択だけを根拠にし、接頭辞のない経路では
- * nullを返して空表示にします。
- */
-internal fun summonPropertyIdFromPath(pathLastNodeId: String?): String? {
-    if (pathLastNodeId == null || !pathLastNodeId.startsWith("summonData:")) return null
-    return pathLastNodeId.removePrefix("summonData:").takeIf(String::isNotBlank)
 }
 
 internal fun settingSelectionAction(
@@ -351,11 +369,19 @@ internal fun applyPathSelectionExclusive(
     }
 }
 
-/** 詳細子画面をまたぐための設定木上の1フレームです。 */
+/**
+ * 詳細子画面をまたぐための設定木上の1フレームです。
+ *
+ * `screen` が現在画面の正本であり、経路記憶（nodeIds）の候補IDで
+ * 現在画面を判定しません。子画面固有の対象（召喚時個別設定の項目ID等）は
+ * 経路末尾からの推測ではなく、フレームの明示的な値として保持します。
+ */
 data class GestureSettingFrame(
     val context: CommandSettingContext,
     val fieldKey: String,
     val screen: GestureSettingScreen,
+    /** 召喚時個別設定の有限候補子画面が対象とする項目IDです。 */
+    val summonPropertyId: String? = null,
 )
 
 /** 構造化設定エディターとジェスチャー画面の意味画面を結ぶ共通変換です。 */

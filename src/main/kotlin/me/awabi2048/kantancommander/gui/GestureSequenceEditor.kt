@@ -369,6 +369,8 @@ enum class GestureSettingScreen {
     TARGET,
     TARGET_FILTERS,
     POSITION,
+    /** 位置プリセット「マイワールドのスポーン位置」のスポーン種別子画面です。 */
+    MYWORLD_SPAWN_KIND,
     FACING,
     LOCATION,
     CONDITION_KIND,
@@ -7261,9 +7263,11 @@ class GestureSequenceEditor(
                     if (settingSelectionAction(wasSelected, interactionMode) ==
                         GestureSettingSelectionAction.ENTER_CHILD
                     ) {
+                        // 子選択肢を持つ位置プリセットは「マイワールドのスポーン位置」の
+                        // みです。子画面は経路末尾の候補IDではなく画面種別で識別します。
                         pushSettingFrame(
                             player,
-                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.POSITION),
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.MYWORLD_SPAWN_KIND),
                             encoded,
                         )
                         return
@@ -7339,24 +7343,6 @@ class GestureSequenceEditor(
                                 )
                             }) return
                     }
-                    showSettingScreen()
-                    return
-                }
-                // issue #29: スポーン種別の2択です。選択後は子画面内で表示だけを
-                // 切り替え、画面を閉じません。子画面を閉じる導線は戻る操作です。
-                if (group == "myworld-spawn") {
-                    val spawn = runCatching { MyworldSpawnKind.valueOf(value) }.getOrNull() ?: return
-                    rememberSettingNode(encoded)
-                    if (!updateSettingNode(player, settingContext) {
-                            val current = CommandSettingsModel.positionSpec(it, settingContext.role)
-                                ?.takeIf { base -> base.kind == PositionKind.MYWORLD_SPAWN }
-                                ?: PositionSpec(PositionKind.MYWORLD_SPAWN)
-                            CommandSettingsModel.setPositionSpec(
-                                it,
-                                settingContext.role,
-                                current.copy(kind = PositionKind.MYWORLD_SPAWN, myworldSpawn = spawn),
-                            )
-                        }) return
                     showSettingScreen()
                     return
                 }
@@ -7470,6 +7456,24 @@ class GestureSequenceEditor(
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setPositionSpec(it, settingContext.role, spec)
                     }) showSettingScreen()
+            }
+            // スポーン種別の2択画面です。候補のクリックは保存と選択表示の更新だけを
+            // 行い、同じ子画面へ留まります。位置一覧へ戻るのは戻る操作だけです。
+            GestureSettingScreen.MYWORLD_SPAWN_KIND -> {
+                if (group != "myworld-spawn") return
+                val spawn = runCatching { MyworldSpawnKind.valueOf(value) }.getOrNull() ?: return
+                rememberSettingNode(encoded)
+                if (!updateSettingNode(player, settingContext) {
+                        val current = CommandSettingsModel.positionSpec(it, settingContext.role)
+                            ?.takeIf { base -> base.kind == PositionKind.MYWORLD_SPAWN }
+                            ?: PositionSpec(PositionKind.MYWORLD_SPAWN)
+                        CommandSettingsModel.setPositionSpec(
+                            it,
+                            settingContext.role,
+                            current.copy(kind = PositionKind.MYWORLD_SPAWN, myworldSpawn = spawn),
+                        )
+                    }) return
+                showSettingScreen()
             }
             GestureSettingScreen.FACING -> {
                 // issue #29: 向きプリセットは1クリックで正規仕様へ設定します。
@@ -7966,7 +7970,7 @@ class GestureSequenceEditor(
                 // 項目選択と反転を同時に保存します。保存は1クリック1回に統一し、
                 // 同一ハンドラ内の連続保存によるリビジョン競合を作りません。
                 // 失敗時は経路記憶を更新せず、最新表示へ戻します。
-                val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
+                val consecutive = state.currentFrameSelectionId() == encoded
                 if (value == "attribute") {
                     val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
                     if (!consecutive) {
@@ -8228,7 +8232,7 @@ class GestureSequenceEditor(
                         }
                         return
                     }
-                    val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
+                    val consecutive = state.currentFrameSelectionId() == encoded
                     if (!consecutive) {
                         rememberSettingNode(encoded)
                         showSettingScreen()
@@ -8267,6 +8271,7 @@ class GestureSequenceEditor(
                             }
                         }
                         // 有限候補は子画面の選択肢で確定し、行自体のクリックでは保存しません。
+                        // 対象項目は経路末尾からの推測ではなくフレームへ明示します。
                         EntityPropertyValueKind.ENUM -> {
                             pushSettingFrame(
                                 player,
@@ -8274,6 +8279,7 @@ class GestureSequenceEditor(
                                     settingContext,
                                     "summonData",
                                     GestureSettingScreen.SUMMON_PROPERTY_VALUE,
+                                    summonPropertyId = value,
                                 ),
                                 encoded,
                             )
@@ -8469,7 +8475,7 @@ class GestureSequenceEditor(
                     if (targetType != ValueType.NUMBER) return
                 }
                 val wasSelectedInCurrentRoute =
-                    state.settingTreePath?.nodeIds?.lastOrNull() == encoded &&
+                    state.currentFrameSelectionId() == encoded &&
                         node.string("changeMode", VariableChangeMode.ASSIGN.name) == mode.name
                 val action = variableModeSelectionAction(mode, wasSelectedInCurrentRoute)
                 rememberSettingNode(encoded)

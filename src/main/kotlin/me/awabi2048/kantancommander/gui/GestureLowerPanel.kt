@@ -335,41 +335,30 @@ class GestureLowerPanel(
         } else {
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET))
         }
-        val pathLast = state.settingTreePath?.nodeIds?.lastOrNull()
+        // 現在画面は経路末尾の候補IDではなくフレームの画面種別で判定します。
+        // 子画面内で候補をクリックして経路末尾が変わっても、位置一覧等へ戻りません。
+        val currentSelection = state.currentFrameSelectionId()
         // タグ一覧はワールド変数子画面と同型の専用描画を使います。
         if (screen == GestureSettingScreen.ENTITY_TAG_LIST) {
             return buildEntityTagListChild(state, player, childScreenId)
         }
-        // スポーン種別の子画面では移動先選択の再掲ではなく、メンバー／ゲストの2択を示します。
-        val choices = if (screen == GestureSettingScreen.POSITION &&
-            pathLast == "position-preset:${SettingPresets.PositionPreset.MYWORLD_SPAWN.name}"
-        ) {
-            applyPathSelectionExclusive(
-                myworldSpawnChoices(
-                    CommandSettingsModel.positionSpec(node, context.role)?.myworldSpawn,
-                    player,
+        // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
+        val choices = applyPathSelectionExclusive(
+            settingTreeNodes(
+                node,
+                context,
+                screen,
+                fieldKey,
+                player,
+                attentionFields,
+                inChild = true,
+                detailVisited = state.detailVisitedKeys.contains(
+                    PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
                 ),
-                pathLast,
-            )
-        } else {
-            // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
-            applyPathSelectionExclusive(
-                settingTreeNodes(
-                    node,
-                    context,
-                    screen,
-                    fieldKey,
-                    player,
-                    attentionFields,
-                    inChild = true,
-                    detailVisited = state.detailVisitedKeys.contains(
-                        PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
-                    ),
-                    summonPropertyId = summonSelectedPropertyId(state),
-                ),
-                pathLast,
-            )
-        }
+                summonPropertyId = summonSelectedPropertyId(state),
+            ),
+            currentSelection,
+        )
         // HTML側でも候補の意味的な上下揃えを保ち、戻る操作の領域を先に予約します。
         // 下揃え候補はページを移動しても常に見えるため、詳細への経路を失いません。
         val topChoices = choices.filterNot { it.bottomAligned }
@@ -749,7 +738,7 @@ class GestureLowerPanel(
                 ),
                 summonPropertyId = summonSelectedPropertyId(state),
             ),
-            state.settingTreePath?.nodeIds?.lastOrNull(),
+            state.currentFrameSelectionId(),
         )
         // 候補の上下揃えとページ分割は子画面と同じ規格へ揃え、下揃え候補は
         // ページを移動しても常に表示します。案内対象は表示中の上段＋下揃えです。
@@ -2067,7 +2056,7 @@ class GestureLowerPanel(
                     ),
                     summonPropertyId = summonSelectedPropertyId(state),
                 ),
-                state.settingTreePath?.nodeIds?.lastOrNull(),
+                state.currentFrameSelectionId(),
             )
         }.orEmpty()
         // 候補の上下揃えとページ分割は子画面と同じ規格へ揃えます。上段は
@@ -3933,14 +3922,14 @@ class GestureLowerPanel(
     }
 
     /**
-     * 召喚時個別設定で選択中の項目IDを経路記憶から復元します。
+     * 召喚時個別設定で選択中の項目IDを現在フレームから復元します。
      *
      * 召喚には項目パス欄がないため、有限候補子画面の表示対象は保存値から
-     * 決められません。親画面の行選択だけを根拠にし、接頭辞のない経路では
-     * nullを返して空表示にします。
+     * 決められません。親画面の行選択をフレームへ明示的に保持し、
+     * 経路末尾の候補IDからは推測しません。
      */
     internal fun summonSelectedPropertyId(state: GestureEditorState): String? =
-        summonPropertyIdFromPath(state.settingTreePath?.nodeIds?.lastOrNull())
+        state.currentSummonPropertyId()
 
     /**
      * 生の選択肢へドメインの選択方式と値状態を付与します。
@@ -4291,7 +4280,7 @@ class GestureLowerPanel(
         player: Player,
         choiceId: String,
     ): Boolean {
-        if (state.settingTreePath?.nodeIds?.lastOrNull() == choiceId) return true
+        if (state.currentFrameSelectionId() == choiceId) return true
         val context = state.settingContext ?: return false
         val screen = state.settingScreen ?: return false
         val fieldKey = state.settingFieldKey ?: return false
@@ -4313,6 +4302,12 @@ class GestureLowerPanel(
         GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
         GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player, detailVisited = detailVisited)
+        // スポーン種別の2択子画面です。経路末尾の候補IDではなく画面種別で識別し、
+        // 子画面内の候補クリックで位置一覧へ戻りません。
+        GestureSettingScreen.MYWORLD_SPAWN_KIND -> myworldSpawnChoices(
+            CommandSettingsModel.positionSpec(node, context.role)?.myworldSpawn,
+            player,
+        )
         GestureSettingScreen.FACING -> facingChoices(node, context, player, detailVisited = detailVisited)
         // LOCATIONはrawSettingTreeNodesで位置・向きの親木を生成します。
         // ここは網羅性を保ちつつ、親木を単純な択一候補へ誤変換しないため空にします。

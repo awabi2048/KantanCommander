@@ -212,14 +212,50 @@ class GestureSettingTreeTest {
     }
 
     @Test
-    fun `summon child resolves its property only from the selected row`() {
-        // 召喚には項目パス欄がないため、有限候補子画面は経路記憶の行だけを根拠にします。
-        assertEquals("rabbit_type", summonPropertyIdFromPath("summonData:rabbit_type"))
-        // 接頭辞のない経路・空項目IDでは空表示にして、未知選択肢の保存経路を作りません。
-        assertNull(summonPropertyIdFromPath(null))
-        assertNull(summonPropertyIdFromPath("entityData:property:gravity"))
-        assertNull(summonPropertyIdFromPath("summonData:"))
-        assertNull(summonPropertyIdFromPath(""))
+    fun `summon child resolves its property only from the current frame`() {
+        // 召喚には項目パス欄がないため、有限候補子画面はフレームへ保持した項目IDだけを根拠にします。
+        val context = CommandSettingContext(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), null)
+        val parent = GestureSettingFrame(context, "summonData", GestureSettingScreen.SUMMON_DATA_ROOT)
+        val state = GestureEditorState(java.util.UUID.randomUUID(), null)
+            .apply { settingRoute = listOf(parent) }
+        assertNull(state.currentSummonPropertyId())
+        state.settingRoute = state.settingRoute + GestureSettingFrame(
+            context,
+            "summonData",
+            GestureSettingScreen.SUMMON_PROPERTY_VALUE,
+            summonPropertyId = "rabbit_type",
+        )
+        assertEquals("rabbit_type", state.currentSummonPropertyId())
+        // 経路末尾が候補IDへ変わっても、現在フレームの対象項目を誤認しません。
+        state.settingTreePath = GestureSettingTreePath(
+            "summonData",
+            null,
+            listOf("summonData:rabbit_type", "summonDataValue:rabbit_type:white"),
+        )
+        assertEquals("rabbit_type", state.currentSummonPropertyId())
+    }
+
+    @Test
+    fun `current frame selection reads the current depth instead of the route tail`() {
+        val context = CommandSettingContext(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), null)
+        val state = GestureEditorState(java.util.UUID.randomUUID(), null)
+        // 位置画面からスポーン種別の子画面へ進んだ直後は、現在フレームの選択を
+        // 持ちません。末尾に残る親の候補IDを現在フレームの選択へ誤用しません。
+        state.settingRoute = listOf(
+            GestureSettingFrame(context, "position", GestureSettingScreen.POSITION),
+            GestureSettingFrame(context, "position", GestureSettingScreen.MYWORLD_SPAWN_KIND),
+        )
+        state.settingTreePath = GestureSettingTreePath(
+            "position",
+            null,
+            listOf("position-preset:MYWORLD_SPAWN"),
+        )
+        assertNull(state.currentFrameSelectionId())
+        // 現在画面は経路末尾の候補IDではなくフレームの画面種別です。
+        assertSame(GestureSettingScreen.MYWORLD_SPAWN_KIND, state.settingRoute.last().screen)
+        // 子画面内で候補を選択すると、現在フレームの深さに候補IDが記録されます。
+        state.settingTreePath = state.settingTreePath!!.selectAtDepth(1, "myworld-spawn:GUEST")
+        assertEquals("myworld-spawn:GUEST", state.currentFrameSelectionId())
     }
 
     @Test
