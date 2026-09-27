@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.item.KantanItemKind
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.EventTriggerArguments
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.SavedLocation
@@ -221,6 +223,8 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
         // willAttack=false はPaperが初めからキャンセルする場合があるため、クリックとして扱います。
         if (event.willAttack() && event.isCancelled) return
         val damager = event.player
+        // wand所持中の攻撃は選択操作であり、Entityは実際に攻撃されないため起動対象にしません。
+        if (KantanItemService.kind(damager.inventory.itemInMainHand) == KantanItemKind.WAND) return
         fire(
             EventTriggerKind.ENTITY_CLICK,
             damager.world,
@@ -255,6 +259,9 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
     fun onBlockInteract(event: PlayerInteractEvent) {
         val clicked = event.clickedBlock
         if (event.hand != EquipmentSlot.HAND) return
+        // wand所持中のクリックは選択操作であり、空中右クリックはメニュー操作です。
+        // AIR経路はキャンセル判定を通らないため、利用者スクリプトの起動対象から外します。
+        if (KantanItemService.kind(event.player.inventory.itemInMainHand) == KantanItemKind.WAND) return
         val side = when (event.action) {
             Action.LEFT_CLICK_BLOCK -> TriggerClickSide.LEFT
             Action.RIGHT_CLICK_BLOCK, Action.RIGHT_CLICK_AIR -> TriggerClickSide.RIGHT

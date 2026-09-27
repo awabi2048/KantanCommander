@@ -23,6 +23,22 @@ class OperationToolSessionTest {
         assertFalse(session.hasValidArea())
         assertEquals(OperationToolMode.ENTITY_DIRECT, session.mode.next())
         assertEquals(OperationToolMode.AREA, OperationToolMode.ENTITY_DIRECT.next())
+        assertEquals(OperationToolMode.ENTITY_DIRECT, OperationToolMode.AREA.previous())
+        assertEquals(OperationToolMode.ENTITY_RANGE, OperationToolMode.ENTITY_DIRECT.previous())
+        assertEquals(OperationToolMode.AREA, OperationToolMode.ENTITY_RANGE.previous())
+    }
+
+    @Test
+    fun `selection state reports world bound leftovers`() {
+        val session = OperationToolSession()
+        assertFalse(session.hasSelectionState())
+        session.setPos1(point("world", 0.0, 0.0, 0.0))
+        assertTrue(session.hasSelectionState())
+        session.clearAll()
+        session.addEntities(listOf(UUID.randomUUID()))
+        assertTrue(session.hasSelectionState())
+        session.clearAll()
+        assertFalse(session.hasSelectionState())
     }
 
     @Test

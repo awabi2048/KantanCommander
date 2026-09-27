@@ -12,8 +12,8 @@ import java.util.UUID
  * 履歴として保持します。左クリックUndoはこの履歴のみ対象とし、タグ変更・
  * 削除・Group作成・Structure保存等のdomain操作は取り消しません。
  *
- * 選択状態の解除は、サーバー再起動（session破棄）・モード変更・明示的全解除の
- * 場合に限ります。ツールの持ち替え・GUI閉鎖等だけでは解除しません。
+ * 選択状態の解除は、サーバー再起動（session破棄）・モード変更・ワールド移動・
+ * 明示的全解除の場合に限ります。ツールの持ち替え・GUI閉鎖等だけでは解除しません。
  */
 class OperationToolSession(
     /** Entity最大選択数です。EasyArmorStandsと初期値を揃え、設定値として扱います。 */
@@ -41,6 +41,15 @@ class OperationToolSession(
 
     /** 現在のEntity選択集合のスナップショットです。 */
     fun selected(): Set<UUID> = selectedEntities.toSet()
+
+    /**
+     * ワールドへ紐付く選択状態（Entity選択・エリア指定・未確定Box）が残っているかを返します。
+     *
+     * ワールド移動時の解除判定に使います。選択Undo履歴だけが残っている状態は
+     * 対象Entityを持たないためfalseとし、通知なしに解除できます。
+     */
+    fun hasSelectionState(): Boolean =
+        selectedEntities.isNotEmpty() || pos1 != null || pos2 != null || editingBox != null
 
     /** 選択Undo履歴の深さです。 */
     fun undoDepth(): Int = undoHistory.size

@@ -2,12 +2,14 @@ package me.awabi2048.kantancommander.operationtool
 
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.item.KantanItemKind
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.toSpatialVector
 import net.kyori.adventure.text.format.NamedTextColor
+import org.bukkit.Bukkit
 import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
@@ -17,6 +19,7 @@ import org.bukkit.event.block.Action
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockDamageEvent
 import org.bukkit.event.entity.PlayerDeathEvent
+import org.bukkit.event.player.PlayerChangedWorldEvent
 import org.bukkit.event.player.PlayerDropItemEvent
 import org.bukkit.event.player.PlayerInteractEntityEvent
 import org.bukkit.event.player.PlayerInteractEvent
@@ -49,13 +52,22 @@ class OperationToolListener(
     /** 操作可能なEntityの判定です。既存domainの判定を複製せず共有predicateとして扱います。 */
     private val isOperable: (operator: Player, entity: Entity) -> Boolean = { operator, entity ->
         entity.isValid && !entity.isDead &&
+            entity !is Player &&
             entity.world.uid == operator.world.uid &&
-            entity.uniqueId != operator.uniqueId &&
             !isSystemEntity(entity)
     },
 ) : Listener {
     private var editTask: BukkitTask? = null
     private val lastCandidateCounts = mutableMapOf<UUID, Int>()
+
+    /**
+     * Entity右クリックを処理したtickです。
+     *
+     * クライアントはEntity右クリック時にinteractパケットへ続けてuse_itemパケットも
+     * 送るため、同一tickにPlayerInteractEvent(RIGHT_CLICK_AIR/BLOCK)が追加発火します。
+     * その重複分だけを抑止するため、処理済みtickを記録します。
+     */
+    private val entityClickTicks = mutableMapOf<UUID, Int>()
 
     /** Box選択開始時の基準点距離です。視点から視線方向へ進んだ点を端点とします。 */
     private val boxReach = 2.0
@@ -69,6 +81,7 @@ class OperationToolListener(
         editTask?.cancel()
         editTask = null
         lastCandidateCounts.clear()
+        entityClickTicks.clear()
         displays.removeAll()
         sessions.clear()
     }
@@ -88,11 +101,29 @@ class OperationToolListener(
         }
     }
 
+    // wand所持中のEntity攻撃は選択操作と誤認される上に対象を破壊し得るため抑止します。
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    fun onAttack(event: PrePlayerAttackEntityEvent) {
+        if (KantanItemService.kind(event.player.inventory.itemInMainHand) == KantanItemKind.WAND) {
+            event.isCancelled = true
+        }
+    }
+
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onInteract(event: PlayerInteractEvent) {
-        if (event.hand != EquipmentSlot.HAND) return
         val player = event.player
         if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
+        // メインへwandを持つ間はオフハンドの使用・配置も世界へ作用させません。
+        if (event.hand == EquipmentSlot.OFF_HAND) {
+            event.isCancelled = true
+            return
+        }
+        if (event.hand != EquipmentSlot.HAND) return
+        // Entity右クリックの直後に同一tickで発火する重複分を抑止します。
+        if (event.action.isRightClick && entityClickTicks[player.uniqueId] == Bukkit.getCurrentTick()) {
+            event.isCancelled = true
+            return
+        }
         // かんたんコマンダー制御ブロックへのスニーク右クリックは、KantanInteractionListenerが
         // バニラの使用・配置へ素通しします。wandの選択操作で横取りせず、所有権をそちらへ寄せます。
         // 非スニークはKantan側が先にキャンセルするため、ここへは到達しません。
@@ -116,9 +147,16 @@ class OperationToolListener(
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onInteractEntity(event: PlayerInteractEntityEvent) {
-        if (event.hand != EquipmentSlot.HAND) return
         val player = event.player
         if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
+        // メインへwandを持つ間はオフハンドのEntity操作も世界へ作用させません。
+        if (event.hand == EquipmentSlot.OFF_HAND) {
+            event.isCancelled = true
+            return
+        }
+        if (event.hand != EquipmentSlot.HAND) return
+        // 同一tickのuse_item由来PlayerInteractEventを重複処理しないよう記録します。
+        entityClickTicks[player.uniqueId] = Bukkit.getCurrentTick()
         if (!requireManage(player)) {
             event.isCancelled = true
             return
@@ -145,6 +183,7 @@ class OperationToolListener(
     /**
      * スニーク + スクロールでモードを切り替えます。
      *
+     * スクロールの向きで循環方向を変えます（下:次のモード / 上:前のモード）。
      * 番号キー等による大きなスロット移動はスクロールとみなさず、持ち替えとして
      * 選択を保持します。切替時はスロットを維持するためイベントをキャンセルします。
      * wandを手から離した場合は編集中Boxを解除します（確定済み選択は保持）。
@@ -161,7 +200,8 @@ class OperationToolListener(
                 return
             }
             val session = sessions.getOrCreate(player.uniqueId)
-            session.setMode(session.mode.next())
+            val forward = isScrollForward(event.previousSlot, event.newSlot)
+            session.setMode(if (forward) session.mode.next() else session.mode.previous())
             displays.clear(player.uniqueId)
             lastCandidateCounts.remove(player.uniqueId)
             // モード切替のチャット通知は行わず、ActionBarの状態表示のみ残します。
@@ -205,11 +245,11 @@ class OperationToolListener(
     /**
      * Fキー入替でwandがメインハンドから外れた場合は編集中Boxを解除します。
      *
-     * 入替後のメインハンド（現在のオフハンド）で判定します。
+     * 入替後のメインハンド（入替前のオフハンド）で判定します。
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onSwapHands(event: PlayerSwapHandItemsEvent) {
-        cancelEditingIfHandLeft(event.player, event.offHandItem)
+        cancelEditingIfHandLeft(event.player, event.mainHandItem)
     }
 
     /**
@@ -234,6 +274,8 @@ class OperationToolListener(
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
+        entityClickTicks.remove(event.player.uniqueId)
+        plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -241,12 +283,43 @@ class OperationToolListener(
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
+        entityClickTicks.remove(event.player.uniqueId)
+        plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
+    }
+
+    /**
+     * ワールド移動時は選択状態を解除します。
+     *
+     * Entity選択・エリア指定・確定表示は選択時のワールドへ紐付くため、
+     * 別ワールドへ持ち越すと見えない選択への操作や別ワールド権限での
+     * 実行につながります。移動時に明示通知つきで解除します。
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onWorldChange(event: PlayerChangedWorldEvent) {
+        val session = sessions.get(event.player.uniqueId) ?: return
+        if (!session.hasSelectionState()) return
+        session.clearAll()
+        displays.clear(event.player.uniqueId)
+        lastCandidateCounts.remove(event.player.uniqueId)
+        OperationToolFeedback.notifyKey(
+            event.player, session,
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_CLEARED,
+            emptyMap(),
+            NamedTextColor.YELLOW,
+        )
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onJoin(event: PlayerJoinEvent) {
         // 表示は操作者専用のため、参加者から他者のBox表示を隠します。
         displays.hideFrom(event.player.uniqueId)
+        // ログアウトで破棄された表示のうち、同ワールドのエリア指定だけを復元します。
+        val playerId = event.player.uniqueId
+        plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            val player = plugin.server.getPlayer(playerId) ?: return@Runnable
+            val session = sessions.get(playerId) ?: return@Runnable
+            updateAreaDisplay(player, session)
+        }, 1L)
     }
 
     private fun onLeftClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
@@ -312,6 +385,13 @@ class OperationToolListener(
                 // 対象Entityを指していない状態での右クリックはEntity操作GUIを開きます。
                 if (session.selected().isNotEmpty()) {
                     plugin.operationMenu.openEntity(player)
+                } else {
+                    OperationToolFeedback.notifyKey(
+                        player, session,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_NO_SELECTION,
+                        emptyMap(),
+                        NamedTextColor.YELLOW,
+                    )
                 }
             }
         }
@@ -370,6 +450,13 @@ class OperationToolListener(
         if (session.selected().isNotEmpty()) {
             // Box非編集中かつ選択済みの右クリックはEntity操作GUIを開きます。
             plugin.operationMenu.openEntity(player)
+        } else {
+            OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_NO_SELECTION,
+                emptyMap(),
+                NamedTextColor.YELLOW,
+            )
         }
     }
 
@@ -399,7 +486,10 @@ class OperationToolListener(
             return
         }
         val candidates = collectOverlapping(player, minimum, maximum)
-        session.retainExisting { id -> player.world.entities.any { it.uniqueId == id && it.isValid && !it.isDead } }
+        session.retainExisting { id ->
+            val entity = plugin.server.getEntity(id) ?: return@retainExisting true
+            entity.isValid && !entity.isDead
+        }
         val added = session.addEntities(candidates)
         session.cancelBoxEdit()
         lastCandidateCounts.remove(player.uniqueId)
@@ -469,7 +559,9 @@ class OperationToolListener(
             val session = sessions.get(player.uniqueId) ?: continue
             val box = session.editingBox ?: continue
             active = true
-            if (box.worldName != player.world.name) {
+            if (box.worldName != player.world.name ||
+                KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND
+            ) {
                 session.cancelBoxEdit()
                 displays.dropEditing(player.uniqueId)
                 lastCandidateCounts.remove(player.uniqueId)
@@ -494,7 +586,12 @@ class OperationToolListener(
             val count = collectOverlapping(player, minimum, maximum).count { !session.selected().contains(it) }
             if (lastCandidateCounts[player.uniqueId] != count) {
                 lastCandidateCounts[player.uniqueId] = count
-                OperationToolFeedback.showStatus(player, session)
+                OperationToolFeedback.notifyKey(
+                    player, session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_CANDIDATES,
+                    mapOf("count" to count),
+                    NamedTextColor.AQUA,
+                )
             }
         }
         if (!active) {
@@ -531,43 +628,14 @@ class OperationToolListener(
         }
 
         /**
-         * 視線RayとAABBの交差距離を返します。交差しない場合はnullです。
+         * スクロール移動がスロット増加方向かどうかを返します。
          *
-         * 直接選択モードで視点から最も手前のEntityを選ぶために使います。
-         * 高精度モデルHit Testは使用しません。
+         * ホイールを下へ回した増加方向（8→0の循環を含む）を次のモード、
+         * 上へ回した減少方向を前のモードへ対応付けます。
+         * [isScrollStep] がtrueの移動だけを対象とします。
          */
-        fun rayAabbDistance(
-            origin: SpatialVector,
-            direction: SpatialVector,
-            minimum: SpatialVector,
-            maximum: SpatialVector,
-        ): Double? {
-            var nearest = Double.NEGATIVE_INFINITY
-            var farthest = Double.POSITIVE_INFINITY
-            val origins = doubleArrayOf(origin.x, origin.y, origin.z)
-            val directions = doubleArrayOf(direction.x, direction.y, direction.z)
-            val minimums = doubleArrayOf(minimum.x, minimum.y, minimum.z)
-            val maximums = doubleArrayOf(maximum.x, maximum.y, maximum.z)
-            for (axis in 0..2) {
-                val dir = directions[axis]
-                if (kotlin.math.abs(dir) < 1e-9) {
-                    if (origins[axis] < minimums[axis] || origins[axis] > maximums[axis]) return null
-                    continue
-                }
-                var near = (minimums[axis] - origins[axis]) / dir
-                var far = (maximums[axis] - origins[axis]) / dir
-                if (near > far) {
-                    val swapped = near
-                    near = far
-                    far = swapped
-                }
-                nearest = kotlin.math.max(nearest, near)
-                farthest = kotlin.math.min(farthest, far)
-                if (nearest > farthest) return null
-            }
-            if (farthest < 0.0) return null
-            return if (nearest >= 0.0) nearest else 0.0
-        }
+        fun isScrollForward(previousSlot: Int, newSlot: Int): Boolean =
+            (newSlot - previousSlot + 9) % 9 == 1
 
         /**
          * CC-Systemのシステム実体かどうかを返します。

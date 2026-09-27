@@ -6,7 +6,7 @@ import com.awabi2048.ccsystem.api.localization.LocalizationKey
 /**
  * issue #14の操作ツールwandの選択モードです。
  *
- * スニーク + スクロールで [next] の順に循環します。モード変更時は
+ * スニーク + スクロールで [next] / [previous] の順に循環します。モード変更時は
  * その時点の選択状態と選択Undo履歴を解除します（[OperationToolSession.setMode]）。
  */
 enum class OperationToolMode {
@@ -19,11 +19,18 @@ enum class OperationToolMode {
     /** 視線上のEntityを直接選択します。常に加算型です。 */
     ENTITY_DIRECT;
 
-    /** スニーク + スクロールでの次のモードです。 */
+    /** スニーク + スクロール（下）での次のモードです。 */
     fun next(): OperationToolMode = when (this) {
         AREA -> ENTITY_RANGE
         ENTITY_RANGE -> ENTITY_DIRECT
         ENTITY_DIRECT -> AREA
+    }
+
+    /** スニーク + スクロール（上）での前のモードです。 */
+    fun previous(): OperationToolMode = when (this) {
+        AREA -> ENTITY_DIRECT
+        ENTITY_RANGE -> AREA
+        ENTITY_DIRECT -> ENTITY_RANGE
     }
 
     /** モード表示名の言語キーです。固定ラベルと可変値を結合しません。 */

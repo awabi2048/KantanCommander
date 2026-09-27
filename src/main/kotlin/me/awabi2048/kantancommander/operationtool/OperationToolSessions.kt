@@ -7,8 +7,8 @@ import java.util.concurrent.ConcurrentHashMap
  * issue #14の操作ツールwandのセッション管理です。
  *
  * プレイヤー単位に [OperationToolSession] を保持します。サーバー再起動時は
- * プラグイン無効化で破棄され、選択状態は解除されます。ログアウト・ワールド移動
- * だけでは破棄しません。
+ * プラグイン無効化で破棄され、選択状態は解除されます。ログアウトだけでは
+ * 破棄しませんが、ワールド移動時はListener側で選択状態を解除します。
  */
 class OperationToolSessions(
     /** Entity最大選択数です。設定値として扱い、セッション作成時に適用します。 */

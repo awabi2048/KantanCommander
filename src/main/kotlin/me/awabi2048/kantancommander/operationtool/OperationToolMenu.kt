@@ -60,17 +60,24 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     fun openArea(player: Player) {
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return
         if (!session.hasValidArea()) return
-        if (!plugin.placementAccess.requireManage(player, player.world.name)) return
+        // 権限は現在ワールドではなく選択エリアのあるワールドで判定します。
+        val first = session.pos1 ?: return
+        if (!plugin.placementAccess.requireManage(player, first.worldName)) return
         runtime.open(player, MenuRoute(OWNER, AREA_MENU_ID, emptyMap()))
     }
 
     /** Entity操作GUIを開きます。選択が空の場合は何もしません。 */
     fun openEntity(player: Player) {
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return
-        pruneVanished(player, session)
+        resolveTargets(player, session)
         if (session.selected().isEmpty()) return
         if (!plugin.placementAccess.requireManage(player, player.world.name)) return
         runtime.open(player, MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap()))
+    }
+
+    /** 応答待ちダイアログのトークンを破棄します。ログアウト・キック時に呼び出します。 */
+    fun clearPendingDialog(playerId: UUID) {
+        pendingDialogs.remove(playerId)
     }
 
     private fun areaDefinition(): InventoryMenuDefinition = InventoryMenuDefinition(
@@ -83,7 +90,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 showStructureDialog(context.player)
                 MenuActionResult.Success(MenuUpdate.None)
             },
-            ACTION_CLOSE to MenuActionHandler { MenuActionResult.Success(MenuUpdate.Close) },
         ),
     )
 
@@ -112,7 +118,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 showGroupDialog(context.player)
                 MenuActionResult.Success(MenuUpdate.None)
             },
-            ACTION_CLOSE to MenuActionHandler { MenuActionResult.Success(MenuUpdate.Close) },
         ),
     )
 
@@ -174,7 +179,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         if (count > 0) {
             val actions = listOf(
                 Triple(ACTION_TAG_ADD, Material.NAME_TAG, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_TAG_ADD),
-                Triple(ACTION_TAG_REMOVE, Material.NAME_TAG, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_TAG_REMOVE),
+                Triple(ACTION_TAG_REMOVE, Material.SHEARS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_TAG_REMOVE),
                 Triple(ACTION_DELETE, Material.LAVA_BUCKET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_ENTITY_DELETE),
                 Triple(ACTION_GROUP_CREATE, Material.CHEST, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_GROUP_CREATE),
             )
@@ -216,8 +221,14 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 confirm = MenuDialogButton(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
                     MenuDialogHandler { target, response ->
+                        val name = response.textValue(INPUT_NAME).trim()
+                        if (!StructureStore.NAME_PATTERN.matches(name)) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(
+                                validationComponent(target, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME),
+                            )
+                        }
                         if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
-                        saveStructure(target, response.textValue(INPUT_NAME).trim())
+                        saveStructure(target, name)
                     },
                 ),
                 cancel = MenuDialogButton(
@@ -232,17 +243,14 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun saveStructure(player: Player, name: String): MenuActionResult {
-        if (!checkManage(player)) return MenuActionResult.Ignored
-        if (!StructureStore.NAME_PATTERN.matches(name)) {
-            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME, emptyMap(), NamedTextColor.RED)
-            return MenuActionResult.Success(MenuUpdate.None)
-        }
         val session = plugin.operationTool.sessions().get(player.uniqueId)
         val bounds = session?.areaBounds()
         val first = session?.pos1
         if (bounds == null || first == null) {
             return MenuActionResult.Success(MenuUpdate.Close)
         }
+        // 権限は現在ワールドではなく保存対象エリアのワールドで判定します。
+        if (!plugin.placementAccess.requireManage(player, first.worldName)) return MenuActionResult.Ignored
         val world = plugin.server.getWorld(first.worldName) ?: run {
             feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED, emptyMap(), NamedTextColor.RED)
             return MenuActionResult.Success(MenuUpdate.Close)
@@ -287,8 +295,14 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 confirm = MenuDialogButton(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
                     MenuDialogHandler { target, response ->
+                        val tag = response.textValue(INPUT_TAG).trim()
+                        if (!CommandValueRules.isTag(tag)) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(
+                                validationComponent(target, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_TAG),
+                            )
+                        }
                         if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
-                        applyTag(target, response.textValue(INPUT_TAG).trim(), add)
+                        applyTag(target, tag, add)
                     },
                 ),
                 cancel = MenuDialogButton(
@@ -310,12 +324,8 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
      */
     private fun applyTag(player: Player, tag: String, add: Boolean): MenuActionResult {
         if (!checkManage(player)) return MenuActionResult.Ignored
-        if (!CommandValueRules.isTag(tag)) {
-            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_TAG, emptyMap(), NamedTextColor.RED)
-            return MenuActionResult.Success(MenuUpdate.None)
-        }
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return MenuActionResult.Success(MenuUpdate.Close)
-        val targets = pruneVanished(player, session)
+        val targets = resolveTargets(player, session)
         var applied = 0
         targets.forEach { entity ->
             val done = runCatching {
@@ -332,7 +342,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun showDeleteDialog(player: Player) {
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return
-        val count = pruneVanished(player, session).size
+        val count = resolveTargets(player, session).size
         if (count == 0) {
             runtime.open(player, MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap()))
             return
@@ -369,12 +379,12 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     private fun deleteSelected(player: Player): MenuActionResult {
         if (!checkManage(player)) return MenuActionResult.Ignored
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return MenuActionResult.Success(MenuUpdate.Close)
-        val targets = pruneVanished(player, session)
+        val targets = resolveTargets(player, session)
         var removed = 0
         targets.forEach { entity ->
             if (runCatching { entity.remove() }.isSuccess) removed++
         }
-        pruneVanished(player, session)
+        resolveTargets(player, session)
         feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_ENTITIES_DELETED, mapOf("count" to removed), NamedTextColor.YELLOW)
         return MenuActionResult.Success(MenuUpdate.Replace(MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap())))
     }
@@ -401,8 +411,19 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 confirm = MenuDialogButton(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
                     MenuDialogHandler { target, response ->
+                        val name = response.textValue(INPUT_NAME).trim()
+                        val invalid = when {
+                            name.isBlank() || name.length > 64 ->
+                                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_GROUP_NAME
+                            plugin.entityGroups.exists(name) ->
+                                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_EXISTS
+                            else -> null
+                        }
+                        if (invalid != null) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(validationComponent(target, invalid))
+                        }
                         if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
-                        createGroup(target, response.textValue(INPUT_NAME).trim())
+                        createGroup(target, name)
                     },
                 ),
                 cancel = MenuDialogButton(
@@ -425,16 +446,8 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
      */
     private fun createGroup(player: Player, name: String): MenuActionResult {
         if (!checkManage(player)) return MenuActionResult.Ignored
-        if (name.isBlank() || name.length > 64) {
-            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_GROUP_NAME, emptyMap(), NamedTextColor.RED)
-            return MenuActionResult.Success(MenuUpdate.None)
-        }
-        if (plugin.entityGroups.exists(name)) {
-            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_EXISTS, emptyMap(), NamedTextColor.RED)
-            return MenuActionResult.Success(MenuUpdate.None)
-        }
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return MenuActionResult.Success(MenuUpdate.Close)
-        val targets = pruneVanished(player, session)
+        val targets = resolveTargets(player, session)
         if (targets.isEmpty()) return MenuActionResult.Success(MenuUpdate.Close)
         val centers = targets.map { entity ->
             val box = entity.boundingBox
@@ -462,21 +475,25 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_EXISTS, emptyMap(), NamedTextColor.RED)
             MenuActionResult.Success(MenuUpdate.None)
         } else {
-            MenuActionResult.Success(MenuUpdate.Close)
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_FAILED, emptyMap(), NamedTextColor.RED)
+            MenuActionResult.Success(MenuUpdate.None)
         }
     }
 
     /**
-     * 操作直前に消失Entityを選択集合から外し、生存Entityを返します。
+     * 選択集合のうち現在ワールドで操作可能なEntityを返します。
      *
-     * 消失は無視して成功可能なものだけを実行するため、全操作の入口で呼び出します。
+     * ロード済みで死亡・無効が確認できたEntityのみ選択集合から外し、未ロードや
+     * 別ワールドで解決できないEntityは選択へ残します。消失は無視して成功可能な
+     * ものだけを実行するため、全操作の入口で呼び出します。
      */
-    private fun pruneVanished(player: Player, session: OperationToolSession): List<Entity> {
-        val world = player.world
-        session.retainExisting { id -> world.entities.any { it.uniqueId == id && it.isValid && !it.isDead } }
-        return session.selected().mapNotNull { id ->
-            world.entities.firstOrNull { it.uniqueId == id && it.isValid && !it.isDead }
+    private fun resolveTargets(player: Player, session: OperationToolSession): List<Entity> {
+        session.retainExisting { id ->
+            val entity = plugin.server.getEntity(id) ?: return@retainExisting true
+            entity.isValid && !entity.isDead
         }
+        return session.selected().mapNotNull { plugin.server.getEntity(it) }
+            .filter { it.isValid && !it.isDead && it.world.uid == player.world.uid }
     }
 
     private fun checkManage(player: Player): Boolean =
@@ -500,6 +517,17 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     private fun takeDialog(player: Player, dialogId: String): Boolean =
         pendingDialogs.remove(player.uniqueId) == dialogId && player.isOnline
 
+    /**
+     * ダイアログ入力の検証失敗文言です。
+     *
+     * [MenuActionResult.Rejected] へ渡すと、入力値を初期値として引き継いだ
+     * 同一ダイアログが再表示され、本文末尾へこの文言が添えられます。
+     */
+    private fun validationComponent(
+        player: Player,
+        key: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>,
+    ): Component = Component.text(KcI18n.text(player, key), NamedTextColor.RED)
+
     private fun formatPoint(point: me.awabi2048.kantancommander.model.SpatialVector): String =
         "${point.x.toInt()},${point.y.toInt()},${point.z.toInt()}"
 
@@ -513,7 +541,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         private const val ACTION_TAG_REMOVE = "wand-tag-remove"
         private const val ACTION_DELETE = "wand-delete"
         private const val ACTION_GROUP_CREATE = "wand-group-create"
-        private const val ACTION_CLOSE = "close"
 
         private const val INPUT_NAME = "name"
         private const val INPUT_TAG = "tag"
