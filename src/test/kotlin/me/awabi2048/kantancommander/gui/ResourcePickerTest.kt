@@ -56,18 +56,18 @@ class ResourcePickerTest {
 
     @Test
     fun `paging splits ids into grid pages`() {
-        assertEquals(24, ResourcePicker.PAGE_SIZE)
+        assertEquals(32, ResourcePicker.PAGE_SIZE)
         assertEquals(1, ResourcePicker.pageCount(0))
-        assertEquals(1, ResourcePicker.pageCount(24))
-        assertEquals(2, ResourcePicker.pageCount(25))
-        val ids = (1..50).map { "minecraft:mob$it" }
-        assertEquals(24, ResourcePicker.pageItems(ids, 0).size)
-        assertEquals(24, ResourcePicker.pageItems(ids, 1).size)
-        assertEquals(2, ResourcePicker.pageItems(ids, 2).size)
+        assertEquals(1, ResourcePicker.pageCount(32))
+        assertEquals(2, ResourcePicker.pageCount(33))
+        val ids = (1..70).map { "minecraft:mob$it" }
+        assertEquals(32, ResourcePicker.pageItems(ids, 0).size)
+        assertEquals(32, ResourcePicker.pageItems(ids, 1).size)
+        assertEquals(6, ResourcePicker.pageItems(ids, 2).size)
         assertTrue(ResourcePicker.pageItems(ids, 3).isEmpty())
         assertTrue(ResourcePicker.pageItems(ids, -1).isEmpty())
         assertEquals("minecraft:mob1", ResourcePicker.pageItems(ids, 0).first())
-        assertEquals("minecraft:mob25", ResourcePicker.pageItems(ids, 1).first())
+        assertEquals("minecraft:mob33", ResourcePicker.pageItems(ids, 1).first())
     }
 
     @Test
@@ -81,9 +81,36 @@ class ResourcePickerTest {
             assertTrue(ids.all(String::isNotBlank), kind.name)
         }
         assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.ENTITY_TYPE).size)
-        assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).size)
+        assertEquals(32, ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).size)
         assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.EFFECT).size)
         assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.SOUND).size)
+    }
+
+    @Test
+    fun `particle presets cover data-required kinds except exclusions`() {
+        // 詳細設定を要するパーティクルはプリセットで直接選べます。
+        // 指定除外の種類はプリセットへ出さず、ID入力＋詳細設定ボタンの経路に限定します。
+        val excluded = setOf(
+            "INSTANT_EFFECT",
+            "ENTITY_EFFECT",
+            "TINTED_LEAVES",
+            "BLOCK",
+            "DUST_PILLAR",
+            "BLOCK_MARKER",
+            "FALLING_DUST",
+            "DRAGON_BREATH",
+            "SCULK_CHARGE",
+            "SHRIEK",
+            "VIBRATION",
+            "TRAIL",
+        )
+        val presets = ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).toSet()
+        excluded.forEach { assertFalse(it in presets, it) }
+        Particle.entries
+            .filter { ParticleSettings.requiresData(it) }
+            .map { it.name }
+            .filter { it !in excluded }
+            .forEach { assertTrue(it in presets, it) }
     }
 
     @Test
@@ -116,6 +143,7 @@ class ResourcePickerTest {
         val particle = InlineResourcePicker.pickElementId("particle", "FLAME")
         assertEquals("particle" to "FLAME", InlineResourcePicker.parsePick(particle))
         assertEquals("effect", InlineResourcePicker.parseInput(InlineResourcePicker.inputElementId("effect")))
+        assertEquals("particle", InlineResourcePicker.parseDetail(InlineResourcePicker.detailElementId("particle")))
         // 不正形式は受け付けません。
         assertNull(InlineResourcePicker.parsePick("lower-inline-pick:"))
         assertNull(InlineResourcePicker.parsePick("lower-inline-pick:sound:"))
@@ -124,7 +152,10 @@ class ResourcePickerTest {
         assertNull(InlineResourcePicker.parsePick("lower-resource-pick:minecraft:pig"))
         assertNull(InlineResourcePicker.parseInput("lower-inline-input:"))
         assertNull(InlineResourcePicker.parseInput("lower-inline-pick:sound:minecraft:pig"))
-        // 選択と入力の接頭辞は互いに干渉しません。
+        assertNull(InlineResourcePicker.parseDetail("lower-inline-detail:"))
+        assertNull(InlineResourcePicker.parseDetail("lower-inline-input:particle"))
+        assertNull(InlineResourcePicker.parseInput(InlineResourcePicker.detailElementId("particle")))
+        // 選択・入力・詳細設定の接頭辞は互いに干渉しません。
         assertEquals(8, InlineResourcePicker.COLUMNS)
     }
 
