@@ -3868,7 +3868,8 @@ class GestureLowerPanel(
         // 詳細入室後はプリセットの選択表示を詳細側へ移します（保存値は不変）。
         detailVisited: Boolean = false,
         // 召喚時個別設定の有限候補子画面で表示する項目IDです。召喚には
-        // 項目パス欄がないため、保存値ではなく経路記憶から受け取ります。
+        // 項目パス欄がないため、保存値や経路末尾からは推測せず、
+        // 現在フレームへ保持した項目IDだけを根拠にします。
         summonPropertyId: String? = null,
     ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild, detailVisited, summonPropertyId)
         .map { decorateSettingChoice(node, context, fieldKey, it, attentionFields) }
@@ -4292,7 +4293,7 @@ class GestureLowerPanel(
         val fieldKey = state.settingFieldKey ?: return GestureSettingInteractionMode.SELECT
         val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId)
             ?: return GestureSettingInteractionMode.SELECT
-        return settingTreeNodes(node, context, screen, fieldKey, player, summonPropertyId = summonSelectedPropertyId(state))
+        return lookupFrameChoices(state, node, context, screen, fieldKey, player)
             .firstNotNullOfOrNull { it.find(choiceId) }
             ?.effectiveInteractionMode
             ?: GestureSettingInteractionMode.SELECT
@@ -4317,10 +4318,37 @@ class GestureLowerPanel(
         val screen = state.settingScreen ?: return false
         val fieldKey = state.settingFieldKey ?: return false
         val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId) ?: return false
-        return settingTreeNodes(node, context, screen, fieldKey, player, summonPropertyId = summonSelectedPropertyId(state))
+        return lookupFrameChoices(state, node, context, screen, fieldKey, player)
             .firstNotNullOfOrNull { it.find(choiceId) }
             ?.selected == true
     }
+
+    /**
+     * クリック時の判定が使う、現在フレームの候補一覧です。
+     *
+     * 表示と同じ投影（子画面でのエンティティ導線の秘匿・詳細入室後の選択
+     * 移行・フレームの召喚項目ID）を適用し、見た目と判定が食い違わない
+     * ようにします。注意喚起の表示状態は判定の経路を変えないため渡しません。
+     */
+    private fun lookupFrameChoices(
+        state: GestureEditorState,
+        node: CommandNode,
+        context: CommandSettingContext,
+        screen: GestureSettingScreen,
+        fieldKey: String,
+        player: Player,
+    ): List<GestureSettingTreeNode> = settingTreeNodes(
+        node,
+        context,
+        screen,
+        fieldKey,
+        player,
+        inChild = state.settingRoute.size > 1,
+        detailVisited = state.detailVisitedKeys.contains(
+            PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+        ),
+        summonPropertyId = summonSelectedPropertyId(state),
+    )
 
     private fun settingChoices(
         node: CommandNode,

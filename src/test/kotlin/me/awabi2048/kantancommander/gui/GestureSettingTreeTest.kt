@@ -41,7 +41,7 @@ class GestureSettingTreeTest {
         assertEquals(listOf("target:PLAYER"), root.nodeIds)
         assertEquals(listOf("target:PLAYER", "filter:distance"), nested.nodeIds)
         assertEquals(listOf("target:PLAYER", "filter:limit"), sibling.nodeIds)
-        assertEquals(root, nested.leaveChild())
+        assertEquals(root, nested.leaveChild(remainingDepth = 1))
     }
 
     @Test
@@ -256,6 +256,27 @@ class GestureSettingTreeTest {
         // 子画面内で候補を選択すると、現在フレームの深さに候補IDが記録されます。
         state.settingTreePath = state.settingTreePath!!.selectAtDepth(1, "myworld-spawn:GUEST")
         assertEquals("myworld-spawn:GUEST", state.currentFrameSelectionId())
+    }
+
+    @Test
+    fun `leaving a child keeps the parent selection even without a child choice`() {
+        val path = GestureSettingTreePath(
+            "position",
+            null,
+            listOf("position-preset:MYWORLD_SPAWN"),
+        )
+        // 子画面で候補を選ばず（子スロットが存在しない）戻った場合でも、
+        // 末尾の削除ではなく残るフレーム数への切り詰めで親の選択を維持します。
+        assertEquals(
+            listOf("position-preset:MYWORLD_SPAWN"),
+            path.leaveChild(remainingDepth = 1).nodeIds,
+        )
+        // 子画面で候補を選んだ場合は、子フレームの選択だけを取り除きます。
+        val selected = path.selectAtDepth(1, "myworld-spawn:GUEST")
+        assertEquals(
+            listOf("position-preset:MYWORLD_SPAWN"),
+            selected.leaveChild(remainingDepth = 1).nodeIds,
+        )
     }
 
     @Test

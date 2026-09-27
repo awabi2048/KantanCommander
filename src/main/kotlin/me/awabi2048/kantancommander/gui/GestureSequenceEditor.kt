@@ -3118,7 +3118,9 @@ class GestureSequenceEditor(
         val poppedChildScreenId = currentSettingChildScreenId()
         state.settingRoute = state.settingRoute.dropLast(1)
         val frame = state.settingRoute.last()
-        val path = state.settingTreePath?.leaveChild()?.nodeIds.orEmpty()
+        // 子画面で未選択のまま戻っても親フレームの選択を消さないため、
+        // 末尾の削除ではなく残るフレーム数へ切り詰めます。
+        val path = state.settingTreePath?.leaveChild(state.settingRoute.size)?.nodeIds.orEmpty()
         activateSettingFrame(frame, path)
         if (state.settingRoute.size == 1) {
             val ownerId = ownerIdFor(player)

@@ -278,8 +278,15 @@ data class GestureSettingTreePath(
     fun enterChild(nodeId: String): GestureSettingTreePath =
         if (nodeIds.lastOrNull() == nodeId) this else copy(nodeIds = nodeIds + nodeId)
 
-    /** 親フレームへ戻るため、末尾の選択を一つ取り除きます。 */
-    fun leaveChild(): GestureSettingTreePath = copy(nodeIds = nodeIds.dropLast(1))
+    /**
+     * 親フレームへ戻るため、子フレームの選択スロットを取り除きます。
+     *
+     * 子画面で何も選ばなかった場合は経路に子のスロットが存在しないため、
+     * 末尾の削除では親フレームの選択まで失われます。残るフレーム数へ
+     * 切り詰めて、親フレームの選択を必ず維持します。
+     */
+    fun leaveChild(remainingDepth: Int): GestureSettingTreePath =
+        copy(nodeIds = nodeIds.take(remainingDepth.coerceAtLeast(0)))
 }
 
 /**
