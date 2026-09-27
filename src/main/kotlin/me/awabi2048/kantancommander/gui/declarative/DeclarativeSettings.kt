@@ -19,6 +19,7 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
+import me.awabi2048.kantancommander.gui.GestureSettingChildLayoutPolicy
 import me.awabi2048.kantancommander.gui.GestureSettingVisualPolicy
 import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
@@ -490,6 +491,39 @@ object DeclarativeSettings {
         }
     }
 
+    /**
+     * 上段候補と下揃え候補の境界線を配置します。
+     *
+     * 両方のグループが同時に存在する画面だけを対象とし、高さは下端操作行との
+     * 距離から一意に決まるため件数・ページ数・表示ページで動きません。
+     * 境界線は表示専用であり、操作面・ホバーを持ちません。
+     */
+    internal fun groupDividerSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        pane: GestureChoicePane,
+        bottomRowCount: Int,
+        id: String = "lower-setting-group-divider",
+    ) {
+        val cy = GestureSettingChildLayoutPolicy.groupDividerY(bottomRowCount)
+        nodes += GestureGuiBlock(
+            blockData = org.bukkit.Bukkit.createBlockData(
+                GestureSettingVisualPolicy.GROUP_DIVIDER_MATERIAL,
+            ),
+            interpolationTicks = 0,
+            width = GestureGuiSizeSpec.Fixed(pane.columnsSpanWidth),
+            height = GestureGuiSizeSpec.Fixed(GestureSettingChildLayoutPolicy.GROUP_DIVIDER_HEIGHT),
+            id = id,
+            absolute = placed(
+                frame,
+                pane.centerX,
+                cy,
+                pane.columnsSpanWidth,
+                GestureSettingChildLayoutPolicy.GROUP_DIVIDER_HEIGHT,
+            ),
+        )
+    }
+
     /** 汎用操作カード1件（背景＋文言＋操作面）を配置します。 */
     fun actionCardSection(
         nodes: MutableList<GestureGuiNode>,
@@ -618,9 +652,9 @@ object DeclarativeSettings {
                 label = label,
                 background = background,
                 cx = centerX,
-                cy = -0.43,
+                cy = GestureSettingChildLayoutPolicy.BACK_Y,
                 w = width,
-                h = 0.10,
+                h = GestureSettingChildLayoutPolicy.BACK_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 100,
                 gestures = GestureGuiClickPolicy.CLICK,

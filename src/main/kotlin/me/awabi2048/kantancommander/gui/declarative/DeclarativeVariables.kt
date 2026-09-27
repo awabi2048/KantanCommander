@@ -8,8 +8,10 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
+import me.awabi2048.kantancommander.gui.GestureSettingChildLayoutPolicy
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.block.data.BlockData
@@ -116,19 +118,21 @@ object DeclarativeVariables {
                 id = "variables-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_CHOICE_TOP_Y, 1.0, 0.0052 * 3.0),
+                absolute = placed(frame, 0.0, GestureSettingChildLayoutPolicy.TOP_CHOICE_Y, 1.0, 0.0052 * 3.0),
             )
         } else {
             data.entries.forEachIndexed { index, entry ->
                 val column = index % 2
                 val row = index / 2
-                val columnCenter = if (column == 0) -0.53 else 0.53
-                val columnLeft = columnCenter - GestureLowerPanel.CHILD_CHOICE_WIDTH / 2.0
+                // 列中心は設定候補と同じ画面区分ポリシーから取ります。
+                val columnCenter = GestureChoicePane.CHILD.columnX(column)
+                // 1列分の行幅（名札＋削除）は候補カード幅と同じです。
+                val columnLeft = columnCenter - GestureChoicePane.CHILD.cardWidth / 2.0
                 val cardCx = columnLeft + GestureLowerPanel.WORLD_VARIABLE_CARD_WIDTH / 2.0
                 val deleteCx = columnLeft + GestureLowerPanel.WORLD_VARIABLE_CARD_WIDTH +
                     GestureLowerPanel.WORLD_VARIABLE_DELETE_GAP +
                     GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH / 2.0
-                val cy = GestureLowerPanel.CHILD_CHOICE_TOP_Y - row * GestureLowerPanel.CHILD_CHOICE_PITCH
+                val cy = GestureSettingChildLayoutPolicy.topY(row)
                 nodes += GestureGuiBlock(
                     blockData = data.entryBackground,
                     interpolationTicks = 0,
@@ -190,6 +194,8 @@ object DeclarativeVariables {
                 )
             }
             if (data.pageCount > 1) {
+                // 下端操作行は［新規作成］［戻る］が占めるため、ページャーは
+                // その直上の帯へ固定します。件数・ページで位置は変わりません。
                 DeclarativeSettings.pagerSection(
                     nodes,
                     frame,
@@ -198,7 +204,7 @@ object DeclarativeVariables {
                     page = data.page,
                     pageCount = data.pageCount,
                     centerX = 0.0,
-                    centerY = GestureLowerPanel.CHILD_PAGER_Y,
+                    centerY = GestureSettingChildLayoutPolicy.pagerBandY(),
                     arrowBackgrounds = listOf(data.page - 1, data.page + 1).map { targetPage ->
                         if (targetPage in 0 until data.pageCount) data.pagerAvailableBackground
                         else data.pagerDisabledBackground
@@ -213,6 +219,7 @@ object DeclarativeVariables {
                 )
             }
         }
+        // 下端操作行は左列［新規作成］・右列［戻る］の共通規則です。
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
@@ -220,10 +227,10 @@ object DeclarativeVariables {
                 elementId = "lower-variables-create",
                 label = data.createLabel,
                 background = data.createBackground,
-                cx = -0.53,
-                cy = -0.43,
-                w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
-                h = 0.10,
+                cx = GestureChoicePane.CHILD.leftX,
+                cy = GestureSettingChildLayoutPolicy.BACK_Y,
+                w = GestureChoicePane.CHILD.cardWidth,
+                h = GestureSettingChildLayoutPolicy.BACK_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 140,
                 gestures = GestureGuiClickPolicy.CLICK,
@@ -237,8 +244,8 @@ object DeclarativeVariables {
             frame,
             label = data.backLabel,
             background = data.backBackground,
-            centerX = 0.53,
-            width = GestureLowerPanel.CHILD_CHOICE_WIDTH,
+            centerX = GestureChoicePane.CHILD.backX,
+            width = GestureChoicePane.CHILD.backWidth,
         )
         return DeclarativeSettings.document(nodes, panel)
     }
@@ -272,16 +279,15 @@ object DeclarativeVariables {
             nodes,
             frame,
             cards = data.options.mapIndexed { index, option ->
-                val cx = if (index == 0) -0.53 else 0.53
                 SettingsChoiceCard(
                     elementId = "lower-world-variable-type:${option.key}",
                     label = option.label,
                     background = option.background,
                     outline = option.outline,
                     enabled = true,
-                    cx = cx,
-                    cy = GestureLowerPanel.CHILD_CHOICE_TOP_Y,
-                    w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
+                    cx = GestureChoicePane.CHILD.columnX(index),
+                    cy = GestureSettingChildLayoutPolicy.topY(0),
+                    w = GestureChoicePane.CHILD.cardWidth,
                     h = GestureLowerPanel.SETTING_CHOICE_HEIGHT,
                     labelDy = -0.012,
                     labelSize = 0.0045,
@@ -300,10 +306,10 @@ object DeclarativeVariables {
                 elementId = if (data.nextEnabled) "lower-world-variable-type-next" else null,
                 label = data.nextLabel,
                 background = data.nextBackground,
-                cx = -0.53,
-                cy = -0.43,
-                w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
-                h = 0.10,
+                cx = GestureChoicePane.CHILD.leftX,
+                cy = GestureSettingChildLayoutPolicy.BACK_Y,
+                w = GestureChoicePane.CHILD.cardWidth,
+                h = GestureSettingChildLayoutPolicy.BACK_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 140,
                 gestures = if (data.nextEnabled) GestureGuiClickPolicy.CLICK else emptySet(),
@@ -318,8 +324,8 @@ object DeclarativeVariables {
             frame,
             label = data.backLabel,
             background = data.backBackground,
-            centerX = 0.53,
-            width = GestureLowerPanel.CHILD_CHOICE_WIDTH,
+            centerX = GestureChoicePane.CHILD.backX,
+            width = GestureChoicePane.CHILD.backWidth,
         )
         return DeclarativeSettings.document(nodes, panel)
     }
@@ -356,10 +362,10 @@ object DeclarativeVariables {
                 elementId = "lower-world-variable-delete-confirm",
                 label = data.confirmLabel,
                 background = data.confirmBackground,
-                cx = -0.53,
-                cy = -0.43,
-                w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
-                h = 0.10,
+                cx = GestureChoicePane.CHILD.leftX,
+                cy = GestureSettingChildLayoutPolicy.BACK_Y,
+                w = GestureChoicePane.CHILD.cardWidth,
+                h = GestureSettingChildLayoutPolicy.BACK_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 100,
                 gestures = GestureGuiClickPolicy.CLICK,
@@ -376,10 +382,10 @@ object DeclarativeVariables {
                 elementId = "lower-setting-back",
                 label = data.cancelLabel,
                 background = data.cancelBackground,
-                cx = 0.53,
-                cy = -0.43,
-                w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
-                h = 0.10,
+                cx = GestureChoicePane.CHILD.backX,
+                cy = GestureSettingChildLayoutPolicy.BACK_Y,
+                w = GestureChoicePane.CHILD.backWidth,
+                h = GestureSettingChildLayoutPolicy.BACK_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 100,
                 gestures = GestureGuiClickPolicy.CLICK,

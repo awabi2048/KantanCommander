@@ -413,6 +413,13 @@ class GestureLowerPanel(
                 visualIndex = topCards.size + index,
             )
         }
+        // 上段・下揃えの両グループがある画面だけ境界線を引き、宣言型経路と同じ
+        // 高さ・幅・素材に揃えます。件数やページでは動きません。
+        val groupDividerY = if (GestureSettingChildLayoutPolicy.showsGroupDivider(topChoices.size, bottomChoices.size)) {
+            GestureSettingChildLayoutPolicy.groupDividerY(page.bottomRowCount)
+        } else {
+            null
+        }
         return finishSettingChoicesChildHtml(
             fieldLabel = fieldLabel,
             fieldValue = fieldValue,
@@ -422,6 +429,7 @@ class GestureLowerPanel(
             cards = topCards + bottomCards,
             page = page.index,
             pageCount = page.count,
+            groupDividerY = groupDividerY,
             childScreenId = childScreenId,
         )
     }
@@ -440,6 +448,7 @@ class GestureLowerPanel(
         cards: List<SettingsChoiceCard> = emptyList(),
         page: Int = 0,
         pageCount: Int = 1,
+        groupDividerY: Double? = null,
         childScreenId: String = SETTING_CHILD_SCREEN_ID,
     ): GestureGuiView {
         val panel = GestureGuiPanel()
@@ -535,6 +544,19 @@ class GestureLowerPanel(
                         enabled = card.enabled,
                     )
                 }
+                // 上段と下揃えの両グループがあるときだけ境界線を引きます。
+                // 表示専用の容器で、操作面・ホバーは持ちません。
+                groupDividerY?.let { cy ->
+                    val dividerData = Bukkit.createBlockData(GestureSettingVisualPolicy.GROUP_DIVIDER_MATERIAL)
+                    backgrounds["setting-group-divider"] = dividerData
+                    val width = GestureChoicePane.CHILD.columnsSpanWidth
+                    val height = GestureSettingChildLayoutPolicy.GROUP_DIVIDER_HEIGHT
+                    append(
+                        "<div id=\"setting-group-divider\" style=\"" +
+                            absoluteStyle(frame, GestureChoicePane.CHILD.centerX, cy, width, height) +
+                            "; background: ${materialName(dividerData)}\"></div>",
+                    )
+                }
             }
 
             if (pageCount > 1) {
@@ -597,7 +619,10 @@ class GestureLowerPanel(
                     ?.let { Bukkit.createBlockData(it) }
                 ?: error("HTML setting button background is not registered: $id / $background")
 
-            override fun containerBackground(background: String, classes: Set<String>, id: String?): BlockData? = null
+            // 背景付き容器（上段／下揃えの境界線など）は id から登録済み素材を引きます。
+            // 登録のない容器背景は従来どおり透明のままにします。
+            override fun containerBackground(background: String, classes: Set<String>, id: String?): BlockData? =
+                id?.let(backgrounds::get)
 
             override fun outlineBlock(classes: Set<String>, id: String?): BlockData? = id?.let(outlines::get)
 
@@ -860,7 +885,8 @@ class GestureLowerPanel(
         val context = state.settingContext
         val node = context?.let { plugin.scripts.load(it.scriptId)?.graph?.nodes?.get(it.nodeId) }
         val entries = node?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }.orEmpty()
-        val pageSize = TAG_PAGE_SIZE
+        // 1ページ件数は共通ポリシーから決めます（ページャー帯1行分を予約した上段行数）。
+        val pageSize = GestureSettingChildLayoutPolicy.topPageSizeFor(1)
         val pageCount = ((entries.size + pageSize - 1) / pageSize).coerceAtLeast(1)
         val page = state.tagPage.coerceIn(0, pageCount - 1)
         return finishTagListChild(
@@ -986,7 +1012,8 @@ class GestureLowerPanel(
                 "[DeclarativeVariables]",
             )
         }
-        val pageSize = WORLD_VARIABLE_PAGE_SIZE
+        // 1ページ件数は共通ポリシーから決めます（ページャー帯1行分を予約した上段行数）。
+        val pageSize = GestureSettingChildLayoutPolicy.topPageSizeFor(1)
         val pageCount = (entries.size + pageSize - 1) / pageSize
         val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
         val usageScan = state.placement?.world
@@ -1173,7 +1200,8 @@ class GestureLowerPanel(
         val script = plugin.scripts.load(state.scriptId)
         val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
         val arguments = node?.declaredArguments().orEmpty()
-        val pageSize = 3
+        // 1ページ件数は宣言側が共通ポリシーから決めた行数と一致させます。
+        val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskCall.ARG_PAGE_SIZE
         val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
         val page = state.diskCallArgsPage.coerceIn(0, pageCount - 1)
         val returnName = node?.string("returnName").orEmpty()
@@ -1255,10 +1283,12 @@ class GestureLowerPanel(
         val configuredEvent = plugin.scripts.load(state.scriptId)?.effectiveTrigger()
             ?.takeIf { it.kind == TriggerKind.EVENT }?.event
         val current = state.pendingTriggerEvent
-        val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
-        val total = EventTriggerKind.entries.size
-        val pageCount = ((total + pageSize - 1) / pageSize).coerceAtLeast(1)
-        val page = state.triggerEventPage.coerceIn(0, pageCount - 1)
+        // ページ分割は設定候補と同じ共通ポリシーから取ります。
+        val layout = GestureSettingChildLayoutPolicy.plan(
+            topChoiceCount = EventTriggerKind.entries.size,
+            bottomChoiceCount = 0,
+            requestedPage = state.triggerEventPage,
+        )
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.eventDocument(
                 me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
@@ -1282,8 +1312,7 @@ class GestureLowerPanel(
                     },
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
-                    page = page,
-                    pageCount = pageCount,
+                    page = layout.index,
                     pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
                     pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
                 ),
@@ -1613,7 +1642,8 @@ class GestureLowerPanel(
     ): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId)
         val arguments = script?.arguments.orEmpty()
-        val pageSize = 2
+        // 1ページ件数は宣言側が共通ポリシーから決めた行数と一致させます。
+        val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskSettings.ARG_ROW_PAGE_SIZE
         val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
         val page = state.diskSettingsArgsPage.coerceIn(0, pageCount - 1)
         return finishVariablesChild(
@@ -2136,6 +2166,16 @@ class GestureLowerPanel(
                 pane = GestureChoicePane.PARENT,
                 suppressHighlight = suppressHighlight,
             )
+            // 上段・下揃えの両グループがある画面だけ境界線を引きます。
+            // 子画面のHTML経路と同じ高さ・幅・素材で、件数やページでは動きません。
+            if (GestureSettingChildLayoutPolicy.showsGroupDivider(topSettingChoices.size, bottomSettingChoices.size)) {
+                DeclarativeSettings.groupDividerSection(
+                    nodes,
+                    frame,
+                    pane = GestureChoicePane.PARENT,
+                    bottomRowCount = choicePage.bottomRowCount,
+                )
+            }
             if (choicePage.count > 1) {
                 DeclarativeSettings.pagerSection(
                     nodes,
@@ -2240,6 +2280,7 @@ class GestureLowerPanel(
         val topChoices = choices.filterNot { it.bottomAligned }
         val bottomChoices = choices.filter { it.bottomAligned }
         val topRowCount = (topChoices.size + 1) / 2
+        // 奇数最終行も中央へ寄せず、常に左列から埋める列規則へ統一します。
         val topCards = settingChoiceRows(
             choices = topChoices,
             fieldKey = fieldKey,
@@ -2248,10 +2289,6 @@ class GestureLowerPanel(
             suppressHighlight = suppressHighlight,
             rowBase = 0,
             rowCount = topRowCount,
-            cx = { column, row ->
-                val oddLast = topChoices.size % 2 == 1 && row == topRowCount - 1
-                if (oddLast) pane.centerX else pane.columnX(column)
-            },
             cy = GestureSettingChildLayoutPolicy::topY,
         )
         val bottomRowCount = (bottomChoices.size + 1) / 2
@@ -2263,10 +2300,6 @@ class GestureLowerPanel(
             suppressHighlight = suppressHighlight,
             rowBase = 0,
             rowCount = bottomRowCount,
-            cx = { column, row ->
-                val oddLast = bottomChoices.size % 2 == 1 && row == bottomRowCount - 1
-                if (oddLast) pane.centerX else pane.columnX(column)
-            },
             cy = { row -> GestureSettingChildLayoutPolicy.bottomY(row, bottomRowCount) },
         )
     }
@@ -2279,7 +2312,6 @@ class GestureLowerPanel(
         suppressHighlight: Boolean,
         rowBase: Int,
         rowCount: Int,
-        cx: (Int, Int) -> Double,
         cy: (Int) -> Double,
     ): List<SettingsChoiceCard> = choices.mapIndexed { index, choice ->
         val column = index % 2
@@ -2290,7 +2322,7 @@ class GestureLowerPanel(
             player = player,
             pane = pane,
             suppressHighlight = suppressHighlight,
-            cx = cx(column, index / 2),
+            cx = pane.columnX(column),
             cy = cy(index / 2),
             row = row,
             rowCount = rowCount,
@@ -5329,8 +5361,11 @@ class GestureLowerPanel(
                 ),
             )
         }
-        // 注視は上段末尾に置き、上下4:2の配置にします。
-        val upperEntity = if (inChild) emptyList() else listOf(
+        // 注視・複写は下揃えの実体参照導線へ集約し、位置画面の実体参照
+        // （position-entity → 一時変数）と同じ意味順にします。
+        // 上下揃えの切替はbottomAlignedだけが担い、宣言型・HTML型の両経路で
+        // 同じ順序になります。
+        val entityEntry = if (inChild) emptyList() else listOf(
             SettingChoice(
                 id = "facing-entity",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
@@ -5343,9 +5378,10 @@ class GestureLowerPanel(
                     context.role,
                     interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
                 ),
+                bottomAligned = true,
             ),
         )
-        return presets + upperEntity + listOf(
+        return presets + entityEntry + listOf(
             SettingChoice(
                 id = "facing-copy",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COPY_ORIENTATION),
@@ -6026,20 +6062,16 @@ class GestureLowerPanel(
         const val SETTINGS_TAB_ACTION_Y = -0.43
         // 実行位置タブを固定配置する、下端の操作行の直上の行です。
         const val SETTINGS_TAB_EXECUTION_Y = SETTINGS_TAB_ACTION_Y + SETTINGS_TAB_PITCH
-        // ワールド変数一覧は下段に新規作成／戻るを左右配置するため、2列×3行に制限します。
-        const val WORLD_VARIABLE_PAGE_SIZE = 6
         const val SETTING_CHOICE_HEIGHT = 0.10
         // 二値トグル（Checkbox直接切替え）の水平中央です。右ペインの
         // 2列中央（-0.10と0.67の中点）に相当し、単独配置で中央下揃えになります。
         val SETTING_TOGGLE_CENTER_X = GestureChoicePane.PARENT.centerX
         // 子画面は親の右ペイン座標を再利用せず、子画面全体を論理領域として使います。
-        const val CHILD_CHOICE_WIDTH = 0.92
-        const val CHILD_CHOICE_TOP_Y = 0.08
-        const val CHILD_CHOICE_PITCH = 0.12
+        // 候補カードの幅・行位置は GestureChoicePane.CHILD／GestureSettingChildLayoutPolicy
+        // が正本であり、ここには画面固有の重複定数を置きません。
         const val CHILD_HEADER_Y = 0.36
         const val CHILD_HOVER_Y = 0.23
         const val CHILD_DETAIL_HINT_Y = 0.16
-        const val CHILD_PAGER_Y = -0.34
         // ワールド内変数の各列は「値編集カード＋削除ボタン」で構成し、列全体の幅を
         // 既存の0.92へ固定します。ボタンの位置は一覧と確認画面で共通にします。
         const val WORLD_VARIABLE_CARD_WIDTH = 0.72
@@ -6050,8 +6082,6 @@ class GestureLowerPanel(
         const val TAG_CARD_WIDTH = 0.60
         const val TAG_ICON_GAP = 0.05
         const val TAG_MODE_WIDTH = WORLD_VARIABLE_DELETE_WIDTH
-        // タグ一覧は変数一覧と同じく2列×3行に制限します。
-        const val TAG_PAGE_SIZE = 6
         const val ACTION_DESCRIPTION_Y = 0.36
         // 親画面のホバー説明は、常設の灰色説明（ACTION_DESCRIPTION_Y）と対になる
         // 画面下段のスロットへ表示します。操作行（-0.43）や対象カード（-0.25）と

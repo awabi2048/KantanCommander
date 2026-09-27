@@ -9,8 +9,10 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
+import me.awabi2048.kantancommander.gui.GestureSettingChildLayoutPolicy
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.block.data.BlockData
@@ -92,13 +94,15 @@ object DeclarativeTagEntries {
                 id = "tag-list-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_CHOICE_TOP_Y, 1.0, 0.0052 * 3.0),
+                absolute = placed(frame, 0.0, GestureSettingChildLayoutPolicy.TOP_CHOICE_Y, 1.0, 0.0052 * 3.0),
             )
         } else {
             data.entries.forEachIndexed { index, entry ->
                 val column = index % 2
                 val row = index / 2
-                val columnLeft = (if (column == 0) -0.53 else 0.53) - 0.53
+                // 列帯の左端は、設定候補と同じ画面区分ポリシーの列中心から取ります。
+                val columnLeft = GestureChoicePane.CHILD.columnX(column) -
+                    GestureChoicePane.CHILD.columnBandHalfWidth
                 val cardCx = columnLeft + GestureLowerPanel.TAG_CARD_WIDTH / 2.0
                 val modeCx = columnLeft + GestureLowerPanel.TAG_CARD_WIDTH +
                     GestureLowerPanel.TAG_ICON_GAP +
@@ -106,7 +110,7 @@ object DeclarativeTagEntries {
                 val deleteCx = modeCx + GestureLowerPanel.TAG_MODE_WIDTH / 2.0 +
                     GestureLowerPanel.TAG_ICON_GAP +
                     GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH / 2.0
-                val cy = GestureLowerPanel.CHILD_CHOICE_TOP_Y - row * GestureLowerPanel.CHILD_CHOICE_PITCH
+                val cy = GestureSettingChildLayoutPolicy.topY(row)
                 val modeAction = "lower-tag-mode:$index"
                 // 名札のクリックはモード切替と同義にし、無反応行を作りません。
                 nodes += GestureGuiBlock(
@@ -196,6 +200,8 @@ object DeclarativeTagEntries {
                 )
             }
             if (data.pageCount > 1) {
+                // 下端操作行は［追加］［戻る］が占めるため、ページャーは
+                // その直上の帯へ固定します。件数・ページで位置は変わりません。
                 DeclarativeSettings.pagerSection(
                     nodes,
                     frame,
@@ -204,7 +210,7 @@ object DeclarativeTagEntries {
                     page = data.page,
                     pageCount = data.pageCount,
                     centerX = 0.0,
-                    centerY = GestureLowerPanel.CHILD_PAGER_Y,
+                    centerY = GestureSettingChildLayoutPolicy.pagerBandY(),
                     arrowBackgrounds = listOf(data.page - 1, data.page + 1).map { targetPage ->
                         if (targetPage in 0 until data.pageCount) data.pagerAvailableBackground
                         else data.pagerDisabledBackground
@@ -226,10 +232,10 @@ object DeclarativeTagEntries {
                 elementId = "lower-tag-create",
                 label = data.createLabel,
                 background = data.createBackground,
-                cx = -0.53,
-                cy = -0.43,
-                w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
-                h = 0.10,
+                cx = GestureChoicePane.CHILD.leftX,
+                cy = GestureSettingChildLayoutPolicy.BACK_Y,
+                w = GestureChoicePane.CHILD.cardWidth,
+                h = GestureSettingChildLayoutPolicy.BACK_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 140,
                 gestures = GestureGuiClickPolicy.CLICK,
@@ -243,8 +249,8 @@ object DeclarativeTagEntries {
             frame,
             label = data.backLabel,
             background = data.backBackground,
-            centerX = 0.53,
-            width = GestureLowerPanel.CHILD_CHOICE_WIDTH,
+            centerX = GestureChoicePane.CHILD.backX,
+            width = GestureChoicePane.CHILD.backWidth,
         )
         return DeclarativeSettings.document(nodes, panel)
     }

@@ -190,6 +190,12 @@ internal object GestureSettingVisualPolicy {
         if (selected) Material.WHITE_CONCRETE else null
 
     /**
+     * 上段候補と下揃え候補の境界線の素材です。
+     * グループの区切りを示しつつ、選択・設定済みの色と競合しない中間色を使います。
+     */
+    val GROUP_DIVIDER_MATERIAL: Material = Material.GRAY_CONCRETE
+
+    /**
      * Boolean値を直接表示する選択肢の背景素材です。
      *
      * ON=LIME・OFF=GRAYは下部のチェックボックストグルと同じ色対応で、

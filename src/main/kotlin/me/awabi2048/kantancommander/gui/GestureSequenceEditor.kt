@@ -4587,7 +4587,7 @@ class GestureSequenceEditor(
             val selectedIndex = EventTriggerKind.entries.indexOf(selected)
             if (selectedIndex >= 0) {
                 state.triggerEventPage = selectedIndex /
-                    me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
+                    GestureSettingChildLayoutPolicy.topPageSizeFor(0)
             }
         }
         state.lowerMode = GestureLowerMode.TRIGGER_EVENT
@@ -9037,8 +9037,11 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-trigger-event-page:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val requestedPage = context.elementId.removePrefix("lower-trigger-event-page:").toIntOrNull() ?: return
-                val lastPage = (EventTriggerKind.entries.size - 1) /
-                    me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
+                val lastPage = GestureSettingChildLayoutPolicy.plan(
+                    EventTriggerKind.entries.size,
+                    0,
+                    0,
+                ).count - 1
                 state.triggerEventPage = requestedPage.coerceIn(0, lastPage)
                 updateLower(player)
             }

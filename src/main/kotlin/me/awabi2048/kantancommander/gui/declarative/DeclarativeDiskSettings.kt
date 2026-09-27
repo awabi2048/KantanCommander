@@ -8,9 +8,12 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
+import me.awabi2048.kantancommander.gui.GestureSettingChildLayoutPolicy
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.block.data.BlockData
 
 /** issue #8 のディスク引数定義の1件です。文言・素材は呼び出し側で解決します。 */
@@ -48,21 +51,25 @@ data class DiskSettingsData(
 /**
  * issue #8 のディスク設定子画面の宣言区画です。
  *
- * 取り出しカードを上部に置き、引数は名前・型・削除の3カード1行で示します。
- * 引数は2件ずつページングし、追加カードと戻る操作が重ならないようにします。
+ * 取り出しカードを最上行に置き、引数は名前・型・削除の3カード1行の1列一覧で
+ * 示します。行位置・下端操作行は設定候補と同じ
+ * [GestureSettingChildLayoutPolicy] を使い、ページャーは下端操作行
+ * （左列［追加］・右列［戻る］）の直上の帯へ固定します。
  */
 object DeclarativeDiskSettings {
-    private const val TAKE_OUT_Y = 0.04
-    private const val ARG_ROW_TOP_Y = -0.07
-    private const val ARG_ROW_PITCH = 0.11
-    private const val ARG_ROW_HEIGHT = 0.09
-    private const val BOTTOM_ROW_Y = -0.29
-    private const val PAGER_Y = 0.13
+    /**
+     * 引数行の1ページ件数です。
+     * ページャー帯を1行分予約し、取り出し行を除いた上段行数から決めます。
+     */
+    val ARG_ROW_PAGE_SIZE: Int =
+        GestureSettingChildLayoutPolicy.topPageSizeFor(1) /
+            GestureSettingChildLayoutPolicy.COLUMN_COUNT - 1
 
     fun settingsDocument(
         data: DiskSettingsData,
         panel: GestureGuiPanel = GestureGuiPanel(),
     ): GestureGuiDocument {
+        val pane = GestureChoicePane.CHILD
         val frame = contentFrame(panel)
         val nodes = mutableListOf<GestureGuiNode>()
         nodes += GestureGuiText(
@@ -82,9 +89,10 @@ object DeclarativeDiskSettings {
             frame,
             body = data.body,
             detail = null,
-            centerX = 0.0,
+            centerX = pane.centerX,
             hoverY = GestureLowerPanel.CHILD_HOVER_Y,
         )
+        // 取り出し操作は最上行のバナーとして置き、引数行はその下の上段行を使います。
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
@@ -92,10 +100,10 @@ object DeclarativeDiskSettings {
                 elementId = "lower-disk-take-out",
                 label = data.takeOutLabel,
                 background = data.takeOutBackground,
-                cx = 0.0,
-                cy = TAKE_OUT_Y,
-                w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
-                h = ARG_ROW_HEIGHT,
+                cx = pane.centerX,
+                cy = GestureSettingChildLayoutPolicy.topY(0),
+                w = pane.cardWidth,
+                h = GestureSettingChildLayoutPolicy.CHOICE_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 140,
                 gestures = GestureGuiClickPolicy.CLICK,
@@ -114,11 +122,12 @@ object DeclarativeDiskSettings {
                 id = "disk-settings-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, 0.0, ARG_ROW_TOP_Y, 1.0, 0.0052 * 3.0),
+                absolute = placed(frame, pane.centerX, GestureSettingChildLayoutPolicy.topY(1), 1.0, 0.0052 * 3.0),
             )
         } else {
             data.arguments.forEachIndexed { index, argument ->
-                val cy = ARG_ROW_TOP_Y - index * ARG_ROW_PITCH
+                // 取り出し行を1行分消費するため、引数行は2行目から始めます。
+                val cy = GestureSettingChildLayoutPolicy.topY(1 + index)
                 addArgumentCard(
                     nodes,
                     frame,
@@ -158,6 +167,8 @@ object DeclarativeDiskSettings {
             }
         }
         if (data.pageCount > 1) {
+            // 下端操作行は［追加］［戻る］が占めるため、ページャーは
+            // その直上の帯へ固定します。件数・ページで位置は変わりません。
             DeclarativeSettings.pagerSection(
                 nodes,
                 frame,
@@ -165,8 +176,8 @@ object DeclarativeDiskSettings {
                 elementPrefix = "lower-diskdef-page",
                 page = data.page,
                 pageCount = data.pageCount,
-                centerX = 0.0,
-                centerY = PAGER_Y,
+                centerX = pane.centerX,
+                centerY = GestureSettingChildLayoutPolicy.pagerBandY(),
                 arrowBackgrounds = listOf(data.page - 1, data.page + 1).map { targetPage ->
                     if (targetPage in 0 until data.pageCount) data.pagerAvailableBackground
                     else data.pagerDisabledBackground
@@ -174,16 +185,13 @@ object DeclarativeDiskSettings {
                 arrowGlyphs = listOf("◀", "▶").mapIndexed { arrowIndex, glyph ->
                     val targetPage = if (arrowIndex == 0) data.page - 1 else data.page + 1
                     Component.text(glyph).color(
-                        if (targetPage in 0 until data.pageCount) {
-                            net.kyori.adventure.text.format.NamedTextColor.WHITE
-                        } else {
-                            net.kyori.adventure.text.format.NamedTextColor.GRAY
-                        },
+                        if (targetPage in 0 until data.pageCount) NamedTextColor.WHITE else NamedTextColor.GRAY,
                     )
                 },
                 status = Component.text("${data.page + 1}/${data.pageCount}"),
             )
         }
+        // 下端操作行は左列［追加］・右列［戻る］の共通規則です。
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
@@ -191,10 +199,10 @@ object DeclarativeDiskSettings {
                 elementId = "lower-diskdef-add",
                 label = data.addLabel,
                 background = data.addBackground,
-                cx = 0.0,
-                cy = BOTTOM_ROW_Y,
-                w = GestureLowerPanel.CHILD_CHOICE_WIDTH,
-                h = ARG_ROW_HEIGHT,
+                cx = pane.leftX,
+                cy = GestureSettingChildLayoutPolicy.BACK_Y,
+                w = pane.cardWidth,
+                h = GestureSettingChildLayoutPolicy.BACK_HEIGHT,
                 labelSize = 0.0048,
                 labelWidth = 140,
                 gestures = GestureGuiClickPolicy.CLICK,
@@ -208,8 +216,8 @@ object DeclarativeDiskSettings {
             frame,
             label = data.backLabel,
             background = data.backBackground,
-            centerX = 0.0,
-            width = GestureLowerPanel.CHILD_CHOICE_WIDTH,
+            centerX = pane.backX,
+            width = pane.backWidth,
         )
         return DeclarativeSettings.document(nodes, panel)
     }
@@ -231,17 +239,18 @@ object DeclarativeDiskSettings {
         cy: Double,
         visualIndex: Int,
     ) {
+        val height = GestureSettingChildLayoutPolicy.CHOICE_HEIGHT
         nodes += GestureGuiBlock(
             blockData = background,
             interpolationTicks = 0,
             width = GestureGuiSizeSpec.Fixed(width),
-            height = GestureGuiSizeSpec.Fixed(ARG_ROW_HEIGHT),
+            height = GestureGuiSizeSpec.Fixed(height),
             outline = outline?.let { GestureGuiOutline(it) },
             id = elementId,
             actionId = elementId,
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             hover = null,
-            absolute = placed(frame, cx, cy, width, ARG_ROW_HEIGHT),
+            absolute = placed(frame, cx, cy, width, height),
         )
         nodes += GestureGuiText(
             text = label,

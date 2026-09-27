@@ -18,6 +18,7 @@ internal object GestureSettingChildLayoutPolicy {
     const val BACK_HEIGHT = 0.10
     const val FOOTER_GAP = 0.04
     const val GROUP_GAP = 0.02
+    const val GROUP_DIVIDER_HEIGHT = 0.008
     const val COLUMN_COUNT = 2
 
     data class Page(
@@ -76,6 +77,34 @@ internal object GestureSettingChildLayoutPolicy {
         val lowestCenter = footerTop + FOOTER_GAP + CHOICE_HEIGHT / 2.0
         return lowestCenter + (rowCount - 1 - row) * CHOICE_PITCH
     }
+
+    /**
+     * 上段候補と下揃え候補の境界線を表示するかどうかです。
+     * 両方のグループが同時に存在する画面だけに置き、片方だけの画面や
+     * ページ移動で出し入れしません。
+     */
+    fun showsGroupDivider(topChoiceCount: Int, bottomChoiceCount: Int): Boolean =
+        topChoiceCount > 0 && bottomChoiceCount > 0
+
+    /**
+     * 上段候補と下揃え候補の境界線の中心Yです。
+     * 下揃え最上行の上端からグループ間余白の半分だけ上へ固定し、
+     * 候補数・ページ数・表示ページで動かしません。
+     */
+    fun groupDividerY(bottomRowCount: Int): Double {
+        require(bottomRowCount > 0) { "境界線は下揃え候補がある画面だけに置きます。" }
+        return bottomY(bottomRowCount - 1, bottomRowCount) + CHOICE_HEIGHT / 2.0 + GROUP_GAP / 2.0
+    }
+
+    /**
+     * 下端操作行の左列を画面固有の主操作（追加・作成など）が占める画面で、
+     * ページャーを置く帯の中心Yです。下揃え1行分の帯と同じ高さに固定し、
+     * 件数やページで動かしません。
+     */
+    fun pagerBandY(): Double = bottomY(0, 1)
+
+    /** 下揃え候補数に対する、上段1ページあたりの候補数です。 */
+    fun topPageSizeFor(bottomChoiceCount: Int): Int = plan(0, bottomChoiceCount, 0).topPageSize
 
     private fun rowsFor(choiceCount: Int): Int = (choiceCount + COLUMN_COUNT - 1) / COLUMN_COUNT
 }
@@ -148,6 +177,13 @@ internal enum class GestureChoicePane(
      */
     val pagerArrowOffset: Double
         get() = pagerStatusX - pagerArrowLeftX
+
+    /**
+     * 列中心を境にした列帯の半幅です。
+     * 1行へ名札＋操作枠など複数枠を並べる一覧行で、列帯の左端を出すときに使います。
+     */
+    val columnBandHalfWidth: Double
+        get() = (rightX - leftX) / 2.0
 
     /** 左列カードの横範囲（左端・右端）です。 */
     val leftColumnRange: ClosedFloatingPointRange<Double>
