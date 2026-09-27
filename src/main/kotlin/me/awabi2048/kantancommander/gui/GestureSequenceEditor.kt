@@ -7342,42 +7342,6 @@ class GestureSequenceEditor(
                     showSettingScreen()
                     return
                 }
-                // issue #29: 内包対象プリセットは位置仕様の対象部だけを書き換えます。
-                // 単一限定では複数になり得る候補を拒否し、静的0..1だけを許可します。
-                // 選択済みの再クリックで詳細条件（TARGET_FILTERS）へ進みます。
-                // 距離も詳細画面の項目から変更し、保存形式は変えません。
-                if (group == "position-entity-preset") {
-                    val preset = runCatching { SettingPresets.TargetPreset.valueOf(value) }.getOrNull() ?: return
-                    if (MultiPositionPolicy.multiplicityFor(settingContext.role) == PositionMultiplicity.SINGLE &&
-                        preset != SettingPresets.TargetPreset.NEAREST_PLAYER
-                    ) {
-                        return
-                    }
-                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
-                    val matched = SettingPresets.matchTargetPreset(current?.target) == preset
-                    rememberSettingNode(encoded)
-                    if (matched) {
-                        pushSettingFrame(
-                            player,
-                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
-                            encoded,
-                        )
-                        return
-                    }
-                    if (!updateSettingNode(player, settingContext) {
-                            val base = CommandSettingsModel.positionSpec(it, settingContext.role)
-                                ?.takeIf { base -> base.kind == PositionKind.TARGET }
-                                ?: PositionSpec(PositionKind.TARGET)
-                            CommandSettingsModel.setPositionSpec(
-                                it,
-                                settingContext.role,
-                                base.copy(kind = PositionKind.TARGET, target = SettingPresets.targetSpecFor(preset)),
-                            )
-                        }) return
-                    clearDetailVisited(fieldKey, settingContext.role)
-                    if (state.settingRoute.size > 1) popSettingFrame(player) else showSettingScreen()
-                    return
-                }
                 // issue #29: スポーン種別の2択です。選択後は子画面内で表示だけを
                 // 切り替え、画面を閉じません。子画面を閉じる導線は戻る操作です。
                 if (group == "myworld-spawn") {
@@ -7998,9 +7962,10 @@ class GestureSequenceEditor(
                 // 項目選択と内容確定の二段階契約です。1回目は項目の選択だけを
                 // 行い、同じ項目への連続クリックで内容を確定します。永続選択との
                 // OR判定は使わず、切替操作（別項目の選択）が誤入室・誤切替しない
-                // ようにします。保存は1クリック1回に統一し、同一ハンドラ内の
-                // 連続保存によるリビジョン競合を作りません。失敗時は経路記憶を
-                // 更新せず、最新表示へ戻します。
+                // ようにします。真偽値だけは内部設定を持たないため1クリックで
+                // 項目選択と反転を同時に保存します。保存は1クリック1回に統一し、
+                // 同一ハンドラ内の連続保存によるリビジョン競合を作りません。
+                // 失敗時は経路記憶を更新せず、最新表示へ戻します。
                 val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
                 if (value == "attribute") {
                     val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
@@ -8064,6 +8029,23 @@ class GestureSequenceEditor(
                 }
                 val previous = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
                 val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
+                // 真偽値は内部設定を持たないため二段階を設けず、項目選択と反転を
+                // 同一保存で行います（召喚時個別設定と同じ1クリック契約）。
+                // 別項目からの切替では値欄を引き継がずfalse相当から反転します。
+                if (definition.valueKind == EntityPropertyValueKind.BOOLEAN) {
+                    val raw = if (previous == propertyId) node.string(EntityDataSchema.PARAM_VALUE) else ""
+                    val toggled = EntityDataSchema.toggledBooleanValue(raw)
+                    if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityDataSchema.PARAM_VALUE)) {
+                            CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
+                            CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, toggled)
+                        }) {
+                        notifySaveFailed()
+                        return
+                    }
+                    rememberSettingNode(encoded, interactionMode)
+                    showSettingScreen()
+                    return
+                }
                 if (!consecutive || previous != propertyId) {
                     if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
@@ -8081,17 +8063,8 @@ class GestureSequenceEditor(
                 }
                 rememberSettingNode(encoded, interactionMode)
                 when (definition.valueKind) {
-                    // 真偽値は項目選択と分離した単一保存で切り替えます。子画面を持ちません。
-                    EntityPropertyValueKind.BOOLEAN -> {
-                        val toggled = EntityDataSchema.toggledBooleanValue(node.string(EntityDataSchema.PARAM_VALUE))
-                        if (!updateSettingNode(player, settingContext) {
-                                CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, toggled)
-                            }) {
-                            notifySaveFailed()
-                            return
-                        }
-                        showSettingScreen()
-                    }
+                    // 真偽値は上の1クリック即時反転で処理済みのため到達しません。
+                    EntityPropertyValueKind.BOOLEAN -> Unit
                     EntityPropertyValueKind.ENUM -> {
                         if (settingSelectionAction(consecutive, interactionMode) !=
                             GestureSettingSelectionAction.ENTER_CHILD

@@ -370,7 +370,9 @@ class GestureLowerPanel(
                 pathLast,
             )
         }
-        val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
+        val selectedDetail = choices.firstOrNull {
+            it.selected && it.effectiveInteractionMode == GestureSettingInteractionMode.SELECT_AND_DETAILS
+        }
         val warning = attentionWarning(player, node, fieldKey, attentionFields)
         val detailHint = selectedDetail
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
@@ -745,13 +747,17 @@ class GestureLowerPanel(
             ),
             state.settingTreePath?.nodeIds?.lastOrNull(),
         )
-        val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
+        val selectedDetail = choices.firstOrNull {
+            it.selected && it.effectiveInteractionMode == GestureSettingInteractionMode.SELECT_AND_DETAILS
+        }
         // エンティティのデータ設定は二段階操作のため、葉の選択中にも
         // 再クリックの案内を出します。子を持つ項目の案内を優先します。
         val reclickHint = if (screen == GestureSettingScreen.ENTITY_DATA_ROOT ||
             screen == GestureSettingScreen.SUMMON_DATA_ROOT
         ) {
-            choices.firstOrNull { it.selected && !it.hasChildren }
+            choices.firstOrNull {
+                it.selected && it.effectiveInteractionMode == GestureSettingInteractionMode.SELECT
+            }
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_RECLICK_APPLY) }
         } else null
         val warning = attentionWarning(player, node, fieldKey, attentionFields)
@@ -1316,7 +1322,9 @@ class GestureLowerPanel(
             rawChoices,
             state.triggerDetailSelectedChoiceId ?: defaultChoice,
         )
-        val detailHint = choices.firstOrNull { it.selected && it.hasChildren }
+        val detailHint = choices.firstOrNull {
+            it.selected && it.effectiveInteractionMode == GestureSettingInteractionMode.SELECT_AND_DETAILS
+        }
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.detailDocument(
@@ -2056,14 +2064,18 @@ class GestureLowerPanel(
         val pageCount = ((settingChoices.size + pageSize - 1) / pageSize).coerceAtLeast(1)
         val page = state.settingChoicePage.coerceIn(0, pageCount - 1)
         val pageChoices = settingChoices.drop(page * pageSize).take(pageSize)
-        val selectedDetail = pageChoices.firstOrNull { it.selected && it.hasChildren }
+        val selectedDetail = pageChoices.firstOrNull {
+            it.selected && it.effectiveInteractionMode == GestureSettingInteractionMode.SELECT_AND_DETAILS
+        }
         // エンティティのデータ設定は二段階操作のため、子を持たない葉の
         // 選択中にも再クリックの案内を出します。子を持つ項目の案内を優先し、
         // 表示中のページの選択だけを対象にします。
         val reclickHint = if (settingScreen == GestureSettingScreen.ENTITY_DATA_ROOT ||
             settingScreen == GestureSettingScreen.SUMMON_DATA_ROOT
         ) {
-            pageChoices.firstOrNull { it.selected && !it.hasChildren }
+            pageChoices.firstOrNull {
+                it.selected && it.effectiveInteractionMode == GestureSettingInteractionMode.SELECT
+            }
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_RECLICK_APPLY) }
         } else null
         val warning = attentionWarning(player, node, field.key, attentionFields)
@@ -3539,7 +3551,7 @@ class GestureLowerPanel(
             }
         }
         // issue #29: プリセットの説明は専用キーで示します。
-        choice.id.startsWith("target-preset:") || choice.id.startsWith("position-entity-preset:") ||
+        choice.id.startsWith("target-preset:") ||
             choice.id.startsWith("facing-entity-preset:") || choice.id.startsWith("facing-copy-preset:") -> when (choice.id.substringAfterLast(":")) {
             "NEARBY_PLAYERS" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PRESET_TARGET_NEARBY_PLAYERS)
@@ -3849,7 +3861,10 @@ class GestureLowerPanel(
                     CommandSettingsModel.positionKind(node, CommandSettingRole.TEMPORARY_LOCATION_POSITION)
                         ?.let { positionKindLabel(player, it) },
                 ),
-                selected = node.temporaryLocationPositionSpec != null,
+                // 位置・向きは編集入口であり、選択状態を持ちません。
+                // 1クリックで子画面へ進むためDETAILS_ONLYを明示します。
+                selected = false,
+                interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
                 children = positionChoices(
                     node,
                     context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION),
@@ -3866,7 +3881,8 @@ class GestureLowerPanel(
                         ?.kind
                         ?.let { facingKindLabel(player, it) },
                 ),
-                selected = node.temporaryLocationFacingSpec != null,
+                selected = false,
+                interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
                 children = facingChoices(
                     node,
                     context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING),
@@ -3877,12 +3893,12 @@ class GestureLowerPanel(
         )
         GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player).map { choice ->
             when (choice.id) {
+                // 対象・位置は編集入口であり、選択状態を持ちません。
+                // 1クリックで子画面へ進むためDETAILS_ONLYを明示します。
+                // 設定済み状態はvalueStateの空色枠が担います。
                 "condition-target" -> choice.copy(
-                    selected = CommandSettingsModel.isFieldConfigured(
-                        node,
-                        "target",
-                        CommandSettingRole.NODE_TARGET,
-                    ),
+                    selected = false,
+                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
                     children = targetChoices(
                         node,
                         context.copy(role = CommandSettingRole.NODE_TARGET),
@@ -3890,11 +3906,8 @@ class GestureLowerPanel(
                     ),
                 )
                 "condition-position" -> choice.copy(
-                    selected = CommandSettingsModel.isFieldConfigured(
-                        node,
-                        "position",
-                        CommandSettingRole.CONDITION_POSITION,
-                    ),
+                    selected = false,
+                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
                     children = positionChoices(
                         node,
                         context.copy(role = CommandSettingRole.CONDITION_POSITION),
@@ -3981,7 +3994,7 @@ class GestureLowerPanel(
             choiceId.startsWith("kind:") || choiceId.startsWith("filter:") ->
             setOfNotNull(role?.tabFieldKey ?: "target")
         choiceId.startsWith("position:") || choiceId.startsWith("position-preset:") ||
-            choiceId == "position-entity" || choiceId.startsWith("position-entity-preset:") ||
+            choiceId == "position-entity" ||
             choiceId.startsWith("myworld-spawn:") ->
             setOfNotNull(role?.tabFieldKey ?: "position")
         choiceId.startsWith("facing:") || choiceId.startsWith("facing-preset:") ||
@@ -4073,10 +4086,6 @@ class GestureLowerPanel(
                 SettingPresets.matchFacingPreset(CommandSettingsModel.facingSpec(node, context.role))?.name ==
                 id.removePrefix("facing-preset:") &&
                 CommandSettingsModel.isFacingSpecComplete(CommandSettingsModel.facingSpec(node, context.role))
-            id.startsWith("position-entity-preset:") -> choice.selected &&
-                SettingPresets.matchTargetPreset(CommandSettingsModel.positionSpec(node, context.role)?.target)?.name ==
-                id.removePrefix("position-entity-preset:") &&
-                CommandSettingsModel.positionSpec(node, context.role) != null
             id.startsWith("facing-entity-preset:") -> choice.selected &&
                 SettingPresets.matchTargetPreset(CommandSettingsModel.facingSpec(node, context.role)?.target)?.name ==
                 id.removePrefix("facing-entity-preset:") &&
@@ -4129,6 +4138,18 @@ class GestureLowerPanel(
                 node,
                 "position",
                 CommandSettingRole.CONDITION_POSITION,
+            )
+            // 再生対象・再生位置は編集入口のため選択状態を持ちません。
+            // 設定済みの空色枠だけが状態を表します。
+            id == "sound-target" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "target",
+                CommandSettingRole.NODE_TARGET,
+            )
+            id == "sound-position" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "position",
+                CommandSettingRole.SOUND_POSITION,
             )
             id.startsWith("condition-control-block-state:") -> {
                 val controlState = runCatching {
@@ -4420,7 +4441,10 @@ class GestureLowerPanel(
                         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
                         node.targetSpec?.kind?.let { targetKindLabel(player, it) },
                     ),
-                    selected = CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET),
+                    // 再生対象・再生位置は編集入口であり、選択状態を持ちません。
+                    // 1クリックで子画面へ進むためDETAILS_ONLYを明示します。
+                    selected = false,
+                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
                     children = targetChoices(node, context.copy(role = CommandSettingRole.NODE_TARGET), player),
                 ),
             )
@@ -4434,7 +4458,8 @@ class GestureLowerPanel(
                             CommandSettingsModel.positionKind(node, CommandSettingRole.SOUND_POSITION)
                                 ?.let { positionKindLabel(player, it) },
                         ),
-                        selected = CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.SOUND_POSITION),
+                        selected = false,
+                        interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
                         children = positionChoices(node, context.copy(role = CommandSettingRole.SOUND_POSITION), player),
                     ),
                 )
@@ -4474,6 +4499,7 @@ class GestureLowerPanel(
                             ),
                         ),
                         selected = false,
+                        interactionMode = GestureSettingInteractionMode.TOGGLE,
                         toggleValue = wireframe,
                     ),
                 )
@@ -4771,6 +4797,7 @@ class GestureLowerPanel(
                                         else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
                                     )
                                 }.orEmpty(),
+                                interactionMode = GestureSettingInteractionMode.TOGGLE,
                                 toggleValue = toggle,
                             ),
                         )
@@ -4835,6 +4862,7 @@ class GestureLowerPanel(
                                     else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
                                 )
                             }.orEmpty(),
+                            interactionMode = GestureSettingInteractionMode.TOGGLE,
                             toggleValue = current?.toBooleanStrictOrNull(),
                         ),
                     )
@@ -4956,6 +4984,11 @@ class GestureLowerPanel(
                     configured,
                     detailVisited,
                 ),
+                // 内包役割では選択済みの再クリックで絞込子画面へ進みます。
+                // 通常役割の再クリックは距離入力Dialogなので選択だけのままにします。
+                interactionMode = if (embedded) {
+                    GestureSettingInteractionMode.SELECT_AND_DETAILS
+                } else null,
             )
         }
         val detailed = buildList {
@@ -5040,6 +5073,9 @@ class GestureLowerPanel(
                 SettingChoice(
                     "filter:$id",
                     labeled(player, label, value(id)),
+                    // 領域の子項目は同じ一覧内の行として直接操作するため、行自体は
+                    // 選択だけを行い、子画面への遷移は持ちません。
+                    interactionMode = if (id == "region") GestureSettingInteractionMode.SELECT else null,
                     children = if (id == "region") regionChildren(spec.region, player, "filter") else emptyList(),
                 )
             }
@@ -5184,6 +5220,8 @@ class GestureLowerPanel(
             selected = current?.kind == PositionKind.TARGET && (matchedPreset == null || detailVisited) &&
                 positionChoiceComplete(node, context.role),
             // 再クリックで共用の対象子画面へ進むため、子選択肢は持たせない。
+            // 子を持たなくても遷移意味は「選択後に詳細」のため明示します。
+            interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
             // 単一限定でも導線自体は開く。
             enabled = true,
             disabledHoverText = null,
@@ -5251,6 +5289,7 @@ class GestureLowerPanel(
         player: Player,
         prefix: String,
         role: CommandSettingRole?,
+        interactionMode: GestureSettingInteractionMode? = null,
     ): List<SettingChoice> {
         val matched = SettingPresets.matchTargetPreset(current)
         // issue #29: 単一限定では複数になり得る内包候補だけを無効化し、
@@ -5271,6 +5310,7 @@ class GestureLowerPanel(
                 enabled = enabled,
                 disabledHoverText = if (enabled) null
                 else CommandSettingAvailabilityPolicy.MULTI_POSITION_DISABLED_HOVER,
+                interactionMode = interactionMode,
             )
         }
     }
@@ -5308,7 +5348,14 @@ class GestureLowerPanel(
                 id = "facing-entity",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
                 selected = current?.kind == FacingKind.TARGET && (matchedPreset == null || detailVisited) && complete,
-                children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset", context.role),
+                // 選択済みの再クリックで絞込子画面へ進みます。
+                children = embeddedTargetPresetChoices(
+                    current?.target,
+                    player,
+                    "facing-entity-preset",
+                    context.role,
+                    interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
+                ),
             ),
         )
         return presets + upperEntity + listOf(
@@ -5316,7 +5363,13 @@ class GestureLowerPanel(
                 id = "facing-copy",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COPY_ORIENTATION),
                 selected = current?.kind == FacingKind.COPY_ORIENTATION && complete,
-                children = embeddedTargetPresetChoices(current?.target, player, "facing-copy-preset", context.role),
+                children = embeddedTargetPresetChoices(
+                    current?.target,
+                    player,
+                    "facing-copy-preset",
+                    context.role,
+                    interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
+                ),
                 bottomAligned = true,
             ),
         ) + listOf(
@@ -5353,11 +5406,17 @@ class GestureLowerPanel(
                 SettingChoice(
                     "condition-target",
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
-                    node.targetSpec != null,
+                    selected = false,
+                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
                 ),
             )
             ConditionSubject.PLAYER -> listOf(
-                SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), node.targetSpec != null),
+                SettingChoice(
+                    "condition-target",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                    selected = false,
+                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
+                ),
                 SettingChoice(
                     "condition-state",
                     label(
@@ -5406,6 +5465,7 @@ class GestureLowerPanel(
                             "condition-direct",
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
                             selected = false,
+                            interactionMode = GestureSettingInteractionMode.TOGGLE,
                             toggleValue = true,
                         ),
                     )
@@ -5421,6 +5481,9 @@ class GestureLowerPanel(
                                         KcI18n.text(player, key)
                                     },
                                 ),
+                                // 子項目は同じ一覧内の行として直接操作するため、行自体は
+                                // 選択だけを行い、子画面への遷移は持ちません。
+                                interactionMode = GestureSettingInteractionMode.SELECT,
                                 children = regionChildren(node.regionSpec, player, "condition"),
                             ),
                         )
@@ -5432,13 +5495,19 @@ class GestureLowerPanel(
                             "condition-direct",
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
                             selected = false,
+                            interactionMode = GestureSettingInteractionMode.TOGGLE,
                             toggleValue = false,
                         ),
                     )
                 }
             }
             ConditionSubject.BLOCK -> listOf(
-                SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION), node.conditionPositionSpec != null),
+                SettingChoice(
+                    "condition-position",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION),
+                    selected = false,
+                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
+                ),
                 SettingChoice("condition-block", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, node.string("block", "minecraft:air"))),
             )
             // 制御ブロック自身の状態は、今後の項目追加を前提に複数選択の木として

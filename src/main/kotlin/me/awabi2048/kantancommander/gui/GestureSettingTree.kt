@@ -95,6 +95,9 @@ enum class GestureSettingInteractionMode {
 
     /** 項目の選択状態を変えず、クリックで詳細へ進みます。 */
     DETAILS_ONLY,
+
+    /** 値を1クリックで即時反転する。選択の二段階・詳細遷移を持たない。 */
+    TOGGLE,
 }
 
 /** 設定値の状態。初期値と明示設定済みを色・文言へ同時に投影します。 */
@@ -220,8 +223,14 @@ internal object GestureSettingVisualPolicy {
     /** クリック先が子画面なら§b、値入力・値変更なら§6、操作不能なら灰色です。 */
     fun settingChoiceTextColor(choice: GestureSettingTreeNode): NamedTextColor = when {
         !choice.enabled -> DisabledChoiceVisualPolicy.textColor
-        choice.hasChildren -> NamedTextColor.AQUA
-        else -> NamedTextColor.GOLD
+        else -> when (choice.effectiveInteractionMode) {
+            GestureSettingInteractionMode.SELECT_AND_DETAILS,
+            GestureSettingInteractionMode.DETAILS_ONLY,
+            -> NamedTextColor.AQUA
+            GestureSettingInteractionMode.SELECT,
+            GestureSettingInteractionMode.TOGGLE,
+            -> NamedTextColor.GOLD
+        }
     }
 
     /**
@@ -283,6 +292,7 @@ internal fun settingSelectionAction(
     }
     GestureSettingInteractionMode.SELECT -> GestureSettingSelectionAction.STAY_ON_FRAME
     GestureSettingInteractionMode.DETAILS_ONLY -> GestureSettingSelectionAction.ENTER_CHILD
+    GestureSettingInteractionMode.TOGGLE -> GestureSettingSelectionAction.STAY_ON_FRAME
 }
 
 /**

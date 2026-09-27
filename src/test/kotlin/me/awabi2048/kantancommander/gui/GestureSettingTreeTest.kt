@@ -105,6 +105,87 @@ class GestureSettingTreeTest {
     }
 
     @Test
+    fun `toggle interaction flips the value in one click without a second stage`() {
+        // 即時反転の選択肢は選択の二段階・詳細遷移を持たず、常に現在フレームへ留まります。
+        assertSame(
+            GestureSettingSelectionAction.STAY_ON_FRAME,
+            settingSelectionAction(
+                wasSelected = false,
+                interactionMode = GestureSettingInteractionMode.TOGGLE,
+            ),
+        )
+        assertSame(
+            GestureSettingSelectionAction.STAY_ON_FRAME,
+            settingSelectionAction(
+                wasSelected = true,
+                interactionMode = GestureSettingInteractionMode.TOGGLE,
+            ),
+        )
+    }
+
+    @Test
+    fun `choice text color follows the interaction mode instead of children`() {
+        // 子を持っても遷移を持たない行（領域の内包行など）は値入力と同じ金色です。
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.GOLD,
+            GestureSettingVisualPolicy.settingChoiceTextColor(
+                GestureSettingTreeNode(
+                    "filter:region",
+                    "領域",
+                    interactionMode = GestureSettingInteractionMode.SELECT,
+                    children = listOf(GestureSettingTreeNode("filter:region-clear", "解除")),
+                ),
+            ),
+        )
+        // 子を持たなくても再クリックで子画面へ進む行は水色です。
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.AQUA,
+            GestureSettingVisualPolicy.settingChoiceTextColor(
+                GestureSettingTreeNode(
+                    "position-entity",
+                    "実体参照",
+                    interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
+                ),
+            ),
+        )
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.AQUA,
+            GestureSettingVisualPolicy.settingChoiceTextColor(
+                GestureSettingTreeNode(
+                    "condition-target",
+                    "対象",
+                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
+                ),
+            ),
+        )
+        // 即時反転は二段階を持たないため金色です。
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.GOLD,
+            GestureSettingVisualPolicy.settingChoiceTextColor(
+                GestureSettingTreeNode(
+                    "wireframe:toggle",
+                    "枠線",
+                    interactionMode = GestureSettingInteractionMode.TOGGLE,
+                    toggleValue = true,
+                ),
+            ),
+        )
+        // 操作不能は遷移意味より無効色を優先します。
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.GRAY,
+            GestureSettingVisualPolicy.settingChoiceTextColor(
+                GestureSettingTreeNode(
+                    "filter:region",
+                    "領域",
+                    enabled = false,
+                    interactionMode = GestureSettingInteractionMode.SELECT,
+                    children = listOf(GestureSettingTreeNode("filter:region-clear", "解除")),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `random mode opens range input only after a second selection in the current route`() {
         assertEquals(
             VariableModeSelectionAction.SAVE_MODE,
