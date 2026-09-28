@@ -7,6 +7,7 @@ depend:
   - CC-System
   - MyWorldManager
 softdepend:
+  - ProtocolLib
   - MWMChanpon
   - CC-Content
   - WorldEdit

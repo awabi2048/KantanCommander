@@ -36,8 +36,9 @@ import java.util.UUID
  * issue #14の操作ツールwandの入力処理です。
  *
  * ワールド上で対象を直接選択し、選択後の操作は原則としてInventory GUIから行います。
- * 選択操作そのものと右クリックが競合する場合は、選択操作を優先します。
  * wand所持中のクリックは世界へ作用させず、常にキャンセルして選択操作にします。
+ * 操作体系は「左クリック＝メニュー起動 / 右クリック＝選択操作 / Fキー＝選択解除 /
+ * スニーク+スクロール＝モード切替」で統一し、選択済みEntityは操作者へだけ発光表示します。
  * ただし、かんたんコマンダー制御ブロックへのスニーク右クリックだけは例外とし、
  * バニラの使用・配置へ素通しするため横取りしません。
  *
@@ -59,6 +60,7 @@ class OperationToolListener(
 ) : Listener {
     private var editTask: BukkitTask? = null
     private val lastCandidateCounts = mutableMapOf<UUID, Int>()
+    private val glow = OperationToolGlow(plugin)
 
     /**
      * Entity右クリックを処理したtickです。
@@ -76,14 +78,30 @@ class OperationToolListener(
 
     fun displays(): OperationToolBoxDisplay = displays
 
+    /** 発光表示のパケット連携を開始します。プラグイン有効化時に呼び出します。 */
+    fun start() {
+        glow.start()
+    }
+
     /** 編集中Boxの追従タスクを停止します。プラグイン無効化時に呼び出します。 */
     fun stop() {
         editTask?.cancel()
         editTask = null
+        glow.stop()
         lastCandidateCounts.clear()
         entityClickTicks.clear()
         displays.removeAll()
         sessions.clear()
+    }
+
+    /**
+     * 選択Entityの発光表示を選択集合へ同期します。
+     *
+     * メニュー側の消失判定等で選択集合が縮んだ場合にも追従させるため、
+     * 選択を変更した全経路から呼び出します。
+     */
+    fun syncGlow(player: Player) {
+        glow.sync(player, sessions.get(player.uniqueId)?.selected() ?: emptySet())
     }
 
     // wand所持中の掘削・破壊は選択操作と誤認されるため抑止します。
@@ -101,11 +119,29 @@ class OperationToolListener(
         }
     }
 
-    // wand所持中のEntity攻撃は選択操作と誤認される上に対象を破壊し得るため抑止します。
+    /**
+     * wand所持中のEntity攻撃は対象を破壊し得るため抑止し、左クリック＝メニュー起動
+     * の操作体系に合わせてEntity操作GUIを開きます。
+     */
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     fun onAttack(event: PrePlayerAttackEntityEvent) {
-        if (KantanItemService.kind(event.player.inventory.itemInMainHand) == KantanItemKind.WAND) {
-            event.isCancelled = true
+        val player = event.player
+        if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
+        event.isCancelled = true
+        if (!requireManage(player)) return
+        val session = sessions.get(player.uniqueId) ?: return
+        if (session.editingBox != null) {
+            // Box編集中の左クリックは編集キャンセルです。Entityへの左クリックは
+            // PlayerInteractEventを通らず攻撃イベントになるため、ここでも揃えます。
+            session.cancelBoxEdit()
+            displays.dropEditing(player.uniqueId)
+            lastCandidateCounts.remove(player.uniqueId)
+            OperationToolFeedback.showStatus(player, session)
+            return
+        }
+        when (session.mode) {
+            OperationToolMode.AREA -> if (session.hasValidArea()) plugin.operationMenu.openArea(player)
+            else -> if (session.selected().isNotEmpty()) plugin.operationMenu.openEntity(player)
         }
     }
 
@@ -162,22 +198,58 @@ class OperationToolListener(
             return
         }
         val session = sessions.getOrCreate(player.uniqueId)
-        // 直接選択モードでの対象Entityへの右クリックは選択へ追加します。
-        // 高精度モデルHit Testは使用せず、クリック対象をそのまま扱います。
-        if (session.mode == OperationToolMode.ENTITY_DIRECT && isOperable(player, event.rightClicked)) {
-            val added = session.addEntities(listOf(event.rightClicked.uniqueId))
-            if (added.isEmpty() && session.selected().size >= session.maxEntities) {
-                OperationToolFeedback.notifyKey(
-                    player, session,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_FULL,
-                    mapOf("max" to session.maxEntities),
-                    NamedTextColor.RED,
-                )
-            } else if (added.isNotEmpty()) {
-                OperationToolFeedback.showStatus(player, session)
+        // Entity右クリックはモードに応じた選択操作です。直後のuse_item由来
+        // PlayerInteractEventはentityClickTicksで抑止済みのため、ここで
+        // 右クリックの役割をすべて処理します。高精度モデルHit Testは使用しません。
+        when (session.mode) {
+            // 直接選択モードでは対象Entityへの右クリックが選択トグルです。
+            OperationToolMode.ENTITY_DIRECT -> {
+                if (isOperable(player, event.rightClicked)) {
+                    toggleDirectSelection(player, session, event.rightClicked)
+                }
             }
+            // 範囲モードではEntityを向いた右クリックでもBox編集を開始・確定します。
+            // これをonInteract側だけに任せると、Entityを狙ったクリックが抑止されて
+            // 完了できないため、Entity側でも同じ操作を実行します。
+            OperationToolMode.ENTITY_RANGE -> {
+                if (session.editingBox != null) {
+                    confirmBox(player, session)
+                } else if (player.isSneaking) {
+                    startBoxEdit(player, session)
+                }
+            }
+            // エリアモードではEntity右クリックを吸収します（pos2の誤設定を防ぐ）。
+            OperationToolMode.AREA -> Unit
         }
         event.isCancelled = true
+    }
+
+    /**
+     * 直接選択モードのEntity右クリックを選択追加・除外のトグルとして扱います。
+     */
+    private fun toggleDirectSelection(player: Player, session: OperationToolSession, target: Entity) {
+        if (session.removeEntity(target.uniqueId)) {
+            syncGlow(player)
+            OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_REMOVED,
+                emptyMap(),
+                NamedTextColor.YELLOW,
+            )
+            return
+        }
+        val added = session.addEntities(listOf(target.uniqueId))
+        if (added.isEmpty() && session.selected().size >= session.maxEntities) {
+            OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_FULL,
+                mapOf("max" to session.maxEntities),
+                NamedTextColor.RED,
+            )
+        } else if (added.isNotEmpty()) {
+            syncGlow(player)
+            OperationToolFeedback.showStatus(player, session)
+        }
     }
 
     /**
@@ -203,6 +275,7 @@ class OperationToolListener(
             val forward = isScrollForward(event.previousSlot, event.newSlot)
             session.setMode(if (forward) session.mode.next() else session.mode.previous())
             displays.clear(player.uniqueId)
+            glow.clear(player.uniqueId)
             lastCandidateCounts.remove(player.uniqueId)
             // モード切替のチャット通知は行わず、ActionBarの状態表示のみ残します。
             OperationToolFeedback.showStatus(player, session)
@@ -243,13 +316,29 @@ class OperationToolListener(
     }
 
     /**
-     * Fキー入替でwandがメインハンドから外れた場合は編集中Boxを解除します。
+     * メインハンドにwandがある状態でのFキーは「選択解除」です。
      *
-     * 入替後のメインハンド（入替前のオフハンド）で判定します。
+     * 入替イベント自体をキャンセルしてwandをメインハンドへ固定し、
+     * Fキーを専用の解除ボタンとして扱います。wandがオフハンド側にある
+     * 場合の入替はメインハンドへ戻す通常操作として通します。
      */
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onSwapHands(event: PlayerSwapHandItemsEvent) {
-        cancelEditingIfHandLeft(event.player, event.mainHandItem)
+        if (KantanItemService.kind(event.offHandItem) != KantanItemKind.WAND) return
+        event.isCancelled = true
+        val player = event.player
+        val session = sessions.get(player.uniqueId) ?: return
+        if (!session.hasSelectionState()) return
+        session.clearAll()
+        displays.clear(player.uniqueId)
+        glow.clear(player.uniqueId)
+        lastCandidateCounts.remove(player.uniqueId)
+        OperationToolFeedback.notifyKey(
+            player, session,
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_CLEARED,
+            emptyMap(),
+            NamedTextColor.YELLOW,
+        )
     }
 
     /**
@@ -271,8 +360,10 @@ class OperationToolListener(
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onQuit(event: PlayerQuitEvent) {
         // ログアウトだけでは選択を解除せず、編集中Boxの解除と表示破棄に留めます。
+        // 発光はパケット偽装のため、次回ログイン時の同期で復元します。
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
+        glow.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         entityClickTicks.remove(event.player.uniqueId)
         plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
@@ -282,6 +373,7 @@ class OperationToolListener(
     fun onKick(event: PlayerKickEvent) {
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
+        glow.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         entityClickTicks.remove(event.player.uniqueId)
         plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
@@ -300,6 +392,7 @@ class OperationToolListener(
         if (!session.hasSelectionState()) return
         session.clearAll()
         displays.clear(event.player.uniqueId)
+        glow.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         OperationToolFeedback.notifyKey(
             event.player, session,
@@ -313,44 +406,43 @@ class OperationToolListener(
     fun onJoin(event: PlayerJoinEvent) {
         // 表示は操作者専用のため、参加者から他者のBox表示を隠します。
         displays.hideFrom(event.player.uniqueId)
-        // ログアウトで破棄された表示のうち、同ワールドのエリア指定だけを復元します。
+        // ログアウトで破棄された表示のうち、同ワールドのエリア指定と
+        // 選択Entityの発光を復元します。
         val playerId = event.player.uniqueId
         plugin.server.scheduler.runTaskLater(plugin, Runnable {
             val player = plugin.server.getPlayer(playerId) ?: return@Runnable
             val session = sessions.get(playerId) ?: return@Runnable
             updateAreaDisplay(player, session)
+            syncGlow(player)
         }, 1L)
     }
 
+    /**
+     * 左クリックはメニュー起動の操作です。
+     *
+     * AREAモードでは未選択時のみ左クリックのBlockをpos1として設定し、
+     * 選択済みではエリア操作GUIを開きます。選択済みの再指定はスニーク+
+     * 左クリックです。EntityモードではBox編集中の左クリックだけ例外として
+     * 編集キャンセルとし、それ以外はEntity操作GUIを開きます。
+     */
     private fun onLeftClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
-        if (player.isSneaking) {
-            // スニーク + 左クリックで現在の選択と履歴をすべて解除します。
-            session.clearAll()
-            displays.clear(player.uniqueId)
-            lastCandidateCounts.remove(player.uniqueId)
-            OperationToolFeedback.notifyKey(
-                player, session,
-                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_CLEARED,
-                emptyMap(),
-                NamedTextColor.YELLOW,
-            )
-            return
-        }
         when (session.mode) {
             OperationToolMode.AREA -> {
-                // 左クリックしたBlockをpos1として設定します。再指定時は更新します。
-                // Entity選択用のUndoはこのモードに適用せず、空中は無視します。
-                if (event.action != Action.LEFT_CLICK_BLOCK) return
-                val block = event.clickedBlock ?: return
-                val point = RegionPoint(block.world.name, block.location.toSpatialVector())
-                session.setPos1(point)
-                OperationToolFeedback.notifyKey(
-                    player, session,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS1_SET,
-                    mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
-                    NamedTextColor.AQUA,
-                )
-                updateAreaDisplay(player, session)
+                val block = if (event.action == Action.LEFT_CLICK_BLOCK) event.clickedBlock else null
+                if (block != null && (player.isSneaking || !session.hasValidArea())) {
+                    setPos1(player, session, block)
+                    return
+                }
+                if (session.hasValidArea()) {
+                    plugin.operationMenu.openArea(player)
+                } else {
+                    OperationToolFeedback.notifyKey(
+                        player, session,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_AREA_GUIDE,
+                        emptyMap(),
+                        NamedTextColor.YELLOW,
+                    )
+                }
             }
             OperationToolMode.ENTITY_RANGE, OperationToolMode.ENTITY_DIRECT -> {
                 if (session.editingBox != null) {
@@ -361,28 +453,6 @@ class OperationToolListener(
                     OperationToolFeedback.showStatus(player, session)
                     return
                 }
-                // 左クリックで直前の確定済み選択操作をUndoします。
-                val removed = session.undoLast()
-                if (removed.isEmpty()) {
-                    OperationToolFeedback.notifyKey(
-                        player, session,
-                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_UNDO_EMPTY,
-                        emptyMap(),
-                        NamedTextColor.RED,
-                    )
-                } else {
-                    OperationToolFeedback.showStatus(player, session)
-                }
-            }
-        }
-    }
-
-    private fun onRightClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
-        when (session.mode) {
-            OperationToolMode.AREA -> onAreaRightClick(player, session, event)
-            OperationToolMode.ENTITY_RANGE -> onRangeRightClick(player, session)
-            OperationToolMode.ENTITY_DIRECT -> {
-                // 対象Entityを指していない状態での右クリックはEntity操作GUIを開きます。
                 if (session.selected().isNotEmpty()) {
                     plugin.operationMenu.openEntity(player)
                 } else {
@@ -397,21 +467,36 @@ class OperationToolListener(
         }
     }
 
-    private fun onAreaRightClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
-        if (event.action != Action.RIGHT_CLICK_BLOCK) {
-            // 有効なエリア選択後の空中右クリックはエリア操作GUIを開きます。
-            if (session.hasValidArea()) {
-                plugin.operationMenu.openArea(player)
+    private fun onRightClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
+        when (session.mode) {
+            OperationToolMode.AREA -> {
+                // 右クリックしたBlockをpos2として設定します。完了後も常に再指定できます。
+                if (event.action != Action.RIGHT_CLICK_BLOCK) return
+                val block = event.clickedBlock ?: return
+                val point = RegionPoint(block.world.name, block.location.toSpatialVector())
+                session.setPos2(point)
+                OperationToolFeedback.notifyKey(
+                    player, session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS2_SET,
+                    mapOf("x" to block.x, "y" to block.y, "z" to block.z),
+                    NamedTextColor.AQUA,
+                )
+                updateAreaDisplay(player, session)
             }
-            return
+            OperationToolMode.ENTITY_RANGE -> onRangeRightClick(player, session)
+            // 直接選択モードの右クリックはEntity側の [onInteractEntity] で処理します。
+            // 空気・ブロックへの右クリックは操作なしです。
+            OperationToolMode.ENTITY_DIRECT -> Unit
         }
-        val block = event.clickedBlock ?: return
+    }
+
+    private fun setPos1(player: Player, session: OperationToolSession, block: org.bukkit.block.Block) {
         val point = RegionPoint(block.world.name, block.location.toSpatialVector())
-        session.setPos2(point)
+        session.setPos1(point)
         OperationToolFeedback.notifyKey(
             player, session,
-            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS2_SET,
-            mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS1_SET,
+            mapOf("x" to block.x, "y" to block.y, "z" to block.z),
             NamedTextColor.AQUA,
         )
         updateAreaDisplay(player, session)
@@ -440,24 +525,22 @@ class OperationToolListener(
             return
         }
         if (player.isSneaking) {
-            // スニーク + 右クリックでBox選択を開始します。
-            val anchor = eyePoint(player, boxReach)
-            session.startBoxEdit(EditingBox(player.world.name, anchor, anchor))
-            lastCandidateCounts[player.uniqueId] = 0
-            ensureEditTask()
-            return
+            startBoxEdit(player, session)
         }
-        if (session.selected().isNotEmpty()) {
-            // Box非編集中かつ選択済みの右クリックはEntity操作GUIを開きます。
-            plugin.operationMenu.openEntity(player)
-        } else {
-            OperationToolFeedback.notifyKey(
-                player, session,
-                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_NO_SELECTION,
-                emptyMap(),
-                NamedTextColor.YELLOW,
-            )
-        }
+        // メニュー起動は左クリックへ統一したため、範囲モードの右クリックは
+        // Box編集の開始・確定だけを担当します。
+    }
+
+    /**
+     * スニーク + 右クリックでBox選択を開始します。
+     *
+     * 空気・ブロックへの右クリックとEntityへの右クリックの双方から呼ばれます。
+     */
+    private fun startBoxEdit(player: Player, session: OperationToolSession) {
+        val anchor = eyePoint(player, boxReach)
+        session.startBoxEdit(EditingBox(player.world.name, anchor, anchor))
+        lastCandidateCounts[player.uniqueId] = 0
+        ensureEditTask()
     }
 
     /**
@@ -493,6 +576,7 @@ class OperationToolListener(
         val added = session.addEntities(candidates)
         session.cancelBoxEdit()
         lastCandidateCounts.remove(player.uniqueId)
+        syncGlow(player)
         if (added.isNotEmpty()) {
             displays.replaceConfirmed(player.uniqueId, box.worldName, minimum, maximum)
             OperationToolFeedback.notifyKey(

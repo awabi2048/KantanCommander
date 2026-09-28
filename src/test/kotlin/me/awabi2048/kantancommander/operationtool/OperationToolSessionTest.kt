@@ -19,7 +19,6 @@ class OperationToolSessionTest {
         session.addEntities(listOf(UUID.randomUUID()))
         assertEquals(OperationToolMode.ENTITY_RANGE, session.setMode(OperationToolMode.ENTITY_RANGE))
         assertTrue(session.selected().isEmpty())
-        assertEquals(0, session.undoDepth())
         assertFalse(session.hasValidArea())
         assertEquals(OperationToolMode.ENTITY_DIRECT, session.mode.next())
         assertEquals(OperationToolMode.AREA, OperationToolMode.ENTITY_DIRECT.next())
@@ -49,22 +48,17 @@ class OperationToolSessionTest {
         assertEquals(setOf(first, second), session.addEntities(listOf(first, second)))
         assertEquals(emptySet<UUID>(), session.addEntities(listOf(first, second)))
         assertEquals(setOf(first, second), session.selected())
-        assertEquals(1, session.undoDepth())
     }
 
     @Test
-    fun `undo removes only the last operation diff`() {
+    fun `removeEntity drops only the targeted entity`() {
         val session = OperationToolSession()
         val first = UUID.randomUUID()
         val second = UUID.randomUUID()
-        val third = UUID.randomUUID()
         session.addEntities(listOf(first, second))
-        session.addEntities(listOf(second, third))
-        assertEquals(setOf(third), session.undoLast())
-        assertEquals(setOf(first, second), session.selected())
-        assertEquals(setOf(first, second), session.undoLast())
-        assertTrue(session.selected().isEmpty())
-        assertTrue(session.undoLast().isEmpty())
+        assertTrue(session.removeEntity(first))
+        assertFalse(session.removeEntity(first))
+        assertEquals(setOf(second), session.selected())
     }
 
     @Test
@@ -98,15 +92,13 @@ class OperationToolSessionTest {
     }
 
     @Test
-    fun `retainExisting drops vanished entities from selection and history`() {
+    fun `retainExisting drops vanished entities from selection`() {
         val session = OperationToolSession()
         val alive = UUID.randomUUID()
         val vanished = UUID.randomUUID()
         session.addEntities(listOf(alive, vanished))
         session.retainExisting { it == alive }
         assertEquals(setOf(alive), session.selected())
-        assertEquals(setOf(alive), session.undoLast())
-        assertTrue(session.selected().isEmpty())
     }
 
     @Test

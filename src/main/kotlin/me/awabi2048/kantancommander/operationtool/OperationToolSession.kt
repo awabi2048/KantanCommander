@@ -8,9 +8,8 @@ import java.util.UUID
  * issue #14の操作ツールwandのプレイヤー単位の選択状態です。
  *
  * Bukkit実体は保持せず、EntityはUUID・位置は [SpatialVector] で扱います。
- * Entity選択は範囲・直接のどちらでも常に加算型とし、各確定操作の差分を
- * 履歴として保持します。左クリックUndoはこの履歴のみ対象とし、タグ変更・
- * 削除・Group作成・Structure保存等のdomain操作は取り消しません。
+ * Entity選択は範囲・直接のどちらでも常に加算型とし、直接選択の再右クリックは
+ * そのEntityを選択から外します。選択集合のUndo履歴は持ちません。
  *
  * 選択状態の解除は、サーバー再起動（session破棄）・モード変更・ワールド移動・
  * 明示的全解除の場合に限ります。ツールの持ち替え・GUI閉鎖等だけでは解除しません。
@@ -37,22 +36,15 @@ class OperationToolSession(
         private set
 
     private val selectedEntities = linkedSetOf<UUID>()
-    private val undoHistory = ArrayDeque<Set<UUID>>()
 
     /** 現在のEntity選択集合のスナップショットです。 */
     fun selected(): Set<UUID> = selectedEntities.toSet()
 
     /**
      * ワールドへ紐付く選択状態（Entity選択・エリア指定・未確定Box）が残っているかを返します。
-     *
-     * ワールド移動時の解除判定に使います。選択Undo履歴だけが残っている状態は
-     * 対象Entityを持たないためfalseとし、通知なしに解除できます。
      */
     fun hasSelectionState(): Boolean =
         selectedEntities.isNotEmpty() || pos1 != null || pos2 != null || editingBox != null
-
-    /** 選択Undo履歴の深さです。 */
-    fun undoDepth(): Int = undoHistory.size
 
     /**
      * モードを変更し、その時点の選択状態と選択Undo履歴をすべて解除します。
@@ -113,8 +105,7 @@ class OperationToolSession(
      * 候補Entityを選択集合へ加算します。
      *
      * 既に選択済みの重複は追加せず、未選択の候補のみを追加します。
-     * 上限到達後はそれ以上追加しません。新たに追加された差分が空でない場合のみ
-     * 履歴へ積みます。戻り値は今回新たに追加されたEntityです。
+     * 上限到達後はそれ以上追加しません。戻り値は今回新たに追加されたEntityです。
      */
     fun addEntities(candidates: Collection<UUID>): Set<UUID> {
         val added = linkedSetOf<UUID>()
@@ -122,47 +113,25 @@ class OperationToolSession(
             if (selectedEntities.size + added.size >= maxEntities) break
             if (selectedEntities.contains(candidate) || !added.add(candidate)) continue
         }
-        if (added.isNotEmpty()) {
-            selectedEntities.addAll(added)
-            undoHistory.addLast(added.toSet())
-        }
+        selectedEntities.addAll(added)
         return added
     }
 
-    /**
-     * 直前の確定済み選択操作をUndoします。
-     *
-     * その操作で新たに追加されたEntityのみを選択から外します。
-     * 戻り値は外されたEntityであり、履歴が空の場合は空集合です。
-     */
-    fun undoLast(): Set<UUID> {
-        val last = undoHistory.removeLastOrNull() ?: return emptySet()
-        selectedEntities.removeAll(last)
-        return last
-    }
+    /** Entityを選択集合から外します。選択済みでなかった場合はfalseです。 */
+    fun removeEntity(id: UUID): Boolean = selectedEntities.remove(id)
 
-    /** 消失済みEntityを選択集合と履歴から外します。操作直前に呼び出します。 */
+    /** 消失済みEntityを選択集合から外します。操作直前に呼び出します。 */
     fun retainExisting(alive: (UUID) -> Boolean) {
         selectedEntities.retainAll(alive)
-        for (index in undoHistory.indices) {
-            undoHistory[index] = undoHistory[index].filterTo(linkedSetOf(), alive)
-        }
-        while (undoHistory.isNotEmpty() && undoHistory.last().isEmpty()) {
-            undoHistory.removeLast()
-        }
-        while (undoHistory.isNotEmpty() && undoHistory.first().isEmpty()) {
-            undoHistory.removeFirst()
-        }
     }
 
     /**
-     * 現在の選択と選択Undo履歴・エリア指定・未確定Boxをすべて解除します。
+     * 現在の選択・エリア指定・未確定Boxをすべて解除します。
      *
-     * スニーク + 左クリック等の明示的全解除とモード変更時に使用します。
+     * Fキーによる明示的全解除・モード変更・ワールド移動時に使用します。
      */
     fun clearAll() {
         selectedEntities.clear()
-        undoHistory.clear()
         pos1 = null
         pos2 = null
         editingBox = null

@@ -492,6 +492,8 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             val entity = plugin.server.getEntity(id) ?: return@retainExisting true
             entity.isValid && !entity.isDead
         }
+        // 消失判定で縮んだ選択に発光表示を追従させます。
+        plugin.operationTool.syncGlow(player)
         return session.selected().mapNotNull { plugin.server.getEntity(it) }
             .filter { it.isValid && !it.isDead && it.world.uid == player.world.uid }
     }
