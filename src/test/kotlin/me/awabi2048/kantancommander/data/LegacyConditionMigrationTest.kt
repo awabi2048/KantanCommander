@@ -258,6 +258,20 @@ class LegacyConditionMigrationTest {
     }
 
     @Test
+    fun `removed value subject becomes unset instead of corrupt`() {
+        // 撤去した「値を比較」判定対象は破損として隔離せず、判定対象未設定へ
+        // 正本化します。残った詳細欄は無害な残存値として保持します。
+        val node = loadSingle(
+            "value-subject",
+            17,
+            """{"subject": "VALUE", "operator": ">=", "value": "1"}""",
+        )
+        assertNull(node.conditionSubject())
+        assertTrue("subject" !in node.params)
+        assertTrue("subject" !in (node.configuredFields ?: emptySet()))
+    }
+
+    @Test
     fun `legacy control block states without redstone input are dropped`() {
         // REDSTONE_INPUT を含まない旧選択欄は廃止欄として除去するだけです。
         // 条件未設定のまま残るため、検証は引き続き未設定を報告します。

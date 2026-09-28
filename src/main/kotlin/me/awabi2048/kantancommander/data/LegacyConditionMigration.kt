@@ -61,6 +61,12 @@ internal object LegacyConditionMigration {
     private fun normalizeNode(node: JsonObject) {
         val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
         if (params != null) {
+            // 撤去した「値を比較」判定対象は未設定へ正本化します。破損として隔離せず、
+            // 判定対象の再設定を検証層へ委ねます。
+            if (params["subject"]?.takeIf { it.isJsonPrimitive }?.asString == "VALUE") {
+                params.remove("subject")
+                removeConfiguredMark(node, "subject")
+            }
             val subject = params["subject"]
                 ?.takeIf { it.isJsonPrimitive }
                 ?.asString?.takeIf(String::isNotBlank)
