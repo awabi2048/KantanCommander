@@ -130,6 +130,18 @@ object ParticleSettings {
                         ?: error("表示tickが不正です"),
                 )
             }
+            Particle.Geyser::class.java -> {
+                require(tokens.size == 1) { "水ブロック数を1つ指定してください" }
+                val value = tokens.single().toIntOrNull()
+                require(value != null && value >= 0) { "0以上の整数を指定してください" }
+                ParticleDataSpec.GeyserValue(value)
+            }
+            Particle.GeyserBase::class.java -> {
+                require(tokens.size == 2) { "水ブロック数と噴出基礎値を指定してください" }
+                val waterBlocks = tokens[0].toIntOrNull()
+                require(waterBlocks != null && waterBlocks >= 0) { "水ブロック数は0以上の整数を指定してください" }
+                ParticleDataSpec.GeyserBaseValue(waterBlocks, parseFiniteFloat(tokens[1], "噴出基礎値"))
+            }
             else -> error("未対応のParticleデータ型です: ${particle.dataType.name}")
         }
     }
@@ -323,6 +335,28 @@ object ParticleSettings {
                 // trail.colorはARGBです。BukkitのTrailはColorしか受け取らないため、
                 // alphaは通常実行では失われますが、データパック出力では保持します。
                 return "{target:[${number(x)},${number(y)},${number(z)}],color:${argbColorArgument(color, alpha)},duration:$durationTicks}"
+            }
+        }
+
+        /** MC 26.2で追加された間欠泉系のデータです。水ブロック数のみを持ちます。 */
+        data class GeyserValue(val waterBlocks: Int) : ParticleDataSpec {
+            override fun toBukkitData(origin: Location): Any = Particle.Geyser(waterBlocks)
+            override fun vanillaArgument(particle: Particle): String {
+                require(particle == Particle.GEYSER || particle == Particle.GEYSER_PLUME) {
+                    "Geyserデータに対応していないParticleです: ${particle.name}"
+                }
+                return "{water_blocks:$waterBlocks}"
+            }
+        }
+
+        /** MC 26.2で追加された間欠泉基部系のデータです。水ブロック数と噴出基礎値を持ちます。 */
+        data class GeyserBaseValue(val waterBlocks: Int, val burstImpulseBase: Float) : ParticleDataSpec {
+            override fun toBukkitData(origin: Location): Any = Particle.GeyserBase(waterBlocks, burstImpulseBase)
+            override fun vanillaArgument(particle: Particle): String {
+                require(particle == Particle.GEYSER_BASE || particle == Particle.GEYSER_POOF) {
+                    "GeyserBaseデータに対応していないParticleです: ${particle.name}"
+                }
+                return "{water_blocks:$waterBlocks,burst_impulse_base:${number(burstImpulseBase)}}"
             }
         }
     }

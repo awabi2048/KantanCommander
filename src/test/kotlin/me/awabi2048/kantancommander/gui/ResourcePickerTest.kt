@@ -103,6 +103,11 @@ class ResourcePickerTest {
             "SHRIEK",
             "VIBRATION",
             "TRAIL",
+            // MC 26.2で追加された間欠泉系は詳細データが必須のため、ID入力＋詳細設定経路に限定します。
+            "GEYSER",
+            "GEYSER_PLUME",
+            "GEYSER_BASE",
+            "GEYSER_POOF",
         )
         val presets = ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).toSet()
         excluded.forEach { assertFalse(it in presets, it) }

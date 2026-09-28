@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "me.awabi2048"
-version = "26.928.8"
+version = "26.928.9"
 
 repositories {
     mavenLocal()
@@ -26,7 +26,7 @@ kotlin {
 
 // pom.xml の provided スコープ相当（compileOnly へ配置し、テストのコンパイル・実行双方で見えるよう testImplementation にも追加）
 val providedDeps = listOf(
-    "io.papermc.paper:paper-api:26.1.2.build.72-stable",
+    "io.papermc.paper:paper-api:26.2.build.129-stable",
     "org.jetbrains.kotlin:kotlin-stdlib:2.3.20",
     "com.awabi2048:CC-System:26.928.4",
     "net.dmulloy2:ProtocolLib:5.4.0",
