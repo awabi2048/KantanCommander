@@ -6,6 +6,8 @@ import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.ValueType
 import com.google.gson.JsonParser
@@ -27,10 +29,7 @@ class TriggerValidationTest {
 
     private fun stateCondition(configure: me.awabi2048.kantancommander.model.CommandNode.() -> Unit): DiskScript {
         val prepared = script {}
-        GraphEditor.append(prepared.graph, CommandType.CONDITION).apply {
-            params["subject"] = ConditionSubject.VALUE.name
-            configure()
-        }
+        GraphEditor.append(prepared.graph, CommandType.CONDITION).apply(configure)
         return prepared
     }
 
@@ -91,11 +90,12 @@ class TriggerValidationTest {
     fun `event arguments are predefined execution variables`() {
         fun eventScript(withTrigger: Boolean): DiskScript {
             val prepared = stateCondition {
-                params["leftScope"] = "EXECUTION"
-                // BLOCK_BREAK の操作者（ENTITY）は比較演算子を適用できます。
-                params["leftName"] = me.awabi2048.kantancommander.model.EventTriggerArguments.ACTOR
-                params["operator"] = "=="
-                params["right"] = "x"
+                params["subject"] = ConditionSubject.OTHER_ENTITY.name
+                // BLOCK_BREAK の操作者（ENTITY）は対象の一時変数参照として利用できます。
+                targetSpec = TargetSpec(
+                    TargetKind.TEMPORARY,
+                    tempName = me.awabi2048.kantancommander.model.EventTriggerArguments.ACTOR,
+                )
             }
             if (withTrigger) {
                 prepared.trigger = ScriptTrigger(TriggerKind.EVENT, EventTriggerKind.BLOCK_BREAK)
@@ -116,10 +116,10 @@ class TriggerValidationTest {
     fun `disk arguments seed the callee graph`() {
         fun argScript(withArguments: Boolean): DiskScript {
             val prepared = stateCondition {
-                params["leftScope"] = "EXECUTION"
-                params["leftName"] = "count"
+                params["subject"] = ConditionSubject.VARIABLE.name
+                params["variable"] = "counter"
                 params["operator"] = "=="
-                params["right"] = "1"
+                params["value"] = "%{count}%"
             }
             if (withArguments) {
                 prepared.arguments = listOf(DiskArgument("count", ValueType.NUMBER))
@@ -139,10 +139,10 @@ class TriggerValidationTest {
     @Test
     fun `disk call snapshot uses declared arguments`() {
         val callee = stateCondition {
-            params["leftScope"] = "EXECUTION"
-            params["leftName"] = "count"
+            params["subject"] = ConditionSubject.VARIABLE.name
+            params["variable"] = "counter"
             params["operator"] = "=="
-            params["right"] = "1"
+            params["value"] = "%{count}%"
         }
         val caller = script {}
         GraphEditor.append(caller.graph, CommandType.DISK_CALL).apply {

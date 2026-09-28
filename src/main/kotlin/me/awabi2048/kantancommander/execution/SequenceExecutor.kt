@@ -18,7 +18,7 @@ import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.variableScope
-import me.awabi2048.kantancommander.model.ControlBlockStateConditionPolicy
+import me.awabi2048.kantancommander.model.redstoneSignalSpec
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.NumericExpression
@@ -28,7 +28,6 @@ import me.awabi2048.kantancommander.model.ExecutionVariables
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.normalizedTemporaryName
-import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableScope
@@ -2762,9 +2761,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val applicable = compareVariable(value, comparisonValue, operator)
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
-            // issue #5: 型付き条件比較です。左辺の変数・演算子・右辺のリテラルで
-            // 比較します。正常な不一致と解決失敗・型不一致を区別します。
-            ConditionSubject.VALUE -> evaluateValueComparison(node, session, targets, context)
             // issue #27×#26・#29: 判定対象名はBLOCKへ置換し、複数位置ANY評価と実行起点集合を維持します。
             // #27単独の単一位置解決へは戻しません。
             ConditionSubject.BLOCK -> {
@@ -2794,163 +2790,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 if (matched) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
             ConditionSubject.CONTROL_BLOCK -> {
-                // 制御ブロック自身の現在状態を判定します。複数項目はポリシー側でAND評価し、
+                // 制御ブロックへ実際に入力されている信号強度が範囲指定に収まるかを判定します。
+                // 未設定・0指定は「条件なし」の未選択なので未設定不正として扱い、
                 // 外側の反転指定は既存の条件実行共通処理へ任せます。
-                if (
-                    ControlBlockStateConditionPolicy.matches(
-                        node.selectedControlBlockStates(),
-                        RedstoneInputReader.isPowered(session.origin.block),
-                    )
-                ) {
-                    ConditionEvaluation.TRUE
-                } else {
-                    ConditionEvaluation.FALSE
-                }
+                val spec = node.redstoneSignalSpec() ?: return ConditionEvaluation.INVALID
+                val strength = RedstoneInputReader.incomingSignalStrength(session.origin.block)
+                if (strength in spec) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
             // when は網羅列挙のため else を置きません。将来の判定対象追加時は
             // コンパイルエラーで検出します（冗長else除去と同一方針）。
         }
-    }
-
-    /**
-     * issue #5 の型付き条件比較を評価します。
-     *
-     * 左辺は EXECUTION／WORLD／ENTITY scope の変数です。ENTITY scope は
-     * #22 の契約に従い、単一対象のときだけ読み出します（0件→UNRESOLVED、
-     * 複数→INVALID、未定義→UNRESOLVED、復元失敗→INVALID）。
-     * 演算子なしは Boolean 直接条件、領域演算子はノードの領域指定で判定し、
-     * それ以外は右辺リテラルと比較します。解決失敗は UNRESOLVED、型外の演算子・
-     * 未対応型の組み合わせは INVALID とし、正常な不一致（FALSE）へ畳みません。
-     */
-    private fun evaluateValueComparison(
-        node: CommandNode,
-        session: ExecutionSession,
-        targets: List<Entity>,
-        context: ExecutionContextSpec?,
-    ): ConditionEvaluation {
-        val scopeRaw = node.string("leftScope").ifBlank { VariableScope.WORLD.name }
-        val scope = VariableScope.parse(scopeRaw) ?: return ConditionEvaluation.INVALID
-        val leftName = node.string("leftName")
-        if (!CommandValueRules.isVariableName(leftName)) return ConditionEvaluation.INVALID
-        val left: TypedValue = when (scope) {
-            VariableScope.WORLD -> plugin.variables.get(session.worldId, leftName)
-                ?: return ConditionEvaluation.UNRESOLVED
-            VariableScope.EXECUTION -> session.executionVariables.get(
-                me.awabi2048.kantancommander.model.TemporaryTemplate.normalized(leftName),
-            ) ?: return ConditionEvaluation.UNRESOLVED
-            // issue #5: ENTITY scope は #22 の単一解決契約に従います。
-            // 0件→UNRESOLVED、複数→INVALID（暗黙の先頭採用なし）、
-            // 未定義→UNRESOLVED、復元失敗→INVALID と区別します。
-            VariableScope.ENTITY -> {
-                if (targets.isEmpty()) return ConditionEvaluation.UNRESOLVED
-                if (targets.size > 1) return ConditionEvaluation.INVALID
-                when (val read = plugin.entityVariables.readSingle(targets, leftName)) {
-                    is me.awabi2048.kantancommander.model.VariableRead.Value -> read.value
-                    is me.awabi2048.kantancommander.model.VariableRead.Failed ->
-                        return if (read.failure == me.awabi2048.kantancommander.model.VariableFailure.Undefined) {
-                            ConditionEvaluation.UNRESOLVED
-                        } else {
-                            ConditionEvaluation.INVALID
-                        }
-                }
-            }
-        }
-        val operator = node.string("operator")
-        if (operator.isBlank()) {
-            return ConditionEvaluation.INVALID
-        }
-        if (operator !in me.awabi2048.kantancommander.model.ConditionComparison.ALL) {
-            return ConditionEvaluation.INVALID
-        }
-        // issue #5: 領域述語は #4 の共通 resolver を使い、独自の計算を持ちません。
-        if (me.awabi2048.kantancommander.model.ConditionComparison.isRegionPredicate(operator)) {
-            return evaluateRegionPredicate(node, session, context, left, operator)
-        }
-        val right = resolveComparisonRight(node.string("right"), left.type, session)
-            ?: return ConditionEvaluation.UNRESOLVED
-        val applicable = me.awabi2048.kantancommander.model.ConditionComparison.compare(left, operator, right)
-            ?: return ConditionEvaluation.INVALID
-        return if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
-    }
-
-    /**
-     * issue #5 の領域述語を評価します。
-     *
-     * 左辺のLOCATION値はその座標、ENTITY値は実体の現在位置で判定します。
-     * 実体消失は UNRESOLVED、基準未解決は UNRESOLVED、world不一致・不正指定は
-     * INVALID とし、正常な内外判定だけを TRUE／FALSE で返します。
-     */
-    private fun evaluateRegionPredicate(
-        node: CommandNode,
-        session: ExecutionSession,
-        context: ExecutionContextSpec?,
-        left: TypedValue,
-        operator: String,
-    ): ConditionEvaluation {
-        val region = node.regionSpec?.takeIf { it.hasAnySetting() } ?: return ConditionEvaluation.INVALID
-        val point: me.awabi2048.kantancommander.model.SpatialVector
-        var entityWorldName: String? = null
-        when (left.type) {
-            ValueType.LOCATION -> {
-                val location = left.location ?: return ConditionEvaluation.INVALID
-                point = me.awabi2048.kantancommander.model.SpatialVector(location.x, location.y, location.z)
-            }
-            ValueType.ENTITY -> {
-                val entity = left.entityId?.let { plugin.server.getEntity(it) }
-                    ?: return ConditionEvaluation.UNRESOLVED
-                entityWorldName = entity.location.world?.name
-                point = entity.location.toSpatialVector()
-            }
-            else -> return ConditionEvaluation.INVALID
-        }
-        return when (val resolution = resolveRegionResult(region, session, context)) {
-            is me.awabi2048.kantancommander.model.RegionResolution.Resolved -> {
-                // 実体が別ワールドにいる場合は領域外であり、設定異常ではありません。
-                if (entityWorldName != null && entityWorldName != resolution.worldName) {
-                    return if (operator == me.awabi2048.kantancommander.model.ConditionComparison.IN_REGION) {
-                        ConditionEvaluation.FALSE
-                    } else {
-                        ConditionEvaluation.TRUE
-                    }
-                }
-                val inside = me.awabi2048.kantancommander.model.RegionMath.contains(
-                    point,
-                    resolution.origin,
-                    resolution.dx,
-                    resolution.dy,
-                    resolution.dz,
-                )
-                val hit = if (operator == me.awabi2048.kantancommander.model.ConditionComparison.IN_REGION) inside else !inside
-                if (hit) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
-            }
-            me.awabi2048.kantancommander.model.RegionResolution.UnresolvedAnchor ->
-                ConditionEvaluation.UNRESOLVED
-            me.awabi2048.kantancommander.model.RegionResolution.WorldMismatch,
-            me.awabi2048.kantancommander.model.RegionResolution.InvalidSpec,
-            -> ConditionEvaluation.INVALID
-        }
-    }
-
-    /**
-     * 比較右辺のリテラルを左辺の型で解決します。
-     *
-     * スカラーはテンプレート参照を含められます。ENTITY は UUID 文字列を受け付けます。
-     * 未対応型・解決失敗は null です。
-     */
-    private fun resolveComparisonRight(
-        raw: String,
-        type: ValueType,
-        session: ExecutionSession,
-    ): TypedValue? = when (type) {
-        ValueType.NUMBER -> resolveNumber(raw, session)?.let { TypedValue(type, numberValue = it) }
-        ValueType.STRING -> resolveText(raw, session)?.let { TypedValue(type, stringValue = it) }
-        ValueType.ENTITY -> raw.trim().takeIf(String::isNotBlank)?.let {
-            runCatching { TypedValue(type, entityId = java.util.UUID.fromString(it)) }.getOrNull()
-        }
-        ValueType.LOCATION,
-        ValueType.ITEM,
-        ValueType.BLOCK,
-        -> null
     }
 
     /**

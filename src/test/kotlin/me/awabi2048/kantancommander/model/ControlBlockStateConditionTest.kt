@@ -1,33 +1,61 @@
 package me.awabi2048.kantancommander.model
 
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
+/**
+ * 制御ブロック条件の赤石信号強度指定テストです。
+ *
+ * `redstoneSignal` 欄は `4`・`4..6`・`3..`・`..2` の形式を受理し、
+ * 空欄または0だけを含む指定は「条件なし」として扱います。
+ */
 class ControlBlockStateConditionTest {
+    private fun signalSpec(raw: String?): IntRange? =
+        CommandNode(type = CommandType.CONDITION).apply {
+            raw?.let { params["redstoneSignal"] = it }
+        }.redstoneSignalSpec()
+
     @Test
-    fun `empty selection never becomes a satisfied condition`() {
-        assertFalse(ControlBlockStateConditionPolicy.matches(emptySet(), redstoneInput = true))
+    fun `zero signal range means no condition`() {
+        assertNull(signalSpec(null))
+        assertNull(signalSpec(""))
+        assertNull(signalSpec("0"))
+        assertNull(signalSpec("..0"))
+        assertNull(signalSpec("0..0"))
     }
 
     @Test
-    fun `all selected states must be satisfied`() {
-        val selected = setOf(ControlBlockStateKind.REDSTONE_INPUT)
-
-        assertTrue(ControlBlockStateConditionPolicy.matches(selected, redstoneInput = true))
-        assertFalse(ControlBlockStateConditionPolicy.matches(selected, redstoneInput = false))
+    fun `signal accepts single open and closed ranges`() {
+        assertEquals(3..15, signalSpec("3.."))
+        assertEquals(0..2, signalSpec("..2"))
+        assertEquals(4..6, signalSpec("4..6"))
+        assertEquals(4..4, signalSpec("4"))
+        assertEquals(15..15, signalSpec("15"))
     }
 
     @Test
-    fun `deep copy keeps the selection independent`() {
+    fun `malformed or out of range signal is rejected`() {
+        // 構文上受理できない値は「条件なし」と区別できるよう拒否します。
+        assertNull(CommandValueRules.parseSignalStrengthRange("abc"))
+        assertNull(CommandValueRules.parseSignalStrengthRange("16"))
+        assertNull(CommandValueRules.parseSignalStrengthRange("-1"))
+        assertNull(CommandValueRules.parseSignalStrengthRange("3.5"))
+        assertNull(CommandValueRules.parseSignalStrengthRange("5..3"))
+        assertNull(CommandValueRules.parseSignalStrengthRange("1..16"))
+        assertNull(CommandValueRules.parseSignalStrengthRange("..16"))
+        assertNull(CommandValueRules.parseSignalStrengthRange("1..2..3"))
+        assertNull(CommandValueRules.parseSignalStrengthRange(".."))
+    }
+
+    @Test
+    fun `deep copy keeps the signal specification`() {
         val original = CommandNode(type = CommandType.CONDITION).apply {
-            controlBlockStates = linkedSetOf(ControlBlockStateKind.REDSTONE_INPUT)
+            params["redstoneSignal"] = "4..6"
         }
         val copy = CommandGraph(nodes = linkedMapOf(original.id to original)).deepCopy()
             .nodes.getValue(original.id)
 
-        assertEquals(original.selectedControlBlockStates(), copy.selectedControlBlockStates())
-        assertFalse(original.controlBlockStates === copy.controlBlockStates)
+        assertEquals("4..6", copy.params["redstoneSignal"])
     }
 }

@@ -59,193 +59,12 @@ class ConditionSubjectTest {
     }
 
     @Test
-    fun `value comparison validates names operators and static types`() {
-        fun valueNode(configure: CommandNode.() -> Unit): DiskScript {
-            val script = DiskScript(name = "value-subject", owner = UUID.randomUUID())
-            GraphEditor.append(script.graph, CommandType.CONDITION).apply {
-                params["subject"] = ConditionSubject.VALUE.name
-                configure()
-            }
-            return script
+    fun `obsolete value subject is rejected as unset`() {
+        // 「値を比較」判定対象は撤去しました。旧値は unknown と同じく未設定として扱います。
+        val node = CommandType.CONDITION.newNode().apply {
+            params["subject"] = "VALUE"
         }
-        val definitions = mapOf(
-            "counter" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
-            "label" to TypedValue(ValueType.STRING, stringValue = "a"),
-        )
-
-        // 正常系は検証を通ります。
-        val valid = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "counter"
-            params["operator"] = ">="
-            params["right"] = "2"
-        }
-        assertFalse(
-            ExecutableScriptValidator.validate(valid, variableDefinitions = definitions).any { it.nodeId != null },
-        )
-
-        // 未定義の左辺は拒否します。
-        val missing = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "ghost"
-            params["operator"] = "=="
-            params["right"] = "1"
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(missing, variableDefinitions = definitions)
-                .any { it.message.contains("未定義") },
-        )
-
-        // 型に使えない演算子は拒否します。
-        val mismatch = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "label"
-            params["operator"] = ">"
-            params["right"] = "b"
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(mismatch, variableDefinitions = definitions)
-                .any { it.message.contains("使えない比較方法") },
-        )
-
-        // ENTITY scope の左辺は型が実行時に決まるため、静的には受け付けます。
-        // 対象数・定義有無の契約は実行時に判定します。
-        val entity = valueNode {
-            params["leftScope"] = "ENTITY"
-            params["leftName"] = "mark"
-            params["operator"] = "=="
-            params["right"] = "1"
-        }
-        assertFalse(
-            ExecutableScriptValidator.validate(entity, variableDefinitions = definitions)
-                .any { it.nodeId != null },
-        )
-    }
-
-    @Test
-    fun `value conditions require a comparison operator`() {
-        fun valueNode(configure: CommandNode.() -> Unit): DiskScript {
-            val script = DiskScript(name = "direct-subject", owner = UUID.randomUUID())
-            GraphEditor.append(script.graph, CommandType.CONDITION).apply {
-                params["subject"] = ConditionSubject.VALUE.name
-                configure()
-            }
-            return script
-        }
-        val definitions = mapOf("counter" to TypedValue(ValueType.NUMBER, numberValue = 1.0))
-
-        val direct = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "counter"
-            params["operator"] = ""
-            params["right"] = ""
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(direct, variableDefinitions = definitions)
-                .any { it.message.contains("比較方法を選択") },
-        )
-
-        // 演算子を指定した場合は、未定義の左辺を従来どおり検出します。
-        val missing = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "ghost"
-            params["operator"] = "=="
-            params["right"] = "1"
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(missing, variableDefinitions = definitions)
-                .any { it.message.contains("未定義") },
-        )
-
-        // EXECUTION scope でも演算子なしの真偽値条件は認めません。
-        val execution = valueNode {
-            params["leftScope"] = "EXECUTION"
-            params["leftName"] = "ready"
-            params["operator"] = ""
-            params["right"] = ""
-        }.apply {
-            arguments = listOf(me.awabi2048.kantancommander.model.DiskArgument("ready", ValueType.NUMBER))
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(execution, variableDefinitions = definitions)
-                .any { it.message.contains("比較方法を選択") },
-        )
-    }
-
-    @Test
-    fun `region predicates use the node region instead of right values`() {
-        fun valueNode(configure: CommandNode.() -> Unit): DiskScript {
-            val script = DiskScript(name = "region-subject", owner = UUID.randomUUID())
-            GraphEditor.append(script.graph, CommandType.CONDITION).apply {
-                params["subject"] = ConditionSubject.VALUE.name
-                configure()
-            }
-            return script
-        }
-        val definitions = mapOf(
-            "spot" to TypedValue(
-                ValueType.LOCATION,
-                location = SavedLocation(1.0, 2.0, 3.0, 0f, 0f),
-            ),
-            "counter" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
-        )
-        fun region(): RegionSpec = RegionSpec(
-            anchor = RegionAnchorSpec(RegionAnchorKind.CONTROL_BLOCK),
-            dx = 2.0,
-            dy = 2.0,
-            dz = 2.0,
-        )
-
-        // LOCATION変数の領域述語は検証を通ります。
-        val inside = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "spot"
-            params["operator"] = "in_region"
-            params["right"] = ""
-            regionSpec = region()
-        }
-        assertFalse(
-            ExecutableScriptValidator.validate(inside, variableDefinitions = definitions)
-                .any { it.nodeId != null },
-        )
-
-        // 領域未設定は拒否します。
-        val missing = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "spot"
-            params["operator"] = "not_in_region"
-            params["right"] = ""
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(missing, variableDefinitions = definitions)
-                .any { it.message.contains("領域が未設定") },
-        )
-
-        // LOCATION／ENTITY以外への領域演算子は拒否します。
-        val wrongType = valueNode {
-            params["leftScope"] = "WORLD"
-            params["leftName"] = "counter"
-            params["operator"] = "in_region"
-            params["right"] = ""
-            regionSpec = region()
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(wrongType, variableDefinitions = definitions)
-                .any { it.message.contains("使えない比較方法") },
-        )
-
-        // ENTITY scope の領域述語は型が実行時に決まるため、静的には受け付けます。
-        val entity = valueNode {
-            params["leftScope"] = "ENTITY"
-            params["leftName"] = "mark"
-            params["operator"] = "in_region"
-            params["right"] = ""
-            regionSpec = region()
-        }
-        assertFalse(
-            ExecutableScriptValidator.validate(entity, variableDefinitions = definitions)
-                .any { it.nodeId != null },
-        )
+        assertNull(node.conditionSubject())
     }
 
     @Test
@@ -295,7 +114,7 @@ class ConditionSubjectTest {
         }
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
-                it.nodeId == condition.id && it.fieldKeys == setOf("condition")
+                it.nodeId == condition.id && it.fieldKeys == setOf("target")
             },
         )
     }
@@ -308,7 +127,7 @@ class ConditionSubjectTest {
         }
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
-                it.nodeId == condition.id && it.fieldKeys == setOf("condition")
+                it.nodeId == condition.id && it.fieldKeys == setOf("target")
             },
         )
     }

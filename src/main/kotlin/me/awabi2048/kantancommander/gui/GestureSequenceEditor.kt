@@ -59,7 +59,6 @@ import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.setConditionSubject
-import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DiskArgument
@@ -96,7 +95,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.hasDiskContent
-import me.awabi2048.kantancommander.model.toggleControlBlockState
+import me.awabi2048.kantancommander.model.redstoneSignalSpec
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerConditions
@@ -6370,145 +6369,6 @@ class GestureSequenceEditor(
     }
 
     /**
-     * issue #5: 条件の領域編集です。
-     *
-     * 対象絞り込み側（TARGET_FILTERS）と同じ対話部品（範囲・距離・座標・
-     * 変数名・対象プリセット）を使い、保存先だけをノードの領域指定へ
-     * 振り替えます。空になった領域は保持せず null へ戻します。
-     */
-    private fun handleConditionRegion(
-        player: Player,
-        settingContext: CommandSettingContext,
-        node: me.awabi2048.kantancommander.model.CommandNode,
-        encoded: String,
-    ) {
-        fun currentRegion(): RegionSpec =
-            node.regionSpec?.takeIf { it.hasAnySetting() } ?: RegionSpec()
-        fun writeRegion(target: me.awabi2048.kantancommander.model.CommandNode, region: RegionSpec?) {
-            target.regionSpec = region?.takeIf { it.hasAnySetting() }
-        }
-        // 行自体のクリックは子選択肢へ委ね、保存しません。
-        if (encoded == "condition-region") {
-            refreshSettingScreen(player)
-            return
-        }
-        if (encoded.startsWith("condition-region-anchor:")) {
-            val kind = runCatching {
-                RegionAnchorKind.valueOf(encoded.removePrefix("condition-region-anchor:"))
-            }.getOrNull() ?: return
-            if (updateSettingNode(player, settingContext) {
-                    val base = it.regionSpec?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                    // 基準切替えでは範囲・距離を引き継ぎ、基準固有参数だけを初期化します。
-                    writeRegion(it, base.copy(anchor = RegionAnchorSpec(kind)))
-                }) refreshSettingScreen(player)
-            return
-        }
-        if (encoded == "condition-region-range") {
-            val base = currentRegion()
-            beginSettingRangeInput(player, base.dx, base.dy, base.dz) { dx, dy, dz ->
-                if (!updateSettingNode(player, settingContext) {
-                        val latest = it.regionSpec?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                        writeRegion(it, latest.copy(dx = dx, dy = dy, dz = dz))
-                    }) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                } else null
-            }
-            return
-        }
-        if (encoded == "condition-region-distance") {
-            val base = currentRegion()
-            beginSettingDistanceInput(
-                player,
-                base.minimumDistance,
-                base.maximumDistance,
-                maximumOnly = false,
-            ) { minimum, maximum ->
-                if (!updateSettingNode(player, settingContext) {
-                        val latest = it.regionSpec?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                        writeRegion(
-                            it,
-                            latest.copy(minimumDistance = minimum, maximumDistance = maximum),
-                        )
-                    }) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                } else null
-            }
-            return
-        }
-        if (encoded == "condition-region-position") {
-            val position = currentRegion().anchor.position
-            showCoordinateSettingDialog(
-                player,
-                position?.x ?: player.location.x,
-                position?.y ?: player.location.y,
-                position?.z ?: player.location.z,
-                semanticsX = position?.semanticsX ?: CoordinateSemantics.ABSOLUTE,
-                semanticsY = position?.semanticsY ?: CoordinateSemantics.ABSOLUTE,
-                semanticsZ = position?.semanticsZ ?: CoordinateSemantics.ABSOLUTE,
-            ) { sx, x, sy, y, sz, z ->
-                if (!updateSettingNode(player, settingContext) {
-                        val latest = it.regionSpec?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                        writeRegion(
-                            it,
-                            latest.copy(
-                                anchor = latest.anchor.copy(
-                                    kind = RegionAnchorKind.FIXED,
-                                    position = PositionSpec(
-                                        PositionKind.COORDINATES,
-                                        x, y, z,
-                                        semanticsX = sx, semanticsY = sy, semanticsZ = sz,
-                                    ),
-                                ),
-                            ),
-                        )
-                    }) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                } else null
-            }
-            return
-        }
-        if (encoded == "condition-region-temp") {
-            openRegionTempNameDialog(player, settingContext, currentRegion().anchor.tempName) { target, name ->
-                val latest = target.regionSpec?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                writeRegion(
-                    target,
-                    latest.copy(
-                        anchor = latest.anchor.copy(
-                            kind = RegionAnchorKind.TEMPORARY,
-                            tempName = name,
-                        ),
-                    ),
-                )
-            }
-            return
-        }
-        if (encoded.startsWith("condition-region-target-preset:")) {
-            val preset = runCatching {
-                SettingPresets.TargetPreset.valueOf(encoded.removePrefix("condition-region-target-preset:"))
-            }.getOrNull() ?: return
-            if (updateSettingNode(player, settingContext) {
-                    val latest = it.regionSpec?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                    writeRegion(
-                        it,
-                        latest.copy(
-                            anchor = latest.anchor.copy(
-                                kind = RegionAnchorKind.TARGET_ENTITY,
-                                target = SettingPresets.targetSpecFor(preset),
-                            ),
-                        ),
-                    )
-                }) refreshSettingScreen(player)
-            return
-        }
-        if (encoded == "condition-region-clear") {
-            if (updateSettingNode(player, settingContext) {
-                    writeRegion(it, null)
-                }) refreshSettingScreen(player)
-            return
-        }
-    }
-
-    /**
      * issue #29: プリセットが表す位置種別です。
      *
      * 選択可否の既存判定（制御ブロック上書き等）へ渡します。
@@ -6669,13 +6529,9 @@ class GestureSequenceEditor(
 
     /** 条件詳細の子設定IDを保存先のparamsキーへ変換します。 */
     private fun specSaveKey(encoded: String): String = when (encoded) {
-        "condition-variable" -> "variable"
         "condition-value" -> "value"
-        "condition-left" -> "leftName"
-        "condition-right" -> "right"
         "condition-block" -> "block"
         "condition-item" -> "item"
-        "condition-item-data" -> "itemData"
         else -> encoded
     }
 
@@ -7801,61 +7657,39 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.CONDITION_DETAIL -> {
-                // issue #5: 条件の領域編集です。対象絞り込み側と同じ対話部品
-                // （範囲・距離・座標・変数名・対象プリセット）を使い、
-                // 保存先だけをノードの領域指定へ振り替えます。
-                if (encoded == "condition-region" || encoded.startsWith("condition-region-")) {
-                    handleConditionRegion(player, settingContext, node, encoded)
-                    return
-                }
-                // 制御ブロック状態の選択肢IDは「condition-control-block-state:<状態名>」の
-                // 形です。完全一致では到達しないため、接頭辞判定で状態名を取り出します。
-                if (encoded.startsWith("condition-control-block-state:")) {
-                    val controlState = runCatching { ControlBlockStateKind.valueOf(value) }.getOrNull() ?: return
-                    if (updateSettingNode(player, settingContext) {
-                            it.toggleControlBlockState(controlState)
-                        }) updateLower(player)
+                // 赤石信号の入力は値駆動で扱います。未選択状態のクリックで有効化
+                // （信号あり＝1..）し、選択済みの再クリックで強度範囲の入力Dialogを
+                // 開きます。0のみの範囲または空欄は「条件なし」として欄を消去します。
+                if (encoded == "condition-redstone-input") {
+                    if (node.redstoneSignalSpec() == null) {
+                        if (updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(it, "redstoneSignal", "1..")
+                            }) updateLower(player)
+                    } else {
+                        beginSettingInput(
+                            player,
+                            CommandDialogSpecs.conditionSignalStrength,
+                            node.string("redstoneSignal"),
+                        ) { raw ->
+                            val spec = CommandDialogSpecs.conditionSignalStrength
+                            val validationError = spec.validateInput(raw)
+                            if (validationError != null) return@beginSettingInput KcI18n.text(player, validationError)
+                            if (!updateSettingNode(player, settingContext) {
+                                    val parsed = CommandValueRules.parseSignalStrengthRange(raw)
+                                    if (parsed == null || parsed.last == 0) {
+                                        it.params.remove("redstoneSignal")
+                                        it.clearConfigured("redstoneSignal")
+                                    } else {
+                                        CommandSettingsModel.setParameter(it, "redstoneSignal", raw.trim())
+                                    }
+                                }) {
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                            } else null
+                        }
+                    }
                     return
                 }
                 when (encoded) {
-                    "condition-target" -> {
-                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                        val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
-                        rememberSettingNode(encoded, interactionMode)
-                        when (settingSelectionAction(wasSelected, interactionMode)) {
-                            GestureSettingSelectionAction.ENTER_CHILD -> {
-                                pushSettingFrame(
-                                    player,
-                                    GestureSettingFrame(
-                                        settingContext.copy(role = CommandSettingRole.NODE_TARGET),
-                                        fieldKey,
-                                        GestureSettingScreen.TARGET,
-                                    ),
-                                    encoded,
-                                )
-                            }
-                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                        }
-                    }
-                    "condition-position" -> {
-                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                        val interactionMode = lowerPanel.settingChoiceInteractionMode(state, player, encoded)
-                        rememberSettingNode(encoded, interactionMode)
-                        when (settingSelectionAction(wasSelected, interactionMode)) {
-                            GestureSettingSelectionAction.ENTER_CHILD -> {
-                                pushSettingFrame(
-                                    player,
-                                    GestureSettingFrame(
-                                        settingContext.copy(role = CommandSettingRole.CONDITION_POSITION),
-                                        fieldKey,
-                                        GestureSettingScreen.POSITION,
-                                    ),
-                                    encoded,
-                                )
-                            }
-                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                        }
-                    }
                     "condition-state" -> {
                         if (updateSettingNode(player, settingContext) {
                                 val next = when (it.string("sneaking")) {
@@ -7867,43 +7701,13 @@ class GestureSequenceEditor(
                             }) updateLower(player)
                     }
                     "condition-operator" -> {
-                        val operators = if (node.conditionSubject() == ConditionSubject.VALUE) {
-                            // #5: 型付き比較では contains・領域述語を含む9演算子から循環します。
-                            // 型への適用可否は検証層で確認します。
-                            listOf("==", "!=", ">", ">=", "<", "<=", "contains", "in_region", "not_in_region")
-                        } else {
-                            listOf("==", "!=", ">", ">=", "<", "<=")
-                        }
+                        val operators = listOf("==", "!=", ">", ">=", "<", "<=")
                         if (updateSettingNode(player, settingContext) {
                                 val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                                 CommandSettingsModel.setParameter(it, "operator", operators[(current + 1) % operators.size])
                             }) updateLower(player)
                     }
-                    // issue #5: Boolean直接条件の切替えです。有効化で演算子・右辺を
-                    // 消去し、無効化で `==` へ戻します。保存形式は変えません。
-                    "condition-direct" -> {
-                        if (updateSettingNode(player, settingContext) {
-                                if (it.string("operator").isBlank()) {
-                                    CommandSettingsModel.setParameter(it, "operator", "==")
-                                } else {
-                                    CommandSettingsModel.setParameter(it, "operator", "")
-                                    CommandSettingsModel.setParameter(it, "right", "")
-                                }
-                            }) updateLower(player)
-                    }
-                    "condition-left-scope" -> {
-                        if (updateSettingNode(player, settingContext) {
-                                val next = if (it.string("leftScope", VariableScope.WORLD.name) == VariableScope.WORLD.name) {
-                                    VariableScope.EXECUTION.name
-                                } else {
-                                    VariableScope.WORLD.name
-                                }
-                                CommandSettingsModel.setParameter(it, "leftScope", next)
-                            }) updateLower(player)
-                    }
-                    "condition-variable", "condition-value", "condition-block", "condition-item",
-                    "condition-left", "condition-right",
-                    -> {
+                    "condition-value", "condition-block", "condition-item" -> {
                         if (encoded == "condition-item") {
                             applyHeldItem(player, settingContext)
                             updateLower(player)
@@ -7914,13 +7718,7 @@ class GestureSequenceEditor(
                             return
                         }
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
-                        val spec = when (encoded) {
-                            "condition-variable" -> CommandDialogSpecs.variableName
-                            "condition-left" -> CommandDialogSpecs.variableName
-                            "condition-value" -> CommandDialogSpecs.conditionValueSpec(node)
-                            "condition-right" -> CommandDialogSpecs.conditionRightSpec(node)
-                            else -> return
-                        }
+                        val spec = CommandDialogSpecs.conditionValueSpec(node)
                         val saveKey = specSaveKey(encoded)
                         beginSettingInput(player, spec, node.string(saveKey)) { raw ->
                             if (!updateSettingNode(player, settingContext) {

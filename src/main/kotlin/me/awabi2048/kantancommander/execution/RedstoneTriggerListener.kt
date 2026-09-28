@@ -151,6 +151,15 @@ internal object RedstoneInputReader {
         block.getRelative(face).isBlockFacePowered(face).takeIf { it }?.let { 1 shl index }
     }.fold(0, Int::or)
 
+    /**
+     * 各入力面へ届いている信号強度の最大値（0..15）です。
+     * 入力面の向きは [incomingPowerMask] と同じ解釈へ揃え、強度部分だけを
+     * `getBlockPower` で読みます。条件判定側はこの実測強度を範囲指定と比較します。
+     */
+    fun incomingSignalStrength(block: Block): Int = POWER_FACES.maxOf { face ->
+        block.getRelative(face).getBlockPower(face).coerceAtLeast(0)
+    }
+
     private val POWER_FACES = listOf(
         BlockFace.UP,
         BlockFace.DOWN,

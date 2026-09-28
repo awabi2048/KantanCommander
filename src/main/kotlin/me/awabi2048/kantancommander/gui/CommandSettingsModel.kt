@@ -9,7 +9,9 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
-import me.awabi2048.kantancommander.model.selectedControlBlockStates
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.redstoneSignalSpec
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
@@ -438,6 +440,20 @@ object CommandSettingsModel {
                 } else {
                     fields.filterNot { it.key == "from" || it.key == "to" }
                 }
+            // 判定対象ごとに固有タブを切り替えます。対象・判定位置・変数名は
+            // 対応するsubjectのときだけ表示します。「エンティティが存在するか」は
+            // 対象設定だけで成立するため「判定条件」タブを持ちません。
+            node.type == CommandType.CONDITION || node.type == CommandType.FOLDED_IF -> {
+                val allowed = when (node.conditionSubject()) {
+                    ConditionSubject.PLAYER -> setOf("inverted", "kind", "target", "condition")
+                    ConditionSubject.OTHER_ENTITY -> setOf("inverted", "kind", "target")
+                    ConditionSubject.BLOCK -> setOf("inverted", "kind", "position", "condition")
+                    ConditionSubject.VARIABLE -> setOf("inverted", "kind", "variable", "condition")
+                    ConditionSubject.CONTROL_BLOCK -> setOf("inverted", "kind", "condition")
+                    null -> setOf("inverted", "kind")
+                }
+                fields.filter { it.key in allowed }
+            }
             // issue #24: 群操作ごと に必要な項目だけを表示します。対象・pivot・
             // 移動軸・回転軸は操作で切り替えます。群名と操作自体は常に表示します。
             node.type == CommandType.ENTITY_GROUP -> {
@@ -1023,7 +1039,8 @@ object CommandSettingsModel {
                 else -> validationFieldKey
             }
             CommandType.CONDITION -> when (validationFieldKey) {
-                "sneaking", "variable", "operator", "value", "block", "item", "itemData" -> "condition"
+                // 変数名は独立した「変数」タブを持つため、判定条件タブへ潰し込みません。
+                "sneaking", "operator", "value", "block", "item", "itemData" -> "condition"
                 else -> validationFieldKey
             }
             // 上書き設定は配置先タブの中央下トグルで編集するため、
@@ -1168,6 +1185,9 @@ object CommandSettingsModel {
         CommandType.CONDITION -> when (fieldKey) {
             "inverted" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_INVERSION)
             "kind" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_KIND)
+            // 対象・判定位置・変数名は親タブから直接編集します。
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.CONDITION_POSITION)
             "condition" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_DETAIL)
             else -> text()
         }
@@ -1950,14 +1970,24 @@ object CommandSettingsModel {
     private fun isRegionFilterConfigured(spec: TargetSpec, parameter: String): Boolean =
         isRegionConfigured(spec.region, parameter)
 
-    private fun conditionDetailConfigured(node: CommandNode): Boolean =
-        isTargetSpecConfigured(node.targetSpec) || isPositionSpecConfigured(node.conditionPositionSpec) ||
-            node.selectedControlBlockStates().isNotEmpty() ||
-            node.params.any { (key, value) ->
-                key in setOf("sneaking", "variable", "operator", "value", "block", "item", "itemData") &&
-                    value.isNotBlank() &&
-                    (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
-            }
+    /**
+     * 「判定条件」タブの設定済み判定です。対象・判定位置・変数名は独立タブへ
+     * 分離済みのため、ここではsubject固有の残り項目だけを見ます。
+     * 制御ブロックは `redstoneSignal` の範囲指定があれば設定済みです。
+     */
+    private fun conditionDetailConfigured(node: CommandNode): Boolean {
+        val keys = when (node.conditionSubject()) {
+            ConditionSubject.PLAYER -> setOf("sneaking", "item", "itemData")
+            ConditionSubject.VARIABLE -> setOf("operator", "value")
+            ConditionSubject.BLOCK -> setOf("block")
+            ConditionSubject.CONTROL_BLOCK -> return node.redstoneSignalSpec() != null
+            else -> return false
+        }
+        return node.params.any { (key, value) ->
+            key in keys && value.isNotBlank() &&
+                (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
+        }
+    }
 
     /** 一時変数参照だけは、変数名がなければ実行対象が確定しません。 */
     internal fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {

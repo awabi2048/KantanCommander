@@ -202,17 +202,6 @@ data class CommandNode(
     /** テレポート先へ適用するノード単位の向きです。 */
     var destinationFacingSpec: FacingSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
-    /**
-     * issue #5 の型付き条件比較で使う領域述語の領域です。
-     *
-     * VALUE subject＋領域演算子（`in_region`／`not_in_region`）のときだけ有効で、
-     * 左辺のLOCATION／ENTITY値がこの内側にあるかを判定します。解決・検証・出力は
-     * #4 の共通 resolver を使い、Condition側で独自の領域計算を持ちません。
-     * 旧JSONには存在しないため欠落時は null です。
-     */
-    var regionSpec: RegionSpec? = null,
-    /** 制御ブロック状態条件で選択された判定項目です。複数選択時はAND評価します。 */
-    var controlBlockStates: MutableSet<ControlBlockStateKind>? = null,
     /** ブロック操作の単一配置位置（setblock相当）。 */
     var blockPositionSpec: PositionSpec? = null,
     /** ブロック操作の範囲始点・終点（fill相当）。 */
@@ -288,8 +277,6 @@ data class CommandNode(
         destinationTargetSpec = destinationTargetSpec?.copy(),
         destinationFacingSpec = destinationFacingSpec?.copy(),
         conditionPositionSpec = conditionPositionSpec?.copy(),
-        regionSpec = regionSpec?.copy(),
-        controlBlockStates = controlBlockStates?.toMutableSet(),
         blockPositionSpec = blockPositionSpec?.copy(),
         blockFromSpec = blockFromSpec?.copy(),
         blockToSpec = blockToSpec?.copy(),
@@ -761,13 +748,6 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
     BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
     CONTROL_BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
-    /**
-     * issue #5 の型付き条件比較です。
-     *
-     * 左辺（変数）・演算子・右辺（リテラル）の共通モデルで比較します。既存5区分の
-     * 専用predicateは残し、新しい値型・property・Regionへの拡張点にします。
-     */
-    VALUE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VALUE_STATE),
 }
 
 /**
@@ -828,33 +808,16 @@ fun CommandNode.variableScopeStrict(): VariableScope? {
     return VariableScope.parse(raw)
 }
 
-/** 制御ブロックの状態条件として選択できる判定項目です。 */
-enum class ControlBlockStateKind(val key: LocalizationKey<String>) {
-    REDSTONE_INPUT(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT),
-}
-
 /**
- * 制御ブロック状態条件の集合評価を一箇所へ集約します。
- * 将来の判定項目追加時も、複数選択の意味（すべて成立するAND）を実行器とテストで共有します。
+ * 制御ブロック条件の赤石信号強度指定です。
+ *
+ * `params["redstoneSignal"]` に 0..15 の整数範囲を `4`・`4..6`・`3..`・`..2` 形式で
+ * 保持します。未設定・空欄・0のみの範囲（0指定）は「条件なし」の未選択状態として
+ * null を返します。旧 `controlBlockStates` 集合は読込時に LegacyConditionMigration が
+ * 本欄へ移行します。
  */
-object ControlBlockStateConditionPolicy {
-    fun matches(selected: Set<ControlBlockStateKind>, redstoneInput: Boolean): Boolean =
-        selected.isNotEmpty() && selected.all { state ->
-            when (state) {
-                ControlBlockStateKind.REDSTONE_INPUT -> redstoneInput
-            }
-        }
-}
-
-/** Gsonで旧JSONを読み込んだ場合もnull集合を空集合として扱う共通アクセサです。 */
-fun CommandNode.selectedControlBlockStates(): Set<ControlBlockStateKind> = controlBlockStates.orEmpty()
-
-/** 制御ブロック状態条件の選択を反映し、空集合は保存上nullへ正規化します。 */
-fun CommandNode.toggleControlBlockState(state: ControlBlockStateKind) {
-    val next = controlBlockStates.orEmpty().toMutableSet()
-    if (!next.add(state)) next.remove(state)
-    controlBlockStates = next.takeIf { it.isNotEmpty() }
-}
+fun CommandNode.redstoneSignalSpec(): IntRange? =
+    CommandValueRules.parseSignalStrengthRange(string("redstoneSignal"))?.takeIf { it.last > 0 }
 
 /**
  * 変数操作の大分類です。
@@ -1039,11 +1002,6 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
-        // issue #5: 型付き条件比較（VALUE）の左辺・右辺です。旧ノードにない場合は
-        // WORLD scope・空欄として読み替え、検証層で未設定として拒否します。
-        "leftScope" to VariableScope.WORLD.name,
-        "leftName" to "",
-        "right" to "",
     )),
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
     /**
@@ -1112,7 +1070,6 @@ enum class CommandType(
      */
     FOLDED_IF(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
         // issue #27: 折り畳み外側は先頭 CONDITION の写しのため、判定対象欄も同じ既定値にします。
-        // issue #5 の型付き条件比較（VALUE）の左辺・右辺も CONDITION と同じ既定値にします。
         "subject" to ConditionSubject.OTHER_ENTITY.name,
         "inverted" to "false",
         "sneaking" to "",
@@ -1122,9 +1079,6 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
-        "leftScope" to VariableScope.WORLD.name,
-        "leftName" to "",
-        "right" to "",
     )),
     BREAK(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONTINUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE_DESCRIPTION, Material.ARROW, emptyMap());

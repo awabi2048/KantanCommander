@@ -2,13 +2,13 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionSubject
+
 import me.awabi2048.kantancommander.model.EntityPropertyDefinition
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.conditionSubject
+
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
 
@@ -447,17 +447,14 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
  * 単一項目経由を避ける直行先を返します。
  *
  * 次の画面は対象選択が唯一の掘り下げのため、経由画面を挟まず対象画面へ
- * 直行します。SOUND_TARGET_POSITION は停止操作時、CONDITION_DETAIL は
- * 他エンティティ対象時に該当します。それ以外は null を返し、
- * 通常の画面遷移を行います。操作種別・対象種別の切替はタブの開き直しで追従し、
- * 経路開始時に判定します。文脈の役割は対象選択用へ正規化します。
+ * 直行します。SOUND_TARGET_POSITION は停止操作時に該当します。
+ * それ以外は null を返し、通常の画面遷移を行います。
+ * 条件ノードの対象は親画面の「対象」タブへ分離したため、ここでは扱いません。
  */
 internal fun shortCircuitTargetFrame(node: CommandNode, frame: GestureSettingFrame): GestureSettingFrame? {
     val direct = when (frame.screen) {
         GestureSettingScreen.SOUND_TARGET_POSITION ->
             node.type == CommandType.PLAY_SOUND && SoundSettings.operation(node) == SoundOperation.STOP
-        GestureSettingScreen.CONDITION_DETAIL ->
-            node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.OTHER_ENTITY
         else -> false
     }
     if (!direct) return null

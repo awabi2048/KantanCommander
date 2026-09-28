@@ -9,7 +9,7 @@ import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.variableScopeStrict
-import me.awabi2048.kantancommander.model.selectedControlBlockStates
+import me.awabi2048.kantancommander.model.redstoneSignalSpec
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
@@ -1957,10 +1957,10 @@ object ExecutableScriptValidator {
         }
         when (subject) {
             ConditionSubject.OTHER_ENTITY -> if (node.targetSpec == null) {
-                errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
+                errors += nodeError(node, path, setOf("target"), "条件の対象が未設定です")
             }
             ConditionSubject.PLAYER -> {
-                if (node.targetSpec == null) errors += nodeError(node, path, setOf("condition"), "対象プレイヤーが未設定です")
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象プレイヤーが未設定です")
                 if (node.params["sneaking"]?.isNotBlank() == true && node.params["sneaking"]?.toBooleanStrictOrNull() == null) {
                     errors += nodeError(node, path, setOf("condition"), "スニーク状態の設定が不正です")
                 }
@@ -1971,17 +1971,12 @@ object ExecutableScriptValidator {
             }
             ConditionSubject.VARIABLE -> {
                 if (!CommandValueRules.isVariableName(node.string("variable"))) {
-                    errors += nodeError(node, path, setOf("condition"), "評価する変数名が不正です")
-                } else checkDefinition(node.string("variable"), ValueType.NUMBER, variableDefinitions, node, path, setOf("condition"), errors)
+                    errors += nodeError(node, path, setOf("variable"), "評価する変数名が不正です")
+                } else checkDefinition(node.string("variable"), ValueType.NUMBER, variableDefinitions, node, path, setOf("variable"), errors)
                 if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
                     errors += nodeError(node, path, setOf("condition"), "評価の方法が不正です")
                 }
                 validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
-            }
-            // issue #5: 型付き条件比較です。左辺の変数・演算子・右辺のリテラルを検証し、
-            // 正常な不一致と解決失敗・型不一致を区別できる形にします。
-            ConditionSubject.VALUE -> {
-                validateValueComparison(node, path, errors, variableDefinitions, temporaryDefinitions)
             }
             ConditionSubject.BLOCK -> {
                 if (CommandValueRules.material(node.string("block")) == null) {
@@ -1990,80 +1985,17 @@ object ExecutableScriptValidator {
                 // 判定位置が未設定の場合は、実行元の制御ブロック位置を使います。
             }
             ConditionSubject.CONTROL_BLOCK -> {
-                if (node.selectedControlBlockStates().isEmpty()) {
-                    errors += nodeError(node, path, setOf("condition"), "制御ブロックの状態が未設定です")
+                // 空欄・0のみの範囲（0指定）は「条件なし」の未選択、構文不正は不正値として区別します。
+                if (node.redstoneSignalSpec() == null) {
+                    val raw = node.string("redstoneSignal")
+                    val invalid = raw.isNotBlank() &&
+                        CommandValueRules.parseSignalStrengthRange(raw) == null
+                    errors += nodeError(
+                        node, path, setOf("condition"),
+                        if (invalid) "赤石信号強度の指定が不正です" else "赤石信号強度の条件が未設定です",
+                    )
                 }
             }
-        }
-    }
-
-    /**
-     * issue #5 の型付き条件比較を検証します。
-     *
-     * 左辺は EXECUTION／WORLD／ENTITY scope の変数、右辺は型に応じたリテラルです。
-     * 演算子なしは Boolean 直接条件、領域演算子はノードの領域指定を使います。
-     * ENTITY scope は定義表を持たないため型検査は実行時に行います。
-     * 定義型が確定している場合は演算子の適用可否まで確認し、未確定の場合は
-     * 形状検証だけを行って実行時へ委ねます。
-     */
-    private fun validateValueComparison(
-        node: CommandNode,
-        path: String,
-        errors: MutableList<ScriptValidationError>,
-        variableDefinitions: Map<String, TypedValue>?,
-        temporaryDefinitions: Map<String, ValueType>?,
-    ) {
-        val scopeRaw = node.string("leftScope").ifBlank { VariableScope.WORLD.name }
-        val scope = VariableScope.parse(scopeRaw)
-        if (scope == null) {
-            errors += nodeError(node, path, setOf("condition"), "比較左辺の範囲が不正です")
-            return
-        }
-        val leftName = node.string("leftName")
-        if (!CommandValueRules.isVariableName(leftName)) {
-            errors += nodeError(node, path, setOf("condition"), "比較する変数名が不正です")
-            return
-        }
-        // 定義型が確定している場合だけ、型依存の検査を行います。
-        // ENTITY scope は定義表を持たないため、型検査は実行時に行います。
-        val definedType: ValueType? = when (scope) {
-            VariableScope.WORLD -> variableDefinitions?.get(leftName)?.type
-            VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(leftName))
-            VariableScope.ENTITY -> null
-        }
-        val hasTables = variableDefinitions != null || temporaryDefinitions != null
-        val operator = node.string("operator")
-        if (operator.isBlank()) {
-            errors += nodeError(node, path, setOf("condition"), "条件の比較方法を選択してください")
-            return
-        }
-        if (operator !in me.awabi2048.kantancommander.model.ConditionComparison.ALL) {
-            errors += nodeError(node, path, setOf("condition"), "比較の方法が不正です")
-            return
-        }
-        // issue #5: 領域述語は右辺リテランの代わりにノードの領域指定を使います。
-        // 左辺はLOCATION／ENTITYに限定し、型が確定している場合に検査します。
-        if (me.awabi2048.kantancommander.model.ConditionComparison.isRegionPredicate(operator)) {
-            if (definedType != null && definedType != ValueType.LOCATION && definedType != ValueType.ENTITY) {
-                errors += nodeError(node, path, setOf("condition"), "変数の型に使えない比較方法です: $operator")
-                return
-            }
-            validateRegionSpec(node.regionSpec, "$path/region", node, errors, temporaryDefinitions)
-            return
-        }
-        if (node.string("right").isBlank()) {
-            errors += nodeError(node, path, setOf("condition"), "比較値が未設定です")
-            return
-        }
-        // 定義型が確定している場合だけ、演算子の適用可否を確認します。
-        if (scope != VariableScope.ENTITY && hasTables && definedType == null) {
-            errors += nodeError(node, path, setOf("condition"), "比較する変数が未定義です: $leftName")
-            return
-        }
-        if (definedType != null &&
-            operator !in me.awabi2048.kantancommander.model.ConditionComparison.operatorsFor(definedType)
-        ) {
-            errors += nodeError(node, path, setOf("condition"), "変数の型に使えない比較方法です: $operator")
         }
     }
 

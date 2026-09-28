@@ -2,9 +2,7 @@ package me.awabi2048.kantancommander.item
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -16,7 +14,7 @@ class ControlBlockProgramCodecTest {
     fun `embedded program round trips the complete graph`() {
         val node = CommandNode(type = CommandType.CONDITION).apply {
             params["subject"] = "CONTROL_BLOCK"
-            controlBlockStates = linkedSetOf(ControlBlockStateKind.REDSTONE_INPUT)
+            params["redstoneSignal"] = "1.."
         }
         val script = DiskScript(
             name = "同梱テスト",
@@ -35,10 +33,7 @@ class ControlBlockProgramCodecTest {
         assertEquals(script.graph.entryNodeId, decoded?.graph?.entryNodeId)
         assertEquals(script.graph.nodes.keys, decoded?.graph?.nodes?.keys)
         assertEquals("CONTROL_BLOCK", decoded?.graph?.nodes?.get(node.id)?.params?.get("subject"))
-        assertEquals(
-            setOf(ControlBlockStateKind.REDSTONE_INPUT),
-            decoded?.graph?.nodes?.get(node.id)?.selectedControlBlockStates(),
-        )
+        assertEquals("1..", decoded?.graph?.nodes?.get(node.id)?.params?.get("redstoneSignal"))
     }
 
     @Test

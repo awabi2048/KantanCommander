@@ -3,7 +3,6 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
-import me.awabi2048.kantancommander.model.conditionSubject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -34,9 +33,11 @@ class LegacyConditionMigrationTest {
         params: String,
         targetSpec: String? = null,
         configuredFields: String? = null,
+        nodeFields: String? = null,
     ) {
         val target = if (targetSpec == null) "" else ",\n          \"targetSpec\": $targetSpec"
         val configured = if (configuredFields == null) "" else ",\n          \"configuredFields\": $configuredFields"
+        val extra = if (nodeFields == null) "" else ",\n          $nodeFields"
         dir.resolve("$scriptId.json").writeText(
             """
             {
@@ -53,7 +54,7 @@ class LegacyConditionMigrationTest {
                   "$nodeId": {
                     "id": "$nodeId",
                     "type": "CONDITION",
-                    "params": $params$target$configured
+                    "params": $params$target$configured$extra
                   }
                 }
               },
@@ -225,6 +226,58 @@ class LegacyConditionMigrationTest {
         assertEquals(ConditionSubject.VARIABLE, node.conditionSubject())
         assertEquals(17, loaded.formatVersion)
         assertFalse(
+            ExecutableScriptValidator.validate(loaded).any { it.nodeId == nodeId },
+        )
+    }
+
+    @Test
+    fun `legacy redstone input selection migrates to signal range`() {
+        // 旧制御ブロック状態の REDSTONE_INPUT は「信号あり」を意味したため、
+        // 強度範囲 1.. へ移行します。
+        val dir = temp.resolve("redstone-migrate").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeCondition(
+            dir,
+            scriptId,
+            nodeId,
+            17,
+            """{"kind": "CONTROL_BLOCK_STATE"}""",
+            nodeFields = """"controlBlockStates": ["REDSTONE_INPUT"]""",
+        )
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val node = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(ConditionSubject.CONTROL_BLOCK, node.conditionSubject())
+        assertEquals("1..", node.params["redstoneSignal"])
+        assertTrue("redstoneSignal" in (node.configuredFields ?: emptySet()))
+        // 移行後の条件はそのまま検証を通ります。
+        assertFalse(
+            ExecutableScriptValidator.validate(loaded).any { it.nodeId == nodeId },
+        )
+    }
+
+    @Test
+    fun `legacy control block states without redstone input are dropped`() {
+        // REDSTONE_INPUT を含まない旧選択欄は廃止欄として除去するだけです。
+        // 条件未設定のまま残るため、検証は引き続き未設定を報告します。
+        val dir = temp.resolve("redstone-drop").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeCondition(
+            dir,
+            scriptId,
+            nodeId,
+            17,
+            """{"kind": "CONTROL_BLOCK_STATE"}""",
+            nodeFields = """"controlBlockStates": []""",
+        )
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val node = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(ConditionSubject.CONTROL_BLOCK, node.conditionSubject())
+        assertTrue("redstoneSignal" !in node.params)
+        assertTrue(
             ExecutableScriptValidator.validate(loaded).any { it.nodeId == nodeId },
         )
     }

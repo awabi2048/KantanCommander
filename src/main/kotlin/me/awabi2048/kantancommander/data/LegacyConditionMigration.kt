@@ -22,6 +22,9 @@ import com.google.gson.JsonObject
  * - 未知・欠落の `kind` は変換せず、そのまま検証層の未設定扱いに委ねます。
  * - 対象固有の詳細欄（sneaking/item/variable/operator/value/block 等）や
  *   反転指定は触れず、意味を維持します。
+ * - 旧制御ブロック状態の選択欄 `controlBlockStates` は、判定対象が
+ *   `CONTROL_BLOCK` のノードで `REDSTONE_INPUT` を含む場合に `redstoneSignal`＝
+ *   `1..`（信号あり）へ移行します。それ以外では廃止欄として除去するだけです。
  */
 internal object LegacyConditionMigration {
     private const val KIND_TARGET_EXISTS = "TARGET_EXISTS"
@@ -56,34 +59,61 @@ internal object LegacyConditionMigration {
     }
 
     private fun normalizeNode(node: JsonObject) {
-        val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject ?: return
-        val subject = params["subject"]
-            ?.takeIf { it.isJsonPrimitive }
-            ?.asString?.takeIf(String::isNotBlank)
-        if (subject != null) {
-            // 正本がある場合は変換せず、残存 `kind` 欄だけを除去します。
-            if (params.has("kind")) {
-                params.remove("kind")
-                removeConfiguredMark(node, "kind")
+        val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
+        if (params != null) {
+            val subject = params["subject"]
+                ?.takeIf { it.isJsonPrimitive }
+                ?.asString?.takeIf(String::isNotBlank)
+            if (subject != null) {
+                // 正本がある場合は変換せず、残存 `kind` 欄だけを除去します。
+                if (params.has("kind")) {
+                    params.remove("kind")
+                    removeConfiguredMark(node, "kind")
+                }
+            } else {
+                val kind = params["kind"]
+                    ?.takeIf { it.isJsonPrimitive }
+                    ?.asString
+                val mapped = kind?.let { KIND_TO_SUBJECT[it] } ?: if (kind == KIND_TARGET_EXISTS) {
+                    val targetKind = node["targetSpec"]
+                        ?.takeIf { it.isJsonObject }?.asJsonObject
+                        ?.get("kind")?.takeIf { it.isJsonPrimitive }?.asString
+                    if (targetKind in PLAYER_TARGET_KINDS) "PLAYER" else "OTHER_ENTITY"
+                } else {
+                    // 未知・欠落の旧値は推測で読み替えず、検証層の未設定扱いに委ねます。
+                    null
+                }
+                if (mapped != null) {
+                    params.addProperty("subject", mapped)
+                    params.remove("kind")
+                    removeConfiguredMark(node, "kind")
+                    addConfiguredMark(node, "subject")
+                }
             }
-            return
         }
-        val kind = params["kind"]
-            ?.takeIf { it.isJsonPrimitive }
-            ?.asString ?: return
-        val mapped = KIND_TO_SUBJECT[kind] ?: if (kind == KIND_TARGET_EXISTS) {
-            val targetKind = node["targetSpec"]
-                ?.takeIf { it.isJsonObject }?.asJsonObject
-                ?.get("kind")?.takeIf { it.isJsonPrimitive }?.asString
-            if (targetKind in PLAYER_TARGET_KINDS) "PLAYER" else "OTHER_ENTITY"
-        } else {
-            // 未知の旧値は推測で読み替えず、検証層の未設定扱いに委ねます。
-            return
+        migrateControlBlockStates(node, params)
+    }
+
+    /**
+     * 旧制御ブロック状態の選択欄を `redstoneSignal` へ移行します。
+     *
+     * 旧 `REDSTONE_INPUT` 選択は「信号あり（1以上）」を意味したため、`1..` へ
+     * 変換します。判定対象が `CONTROL_BLOCK` でないノードに残った廃止欄は
+     * 値を移さず除去だけします。
+     */
+    private fun migrateControlBlockStates(node: JsonObject, params: JsonObject?) {
+        if (!node.has("controlBlockStates")) return
+        val selected = node["controlBlockStates"].takeIf { it.isJsonArray }?.asJsonArray
+            ?.mapNotNull {
+                it.takeIf { e -> e.isJsonPrimitive && e.asJsonPrimitive.isString }?.asString
+            }.orEmpty()
+        node.remove("controlBlockStates")
+        val isControlBlock = params?.get("subject")
+            ?.takeIf { it.isJsonPrimitive }?.asString == "CONTROL_BLOCK"
+        if (isControlBlock && "REDSTONE_INPUT" in selected && !params.has("redstoneSignal")) {
+            params.addProperty("redstoneSignal", "1..")
+            addConfiguredMark(node, "redstoneSignal")
         }
-        params.addProperty("subject", mapped)
-        params.remove("kind")
-        removeConfiguredMark(node, "kind")
-        addConfiguredMark(node, "subject")
     }
 
     private fun removeConfiguredMark(node: JsonObject, field: String) {

@@ -4684,6 +4684,29 @@ object EditorMenuLayout {
         CommandType.CONDITION -> listOf(
             field("inverted", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INVERTED, Material.REDSTONE_TORCH) { displayConditionInversion(it.boolean("inverted")) },
             field("kind", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_KIND, Material.COMPARATOR) { displayCondition(it) },
+            // 判定対象に応じた固有設定は親タブへ分離します。表示は
+            // visibleFields/gestureVisibleFields が subject ごとに切り替えます。
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONDITION_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CONDITION_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONDITION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CONDITION_POSITION,
+            ) { it.conditionPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "variable",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+            ) { displayLiteral(it.string("variable")) },
             field("condition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_VALUE, Material.TARGET) { displayCondition(it) },
         )
         CommandType.DISK_CALL -> listOf(

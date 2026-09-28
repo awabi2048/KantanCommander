@@ -1740,118 +1740,21 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `entity direct and region conditions fail export with explicit reasons`() {
+    fun `control block condition fails export with explicit reason`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
-
-        fun conditionScript(name: String, configure: me.awabi2048.kantancommander.model.CommandNode.() -> Unit): me.awabi2048.kantancommander.model.DiskScript {
-            val script = store.create(UUID.randomUUID(), name)
-            GraphEditor.append(script.graph, CommandType.CONDITION).apply {
-                params["subject"] = ConditionSubject.VALUE.name
-                configure()
-            }
-            return script
+        val script = store.create(UUID.randomUUID(), "condition-control")
+        GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+            params["subject"] = ConditionSubject.CONTROL_BLOCK.name
+            params["redstoneSignal"] = "1.."
         }
 
-        // ENTITY scope は出力できません。
-        val entity = assertInstanceOf(
-            StandaloneCompilation.Failure::class.java,
-            exporter.compileForStandalone(
-                conditionScript("condition-entity") {
-                    params["leftScope"] = "ENTITY"
-                    params["leftName"] = "mark"
-                    params["operator"] = "=="
-                    params["right"] = "1"
-                },
-            ),
-        )
-        assertTrue(entity.errors.any { it.contains("エンティティ変数の条件は完全バニラ出力に未対応") })
-
-        // 直接条件は出力できません。
-        val direct = assertInstanceOf(
-            StandaloneCompilation.Failure::class.java,
-            exporter.compileForStandalone(
-                conditionScript("condition-direct") {
-                    params["leftScope"] = "WORLD"
-                    params["leftName"] = "flag"
-                    params["operator"] = ""
-                    params["right"] = ""
-                },
-                mapOf("flag" to ValueType.STRING),
-            ),
-        )
-        assertTrue(direct.errors.any { it.contains("直接条件は完全バニラ出力に未対応") })
-
-        // 領域述語は出力できません。
-        val region = assertInstanceOf(
-            StandaloneCompilation.Failure::class.java,
-            exporter.compileForStandalone(
-                conditionScript("condition-region") {
-                    params["leftScope"] = "WORLD"
-                    params["leftName"] = "spot"
-                    params["operator"] = "in_region"
-                    params["right"] = ""
-                    regionSpec = RegionSpec(
-                        anchor = RegionAnchorSpec(RegionAnchorKind.CONTROL_BLOCK),
-                        dx = 1.0,
-                        dy = 1.0,
-                        dz = 1.0,
-                    )
-                },
-                mapOf(
-                    "spot" to ValueType.LOCATION,
-                ),
-            ),
-        )
-        assertTrue(region.errors.any { it.contains("領域条件は完全バニラ出力に未対応") })
-    }
-
-    @Test
-    fun `typed value comparison lowers world numbers like variable conditions`() {
-        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "value-subject")
-        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
-        condition.params.putAll(
-            mapOf(
-                "subject" to "VALUE",
-                "leftScope" to "WORLD",
-                "leftName" to "counter",
-                "operator" to ">=",
-                "right" to "10",
-            )
-        )
-
-        val success = assertInstanceOf(
-            StandaloneCompilation.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
-                script,
-                mapOf("counter" to ValueType.NUMBER),
-            ),
-        )
-        val body = success.functions.values.joinToString("\n")
-        assertTrue(body.contains("score "), body)
-
-        // 非数値の型付き比較は明示エラーになります。
-        val store2 = ScriptStore(temp.resolve("scripts2"), Logger.getAnonymousLogger())
-        val script2 = store2.create(UUID.randomUUID(), "value-string")
-        val condition2 = GraphEditor.append(script2.graph, CommandType.CONDITION)
-        condition2.params.putAll(
-            mapOf(
-                "subject" to "VALUE",
-                "leftScope" to "WORLD",
-                "leftName" to "label",
-                "operator" to "==",
-                "right" to "a",
-            )
-        )
+        // 制御ブロックの入力状態はバニラのexecute条件へ写像できないため、明示的に拒否します。
         val failure = assertInstanceOf(
             StandaloneCompilation.Failure::class.java,
-            VanillaDatapackExporter(store2, temp.resolve("exports2")).compileForStandalone(
-                script2,
-                mapOf("label" to ValueType.STRING),
-            ),
+            exporter.compileForStandalone(script),
         )
-        assertTrue(failure.errors.any { it.contains("数値型以外") })
+        assertTrue(failure.errors.any { it.contains("制御ブロックの状態条件は完全バニラ出力に未対応") })
     }
 
     @Test

@@ -326,13 +326,13 @@ class GestureSettingTreeTest {
             shortCircuitTargetFrame(playing, frame("soundTargetPosition", GestureSettingScreen.SOUND_TARGET_POSITION)),
         )
 
-        // 他エンティティ対象時は対象設定だけで成立するため直行します。
+        // 条件ノードの対象設定は親画面の「対象」タブへ分離したため、
+        // CONDITION_DETAIL を経由する直行経路はありません。
         val otherEntity = CommandType.CONDITION.newNode()
             .apply { setConditionSubject(ConditionSubject.OTHER_ENTITY) }
-        val conditionDirect = requireNotNull(
+        assertNull(
             shortCircuitTargetFrame(otherEntity, frame("condition", GestureSettingScreen.CONDITION_DETAIL)),
         )
-        assertSame(GestureSettingScreen.TARGET, conditionDirect.screen)
 
         val playerSubject = CommandType.CONDITION.newNode()
             .apply { setConditionSubject(ConditionSubject.PLAYER) }

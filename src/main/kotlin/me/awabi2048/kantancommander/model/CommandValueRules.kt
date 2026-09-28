@@ -96,6 +96,32 @@ object CommandValueRules {
         return NumericRange(min, max)
     }
 
+    /**
+     * 制御ブロック条件の赤石信号強度指定を検証して 0..15 の整数範囲へ解決します。
+     *
+     * `4`（強度4ちょうど）・`4..6`（4以上6以下）・`3..`（3以上）・`..2`（2以下）を受理します。
+     * 片側省略はその端の限界値を意味し、空欄・非整数・逆順・範囲外・余分な区切り・
+     * 両端省略は拒否します。`0` や `..0` のように0だけを含む範囲は構文上受理しますが、
+     * 呼び出し側で「条件なし」として扱います。
+     */
+    fun parseSignalStrengthRange(raw: String): IntRange? {
+        val normalized = raw.trim()
+        if (normalized.isEmpty() || normalized.contains("...")) return null
+        val parts = normalized.split("..", limit = 2)
+        if (parts.size == 1) {
+            val single = parseNonNegativeInt(parts[0]) ?: return null
+            return (single..single).takeIf { single <= SIGNAL_STRENGTH_MAX }
+        }
+        if (parts[0].isBlank() && parts[1].isBlank()) return null
+        val min = if (parts[0].isBlank()) 0 else parseNonNegativeInt(parts[0]) ?: return null
+        val max = if (parts[1].isBlank()) SIGNAL_STRENGTH_MAX else parseNonNegativeInt(parts[1]) ?: return null
+        if (min > max || max > SIGNAL_STRENGTH_MAX) return null
+        return min..max
+    }
+
+    /** 赤石信号強度の上限です。Minecraftの信号強度 0..15 に合わせます。 */
+    const val SIGNAL_STRENGTH_MAX: Int = 15
+
     /** 秒数がMinecraftのtick境界（0.05秒）の整数倍かを10進数として判定します。 */
     fun isTickAlignedSeconds(raw: String): Boolean = runCatching {
         BigDecimal(raw.trim()).remainder(TICK_SECONDS_DECIMAL).compareTo(BigDecimal.ZERO) == 0

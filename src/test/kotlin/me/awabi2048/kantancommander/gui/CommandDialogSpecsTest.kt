@@ -553,31 +553,28 @@ class CommandDialogSpecsTest {
     }
 
     @Test
-    fun `condition right side follows operator driven types`() {
-        fun valueNode(operator: String) = me.awabi2048.kantancommander.model.CommandNode(
-            type = me.awabi2048.kantancommander.model.CommandType.CONDITION,
-            params = linkedMapOf(
-                "subject" to me.awabi2048.kantancommander.model.ConditionSubject.VALUE.name,
-                "operator" to operator,
-            ),
-        )
-        // issue #5: 比較演算子が型を決める場合だけ型別検証します。
-        // contains は文字列、比較演算子は数値のみを受け付けます。
-        val containsSpec = CommandDialogSpecs.conditionRightSpec(valueNode("contains"))
-        assertNull(containsSpec.validateInput("hello"))
+    fun `condition signal strength accepts ranges and rejects malformed input`() {
+        val spec = CommandDialogSpecs.conditionSignalStrength
+        // 空欄と0は「条件なし」へ戻す入力として受理します。
+        assertNull(spec.validateInput(""))
+        assertNull(spec.validateInput("0"))
+        // 単値・開放端・両端範囲を受理します。
+        assertNull(spec.validateInput("4"))
+        assertNull(spec.validateInput("3.."))
+        assertNull(spec.validateInput("..2"))
+        assertNull(spec.validateInput("4..6"))
+        // 範囲外・逆順・非整数は拒否します。
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
-            containsSpec.validateInput(""),
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_SIGNAL_INVALID,
+            spec.validateInput("16"),
         )
-        val greaterSpec = CommandDialogSpecs.conditionRightSpec(valueNode(">"))
-        assertNull(greaterSpec.validateInput("1.5"))
-        assertNull(greaterSpec.validateInput("%{count}%"))
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
-            greaterSpec.validateInput("abc"),
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_SIGNAL_INVALID,
+            spec.validateInput("5..3"),
         )
-        // ==・!= は全型があり得るため汎用仕様とします。
-        val equalSpec = CommandDialogSpecs.conditionRightSpec(valueNode("=="))
-        assertNull(equalSpec.validateInput("abc"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_SIGNAL_INVALID,
+            spec.validateInput("abc"),
+        )
     }
 }

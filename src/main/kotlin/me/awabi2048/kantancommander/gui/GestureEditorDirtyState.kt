@@ -185,7 +185,6 @@ object GraphChangeClassifier {
         if (before.destinationTargetSpec != after.destinationTargetSpec) return false
         if (before.destinationFacingSpec != after.destinationFacingSpec) return false
         if (before.conditionPositionSpec != after.conditionPositionSpec) return false
-        if (before.controlBlockStates != after.controlBlockStates) return false
         if (before.blockPositionSpec != after.blockPositionSpec) return false
         if (before.blockFromSpec != after.blockFromSpec) return false
         if (before.blockToSpec != after.blockToSpec) return false

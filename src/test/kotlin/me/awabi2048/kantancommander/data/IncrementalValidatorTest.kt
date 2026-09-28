@@ -220,26 +220,25 @@ class IncrementalValidatorTest {
     @Test
     fun `changed node referencing disk arguments matches full validation`() {
         // issue #8: 引数を参照するノードの編集は、種子付きで増分検証します。
-        fun scriptWithArgs(right: String): DiskScript {
+        fun scriptWithArgs(operator: String): DiskScript {
             val script = DiskScript(name = "args", owner = UUID.randomUUID())
             script.arguments = listOf(
                 me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
             )
             val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
-            condition.params["subject"] = ConditionSubject.VALUE.name
-            condition.params["leftScope"] = "EXECUTION"
-            condition.params["leftName"] = "count"
-            condition.params["operator"] = "=="
-            condition.params["right"] = right
+            condition.params["subject"] = ConditionSubject.VARIABLE.name
+            condition.params["variable"] = "counter"
+            condition.params["operator"] = operator
+            condition.params["value"] = "%{count}%"
             return script
         }
-        val previous = scriptWithArgs("1")
-        val mutated = scriptWithArgs("1").copy(
+        val previous = scriptWithArgs("==")
+        val mutated = scriptWithArgs("==").copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
             arguments = previous.arguments.toList(),
         )
-        mutated.graph.nodes.values.first { it.type == CommandType.CONDITION }.params["right"] = "2"
+        mutated.graph.nodes.values.first { it.type == CommandType.CONDITION }.params["operator"] = "!="
 
         assertEquivalent(previous, mutated)
     }

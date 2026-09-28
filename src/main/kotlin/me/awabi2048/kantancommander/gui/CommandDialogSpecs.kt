@@ -1095,30 +1095,23 @@ internal object CommandDialogSpecs {
         field(node, "value") ?: conditionValue
 
     /**
-     * issue #5: 型付き条件比較（VALUE）の右辺入力仕様です。
+     * 制御ブロック条件の赤石信号強度指定です。
      *
-     * 左辺の型は入力時点では確定しないため、演算子が型を決める場合だけ
-     * 型別検証します。`contains` は文字列、`>・>=・<・<=` は数値のみを受け付け、
-     * `==・!=` は全型があり得るため汎用仕様とします。左辺型まで含めた完全な
-     * 検査は検証層が行います。両GUIで同じ仕様を使います。
+     * `4`（強度4ちょうど）・`4..6`・`3..`・`..2` の形式を受け付けます。
+     * `0`（または空欄）は「条件なし」へ戻す値として扱い、形式自体は受理します。
      */
-    fun conditionRightSpec(node: CommandNode): Spec {
-        if (node.conditionSubject() != ConditionSubject.VALUE) return conditionValueSpec(node)
-        return when (node.string("operator", "==")) {
-            // contains の右辺は空欄にできないため、STRING検証へ必須を付けます。
-            // 共有 Spec の required は変えない（他用途へ波及させない）。
-            "contains" -> tempStringValue.copy(
-                required = true,
-                validate = { raw ->
-                    if (raw.isBlank() || hasMalformedAnyReference(raw)) {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                    } else null
-                },
-            )
-            ">", ">=", "<", "<=" -> tempNumberValue
-            else -> conditionValueSpec(node)
-        }
-    }
+    val conditionSignalStrength = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT,
+        16,
+        validate = { raw ->
+            if (CommandValueRules.parseSignalStrengthRange(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_SIGNAL_INVALID
+            } else null
+        },
+        required = false,
+        format = InputFormat.ANY_STRING,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_SIGNAL_HINT,
+    )
 
     /**
      * 一時変数 NUMBER の値入力です。有限doubleまたは単一 `%{name}%` 参照を受け付けます。
@@ -1297,10 +1290,12 @@ internal object CommandDialogSpecs {
                 "block" -> return block
             }
         }
-        if (node.type == CommandType.CONDITION && fieldKey == "value" &&
-            node.conditionSubject() == me.awabi2048.kantancommander.model.ConditionSubject.VARIABLE
-        ) {
-            return conditionNumberValue
+        if (node.type == CommandType.CONDITION || node.type == CommandType.FOLDED_IF) {
+            // 変数条件の変数名・比較値は専用の入力仕様を使います。
+            if (fieldKey == "variable") return variableName
+            if (fieldKey == "value" && node.conditionSubject() == ConditionSubject.VARIABLE) {
+                return conditionNumberValue
+            }
         }
         if (node.type == CommandType.PLACE_ITEM && fieldKey == "slot") return placeSlot(node)
         if (node.type == CommandType.STRUCTURE_PLACE && fieldKey == "structure") {

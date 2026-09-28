@@ -2,7 +2,6 @@ package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
-import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.ValueType
@@ -54,8 +53,8 @@ class ExecutableScriptValidatorTest {
             "DISK_CALLの未設定はdiskIdタブへ投影される",
         )
         assertTrue(
-            errors.any { it.nodeId == condition.id && it.fieldKeys == setOf("condition") },
-            "条件の未設定は条件値（condition）タブへ投影される",
+            errors.any { it.nodeId == condition.id && it.fieldKeys == setOf("target") },
+            "条件の対象未設定は対象（target）タブへ投影される",
         )
         // 表示形式はrendered()だけが担当し、"path: message" の契約を維持します。
         assertTrue(
@@ -64,19 +63,31 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `control block state condition requires at least one selected state`() {
+    fun `control block condition requires a configured redstone signal`() {
         val script = DiskScript(name = "control-state", owner = UUID.randomUUID())
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
             params["subject"] = ConditionSubject.CONTROL_BLOCK.name
         }
 
+        // 空欄と0指定は「条件なし」として拒否します。
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
                 it.nodeId == condition.id && it.fieldKeys == setOf("condition")
             },
         )
+        condition.params["redstoneSignal"] = "0"
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.nodeId == condition.id })
 
-        condition.controlBlockStates = linkedSetOf(ControlBlockStateKind.REDSTONE_INPUT)
+        // 構文上受理できない値は条件なしと区別して拒否します。
+        condition.params["redstoneSignal"] = "abc"
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == condition.id && it.message.contains("不正")
+            },
+        )
+
+        // 強度範囲を指定した場合だけ判定条件として有効です。
+        condition.params["redstoneSignal"] = "1.."
         assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == condition.id })
     }
 

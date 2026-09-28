@@ -38,7 +38,6 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
-import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityGroupOperation
@@ -70,7 +69,7 @@ import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.displayKey
-import me.awabi2048.kantancommander.model.selectedControlBlockStates
+import me.awabi2048.kantancommander.model.redstoneSignalSpec
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.kantancommander.gui.declarative.CenteredLine
 import me.awabi2048.kantancommander.gui.declarative.ConfirmTexts
@@ -2109,7 +2108,14 @@ class GestureLowerPanel(
         } else {
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET))
         }
-        val settingScreen = gestureSettingScreenFor(descriptor.editor)
+        // 経路が有効な場合は現在フレームの画面を優先します。descriptor.editorの再導出では
+        // ショートサーキット（サウンド停止の対象画面直行等）が描画側へ反映されず、
+        // 経路上の画面と実際の描画画面が食い違います。
+        val settingScreen = if (state.settingFieldKey == field.key && state.settingRoute.isNotEmpty()) {
+            state.settingScreen ?: gestureSettingScreenFor(descriptor.editor)
+        } else {
+            gestureSettingScreenFor(descriptor.editor)
+        }
         // issue #18: Checkbox対象は親画面のトグルで直接操作するため、
         // 旧来の二択カードを重ねて表示しません。
         val checkboxPresentation = SettingSpec.presentationFor(node, field.key, descriptor) ==
@@ -3704,10 +3710,6 @@ class GestureLowerPanel(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS
                 ConditionSubject.VARIABLE ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
-                // #5: 型付き比較は変数条件の説明を共用します。左辺・演算子・右辺の
-                // 意味は詳細項目の説明で補います。
-                ConditionSubject.VALUE ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
                 ConditionSubject.BLOCK ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE
                 ConditionSubject.CONTROL_BLOCK ->
@@ -3719,21 +3721,8 @@ class GestureLowerPanel(
     /** 条件詳細の選択肢IDから、項目ごとの説明へ解決します。 */
     private fun conditionDetailDescription(player: Player, choiceId: String): String? =
         when (choiceId) {
-            "condition-target" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_TARGET)
             "condition-state" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_STATE)
-            "condition-variable" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VARIABLE)
-            // #5: 左辺・右辺は変数名・比較値の説明を共用し、範囲は対象範囲の説明を共用します。
-            "condition-left" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VARIABLE)
-            "condition-right" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VALUE)
-            "condition-left-scope" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_SCOPE)
-            "condition-scope" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_SCOPE)
             "condition-operator" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_OPERATOR)
             "condition-value" ->
@@ -3742,11 +3731,7 @@ class GestureLowerPanel(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_BLOCK)
             "condition-item" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_ITEM)
-            "condition-count" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_COUNT)
-            "condition-position" ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_POSITION)
-            "condition-control-block-state:${ControlBlockStateKind.REDSTONE_INPUT.name}" ->
+            "condition-redstone-input" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_REDSTONE_INPUT)
             else -> null
         }
@@ -3967,32 +3952,7 @@ class GestureLowerPanel(
                 ),
             ),
         )
-        GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player).map { choice ->
-            when (choice.id) {
-                // 対象・位置は編集入口であり、選択状態を持ちません。
-                // 1クリックで子画面へ進むためDETAILS_ONLYを明示します。
-                // 設定済み状態はvalueStateの空色枠が担います。
-                "condition-target" -> choice.copy(
-                    selected = false,
-                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
-                    children = targetChoices(
-                        node,
-                        context.copy(role = CommandSettingRole.NODE_TARGET),
-                        player,
-                    ),
-                )
-                "condition-position" -> choice.copy(
-                    selected = false,
-                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
-                    children = positionChoices(
-                        node,
-                        context.copy(role = CommandSettingRole.CONDITION_POSITION),
-                        player,
-                    ),
-                )
-                else -> choice
-            }
-        }
+        GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player)
         else -> settingChoices(node, context, screen, fieldKey, player, detailVisited, summonPropertyId)
     }
 
@@ -4020,16 +3980,12 @@ class GestureLowerPanel(
         parentId: String? = null,
     ): GestureSettingTreeNode {
         val childContext = when (choice.id) {
-            "condition-target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
-            "condition-position" -> context.copy(role = CommandSettingRole.CONDITION_POSITION)
             "location:position" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION)
             "location:facing" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING)
             "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
             else -> context
         }
         val effectiveContext = when {
-            parentId == "condition-target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
-            parentId == "condition-position" -> context.copy(role = CommandSettingRole.CONDITION_POSITION)
             parentId == "location:position" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION)
             parentId == "location:facing" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING)
             parentId == "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
@@ -4205,16 +4161,6 @@ class GestureLowerPanel(
                 CommandSettingsModel.isFieldConfigured(node, "facing", context.role)
             id == "location:position" -> node.temporaryLocationPositionSpec != null
             id == "location:facing" -> node.temporaryLocationFacingSpec != null
-            id == "condition-target" -> CommandSettingsModel.isFieldConfigured(
-                node,
-                "target",
-                CommandSettingRole.NODE_TARGET,
-            )
-            id == "condition-position" -> CommandSettingsModel.isFieldConfigured(
-                node,
-                "position",
-                CommandSettingRole.CONDITION_POSITION,
-            )
             // 再生対象・再生位置は編集入口のため選択状態を持ちません。
             // 設定済みの空色枠だけが状態を表します。
             id == "sound-target" -> CommandSettingsModel.isFieldConfigured(
@@ -4227,23 +4173,8 @@ class GestureLowerPanel(
                 "position",
                 CommandSettingRole.SOUND_POSITION,
             )
-            id.startsWith("condition-control-block-state:") -> {
-                val controlState = runCatching {
-                    ControlBlockStateKind.valueOf(id.removePrefix("condition-control-block-state:"))
-                }.getOrNull()
-                controlState != null && controlState in node.selectedControlBlockStates()
-            }
+            id == "condition-redstone-input" -> node.redstoneSignalSpec() != null
             id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "sneaking")
-            // issue #5: Boolean直接条件は演算子なしで成立します。直接条件の有効・無効は
-            // 選択肢の背景色で示すため、ここでは明示設定済み判定のみを扱います。
-            // issue #5: 条件の領域とその子選択肢はノードの領域指定から導出します。
-            // 対象絞り込み側と同じ共有判定を使い、分岐を増やしません。
-            id == "condition-region" -> CommandSettingsModel.isRegionConfigured(node.regionSpec, "region")
-            id.startsWith("condition-region-") -> CommandSettingsModel.isRegionConfigured(
-                node.regionSpec,
-                id.removePrefix("condition-"),
-            )
-            id.startsWith("condition-variable") -> CommandSettingsModel.isFieldConfigured(node, "variable")
             id.startsWith("condition-operator") -> CommandSettingsModel.isFieldConfigured(node, "operator")
             id.startsWith("condition-value") -> CommandSettingsModel.isFieldConfigured(node, "value")
             id.startsWith("condition-block") -> CommandSettingsModel.isFieldConfigured(node, "block")
@@ -5513,29 +5444,17 @@ class GestureLowerPanel(
         }
 
     private fun conditionDetailChoices(node: CommandNode, player: Player): List<SettingChoice> {
-        // issue #27: 選択した判定対象に応じて詳細欄を切り替えます。
+        // 選択した判定対象に応じて詳細欄を切り替えます。対象・判定位置・変数名は
+        // 親画面の設定タブへ分離済みのため、ここには各subject固有の残り項目だけを置きます。
         // 未設定・不正な判定対象は詳細欄を出さず、判定対象タブでの選択を促します。
         val subject = node.conditionSubject() ?: return emptyList()
         fun label(key: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): String =
             labeled(player, key, value)
         return when (subject) {
-            // その他エンティティは対象設定そのものを存在判定として扱います。
-            // 追加条件なしでも対象設定だけで成立します。
-            ConditionSubject.OTHER_ENTITY -> listOf(
-                SettingChoice(
-                    "condition-target",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
-                    selected = false,
-                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
-                ),
-            )
+            // 「エンティティが存在するか」は対象設定（親タブ）だけで成立するため、
+            // 詳細画面の項目を持ちません。
+            ConditionSubject.OTHER_ENTITY -> emptyList()
             ConditionSubject.PLAYER -> listOf(
-                SettingChoice(
-                    "condition-target",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
-                    selected = false,
-                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
-                ),
                 SettingChoice(
                     "condition-state",
                     label(
@@ -5552,92 +5471,24 @@ class GestureLowerPanel(
                 SettingChoice("condition-item", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION, node.string("item"))),
             )
             ConditionSubject.VARIABLE -> listOf(
-                SettingChoice("condition-variable", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("variable"))),
                 SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, node.string("operator", "=="))),
                 SettingChoice("condition-value", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("value", "0"))),
             )
-            // issue #5: 型付き条件比較は左辺（範囲＋変数）・演算子・右辺で構成します。
-            // 簡単な条件プリセット（既存5区分）はそのまま残し、詳細比較はこの
-            // 判定対象を選んだ場合の高度設定として展開します。
-            // Boolean直接条件と領域述語は同じ行構成へ載せ、演算子・右辺・領域の
-            // 表示を現在の指定に合わせます。
-            ConditionSubject.VALUE -> buildList {
-                add(
-                    SettingChoice(
-                        "condition-left-scope",
-                        label(
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE,
-                            when (node.string("leftScope").ifBlank { VariableScope.WORLD.name }) {
-                                VariableScope.EXECUTION.name -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
-                                VariableScope.ENTITY.name -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_ENTITY)
-                                else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
-                            },
-                        ),
-                    ),
-                )
-                add(SettingChoice("condition-left", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("leftName"))))
-                val operator = node.string("operator")
-                if (operator.isBlank()) {
-                    // Boolean直接条件はON／OFFを背景色で示し、選択表示へ流用しません。
-                    add(
-                        SettingChoice(
-                            "condition-direct",
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
-                            selected = false,
-                            interactionMode = GestureSettingInteractionMode.TOGGLE,
-                            toggleValue = true,
-                        ),
-                    )
-                } else {
-                    add(SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, operator)))
-                    if (me.awabi2048.kantancommander.model.ConditionComparison.isRegionPredicate(operator)) {
-                        add(
-                            SettingChoice(
-                                "condition-region",
-                                label(
-                                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REGION,
-                                    CommandSettingsModel.formatRegionSummary(node.regionSpec) { key ->
-                                        KcI18n.text(player, key)
-                                    },
-                                ),
-                                // 子項目は同じ一覧内の行として直接操作するため、行自体は
-                                // 選択だけを行い、子画面への遷移は持ちません。
-                                interactionMode = GestureSettingInteractionMode.SELECT,
-                                children = regionChildren(node.regionSpec, player, "condition"),
-                            ),
-                        )
-                    } else {
-                        add(SettingChoice("condition-right", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("right"))))
-                    }
-                    add(
-                        SettingChoice(
-                            "condition-direct",
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
-                            selected = false,
-                            interactionMode = GestureSettingInteractionMode.TOGGLE,
-                            toggleValue = false,
-                        ),
-                    )
-                }
-            }
             ConditionSubject.BLOCK -> listOf(
-                SettingChoice(
-                    "condition-position",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION),
-                    selected = false,
-                    interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
-                ),
                 SettingChoice("condition-block", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, node.string("block", "minecraft:air"))),
             )
-            // 制御ブロック自身の状態は、今後の項目追加を前提に複数選択の木として
-            // 表示します。選択済み集合の評価は実行モデル側でANDへ集約します。
-            ConditionSubject.CONTROL_BLOCK -> ControlBlockStateKind.entries.map { state ->
+            // 赤石信号の入力は値駆動で扱います。未選択は条件なし、選択済みは
+            // `redstoneSignal` の範囲文字列を値として表示します。
+            ConditionSubject.CONTROL_BLOCK -> listOf(
                 SettingChoice(
-                    "condition-control-block-state:${state.name}",
-                    KcI18n.text(player, state.key),
-                    state in node.selectedControlBlockStates(),
-                )
-            }
+                    "condition-redstone-input",
+                    label(
+                        KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT,
+                        node.redstoneSignalSpec()?.let { node.string("redstoneSignal") },
+                    ),
+                    selected = node.redstoneSignalSpec() != null,
+                ),
+            )
         }
     }
 

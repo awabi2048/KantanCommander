@@ -982,7 +982,6 @@ object GraphEditor {
         head.destinationTargetSpec = wrapper.destinationTargetSpec?.copy()
         head.destinationFacingSpec = wrapper.destinationFacingSpec?.copy()
         head.conditionPositionSpec = wrapper.conditionPositionSpec?.copy()
-        head.controlBlockStates = wrapper.controlBlockStates?.toMutableSet()
         head.blockPositionSpec = wrapper.blockPositionSpec?.copy()
         head.blockFromSpec = wrapper.blockFromSpec?.copy()
         head.blockToSpec = wrapper.blockToSpec?.copy()
