@@ -2,6 +2,11 @@
 target/
 *.jar
 
+# Gradle
+.gradle/
+build/
+.kotlin/
+
 # IDE
 .idea/
 *.iml
