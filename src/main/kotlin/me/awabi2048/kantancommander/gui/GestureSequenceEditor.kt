@@ -399,6 +399,10 @@ enum class GestureSettingScreen {
     SOUND_OPERATION,
     SOUND_TARGET_POSITION,
     PARTICLE_GEOMETRY,
+    /** パーティクル種類の親タブ画面です。プリセット一覧が本体で、経路の起点として使います。 */
+    PARTICLE,
+    /** パーティクル詳細データの編集子画面です。詳細入力欄を行として出します。 */
+    PARTICLE_DETAIL,
     BLOCK_OPERATION,
     /** issue #11: 建造物名・回転・反転の選択画面です。 */
     STRUCTURE_NAME,
@@ -3243,7 +3247,11 @@ class GestureSequenceEditor(
             showSoundSettingDialog(player, context, node)
             return
         }
-        if (fieldKey == "particle" && node.type == CommandType.PARTICLE) {
+        if (fieldKey == "particle" &&
+            (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY)
+        ) {
+            // 種類と詳細データは両型で同じ一括入力画面を使います。
+            // 図形表示でもdust等の詳細データを持つ種類を編集できるようにします。
             showParticleDialog(player, context, node)
             return
         }
@@ -4068,9 +4076,46 @@ class GestureSequenceEditor(
         val normalized = CommandDialogSpecs.normalize(valueFieldKey, id)
         val spec = CommandDialogSpecs.field(node, valueFieldKey)
         if (spec != null && spec.validateInput(normalized) != null) return
+        // 選択済みプリセットの再クリックは、詳細データを必要とする種類の
+        // 詳細設定子画面へ進みます。プリセットからの選択→同じカードから
+        // 詳細設定へ進む二段階操作です。
+        val currentRaw = CommandDialogSpecs.normalize(valueFieldKey, node.string(valueFieldKey))
+        if (normalized == currentRaw && openParticleDetailChild(player, fieldKey)) return
         if (!updateSettingNode(player, settingContext, configuredFields = setOf(fieldKey)) {
                 CommandSettingsModel.setParameter(it, valueFieldKey, normalized)
             }) return
+    }
+
+    /**
+     * パーティクル詳細設定の子画面を開きます。
+     *
+     * particle項目はテキスト入力タブのため通常の設定経路を持ちません。
+     * ここで項目の親フレームを立ててから詳細フレームを積み、戻る操作で
+     * 項目タブへ戻れる構造にします。プリセット選択済みカードの再クリックと、
+     * プリセット外選択時の詳細設定ボタンの両方から入ります。
+     * 詳細データを必要としない種類では開きません。
+     */
+    private fun openParticleDetailChild(player: Player, fieldKey: String): Boolean {
+        if (ResourcePicker.kindForFieldKey(fieldKey) != GestureResourcePickerKind.PARTICLE) return false
+        val settingContext = state.settingContext ?: return false
+        val script = plugin.scripts.load(settingContext.scriptId) ?: return false
+        observedRevision = script.revision
+        val node = script.graph.nodes[settingContext.nodeId] ?: return false
+        val particle = ParticleSettings.particle(node) ?: return false
+        if (!ParticleSettings.requiresData(particle)) return false
+        val rootFrame = GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.PARTICLE)
+        if (state.settingRoute.firstOrNull()?.let {
+                it.fieldKey == fieldKey && it.screen == GestureSettingScreen.PARTICLE
+            } != true
+        ) {
+            startSettingRoute(rootFrame)
+        }
+        pushSettingFrame(
+            player,
+            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.PARTICLE_DETAIL),
+            "particle-detail",
+        )
+        return true
     }
 
     /**
@@ -6779,6 +6824,9 @@ class GestureSequenceEditor(
         }
 
         when (screen) {
+            // パーティクル種類の親画面はプリセット一覧（lower-inline-pick等）が
+            // 本体であり、選択候補カードを持たないため操作対象はありません。
+            GestureSettingScreen.PARTICLE -> Unit
             GestureSettingScreen.TARGET -> {
                 // issue #29: 対象プリセットは1クリックで正規仕様へ設定します。
                 // 付近系は選択済みの再クリックで距離を変更します。
@@ -8403,6 +8451,71 @@ class GestureSequenceEditor(
                     showGeometryNumbersDialog(player, settingContext, node)
                 }
             }
+            // パーティクル詳細データの子画面です。欄ごとの行クリックでテキスト
+            // 入力を開き、保存時は単一詳細文字列へ合成して particleData へ
+            // 書きます。VIBRATION／TRAILは分解欄を現在値へ差し戻して合成します。
+            GestureSettingScreen.PARTICLE_DETAIL -> {
+                if (group != "particleData") return
+                val particle = ParticleSettings.particle(node) ?: return
+                if (!ParticleSettings.requiresData(particle)) return
+                val input = CommandDialogSpecs.particleInputs(node)
+                    .firstOrNull { it.id == value } ?: return
+                beginSettingInput(player, input.spec, input.initial) { raw ->
+                    val normalized = CommandDialogSpecs.normalize(input.id, raw)
+                    val inputError = input.spec.validateInput(normalized)
+                    if (inputError != null) {
+                        return@beginSettingInput KcI18n.text(player, inputError)
+                    }
+                    val latestNode = plugin.scripts.load(settingContext.scriptId)
+                        ?.graph?.nodes?.get(settingContext.nodeId)
+                        ?: return@beginSettingInput KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                        )
+                    val vibIds = listOf("vibX", "vibY", "vibZ", "vibT")
+                    val trailIds = listOf("trailX", "trailY", "trailZ", "trailColor", "trailT")
+                    val composed = when {
+                        input.id in vibIds -> {
+                            val parts = CommandDialogSpecs.vibrationParts(
+                                latestNode.string(ParticleSettings.PARAM_DATA),
+                            ).toMutableList()
+                            parts[vibIds.indexOf(input.id)] = normalized
+                            CommandDialogSpecs.composeVibrationData(
+                                mapOf("vibX" to parts[0], "vibY" to parts[1], "vibZ" to parts[2], "vibT" to parts[3]),
+                            )
+                        }
+                        input.id in trailIds -> {
+                            val parts = CommandDialogSpecs.trailParts(
+                                latestNode.string(ParticleSettings.PARAM_DATA),
+                            ).toMutableList()
+                            parts[trailIds.indexOf(input.id)] = normalized
+                            CommandDialogSpecs.composeTrailData(
+                                mapOf(
+                                    "trailX" to parts[0], "trailY" to parts[1],
+                                    "trailZ" to parts[2], "trailColor" to parts[3],
+                                    "trailT" to parts[4],
+                                ),
+                            )
+                        }
+                        else -> normalized
+                    }
+                    // 合成後の詳細文字列全体が現種類で解釈できるかを最終確認します。
+                    if (ParticleSettings.parseData(particle, composed).isFailure) {
+                        return@beginSettingInput KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DATA_INVALID,
+                        )
+                    }
+                    if (!updateSettingNode(player, settingContext, configuredFields = setOf("particle")) {
+                            CommandSettingsModel.setParameter(it, ParticleSettings.PARAM_DATA, composed)
+                        }) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else {
+                        showSettingScreen()
+                        null
+                    }
+                }
+            }
             GestureSettingScreen.VARIABLE_TYPE -> {
                 if (group != "type") return
                 if (node.type == CommandType.TEMP_SET) {
@@ -9107,6 +9220,13 @@ class GestureSequenceEditor(
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val fieldKey = InlineResourcePicker.parseInput(context.elementId) ?: return
                 beginSelectedFieldEdit(player, fieldKey)
+            }
+            // プリセット外の現在値に対する詳細設定ボタンです。プリセットの
+            // 選択済みカード再クリックと同じ詳細設定子画面へ進みます。
+            context.elementId.startsWith(InlineResourcePicker.DETAIL_PREFIX) &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val fieldKey = InlineResourcePicker.parseDetail(context.elementId) ?: return
+                openParticleDetailChild(player, fieldKey)
             }
             context.elementId.startsWith("lower-setting-") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {

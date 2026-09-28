@@ -27,7 +27,7 @@ enum class GestureResourcePickerKind {
 object ResourcePicker {
     /** 1ページの列数・行数です。正方形小型アイコンを6〜8列×3〜4行へ収めます。 */
     const val COLUMNS = 8
-    const val ROWS = 3
+    const val ROWS = 4
 
     /** 1ページの件数です。 */
     const val PAGE_SIZE = COLUMNS * ROWS
@@ -70,10 +70,10 @@ object ResourcePicker {
         "CRIT" to "minecraft:crit",
         "CLOUD" to "minecraft:cloud",
         "DUST" to "minecraft:dust",
+        "DUST_COLOR_TRANSITION" to "minecraft:dust_color_transition",
         "FIREWORK" to "minecraft:firework",
         "TOTEM_OF_UNDYING" to "minecraft:totem_of_undying",
         "SOUL" to "minecraft:soul",
-        "DRAGON_BREATH" to "minecraft:dragon_breath",
         "HAPPY_VILLAGER" to "minecraft:happy_villager",
         "WITCH" to "minecraft:witch",
         "POOF" to "minecraft:poof",
@@ -84,6 +84,14 @@ object ResourcePicker {
         "END_ROD" to "minecraft:end_rod",
         "SWEEP_ATTACK" to "minecraft:sweep_attack",
         "SONIC_BOOM" to "minecraft:sonic_boom",
+        "EFFECT" to "minecraft:effect",
+        "FLASH" to "minecraft:flash",
+        "ITEM" to "minecraft:item",
+        "BLOCK_CRUMBLE" to "minecraft:block_crumble",
+        "SMALL_FLAME" to "minecraft:small_flame",
+        "SOUL_FIRE_FLAME" to "minecraft:soul_fire_flame",
+        "SNOWFLAKE" to "minecraft:snowflake",
+        "GLOW" to "minecraft:glow",
     )
 
     /** 全ページ数です。空一覧は1ページとして扱います。 */
@@ -141,6 +149,8 @@ object ResourcePresets {
      *
      * 保存形式のBukkit enum名（大文字）のまま保持し、正規化前の比較には使いません。
      * 呼び出し側は [CommandDialogSpecs.normalize] 済みの現在値で照合します。
+     * 詳細データを必要とする種類もプリセットへ含め、選択済みカードの再クリックで
+     * 詳細設定子画面へ進める構成にします。指定外の種類はプリセットへ出しません。
      */
     val PARTICLE_IDS: List<String> = listOf(
         "FLAME",
@@ -153,10 +163,10 @@ object ResourcePresets {
         "CRIT",
         "CLOUD",
         "DUST",
+        "DUST_COLOR_TRANSITION",
         "FIREWORK",
         "TOTEM_OF_UNDYING",
         "SOUL",
-        "DRAGON_BREATH",
         "HAPPY_VILLAGER",
         "WITCH",
         "POOF",
@@ -167,6 +177,14 @@ object ResourcePresets {
         "END_ROD",
         "SWEEP_ATTACK",
         "SONIC_BOOM",
+        "EFFECT",
+        "FLASH",
+        "ITEM",
+        "BLOCK_CRUMBLE",
+        "SMALL_FLAME",
+        "SOUL_FIRE_FLAME",
+        "SNOWFLAKE",
+        "GLOW",
     )
 
     /** 効果付与で頻用する効果IDです。表示順に並べます。 */
@@ -268,17 +286,21 @@ object ResourcePresetDisplay {
  * Registryへ触れない純粋処理のため、サーバーなしの単体テストで検証します。
  */
 object InlineResourcePicker {
-    /** 親直下グリッドの列数です。24件を3行に収めます。 */
+    /** 親直下グリッドの列数です。32件を4行に収めます。 */
     const val COLUMNS = 8
 
     const val PICK_PREFIX = "lower-inline-pick:"
     const val INPUT_PREFIX = "lower-inline-input:"
+    const val DETAIL_PREFIX = "lower-inline-detail:"
 
     /** プリセット選択操作面の要素IDを返します。 */
     fun pickElementId(fieldKey: String, id: String): String = "$PICK_PREFIX$fieldKey:$id"
 
     /** ID直接入力操作面の要素IDを返します。 */
     fun inputElementId(fieldKey: String): String = "$INPUT_PREFIX$fieldKey"
+
+    /** プリセット外選択時の詳細設定操作面の要素IDを返します。 */
+    fun detailElementId(fieldKey: String): String = "$DETAIL_PREFIX$fieldKey"
 
     /**
      * 選択要素IDを (設定項目キー, 候補ID) へ分解します。
@@ -298,6 +320,12 @@ object InlineResourcePicker {
     fun parseInput(elementId: String): String? {
         if (!elementId.startsWith(INPUT_PREFIX)) return null
         return elementId.removePrefix(INPUT_PREFIX).takeIf(String::isNotBlank)
+    }
+
+    /** 詳細設定要素IDを設定項目キーへ分解します。不正形式はnullを返します。 */
+    fun parseDetail(elementId: String): String? {
+        if (!elementId.startsWith(DETAIL_PREFIX)) return null
+        return elementId.removePrefix(DETAIL_PREFIX).takeIf(String::isNotBlank)
     }
 }
 
@@ -370,7 +398,7 @@ object ResourcePickerIcons {
     /**
      * パーティクル候補の表示素材です。
      *
-     * プリセット24件が一覧内で重複表示にならないよう、種類ごとに固有の
+     * プリセット32件が一覧内で重複表示にならないよう、種類ごとに固有の
      * 代表素材を割り当てます。表外の種類は従来の系統別解決へ縮退し、
      * 最後は汎用フォールバックで表示を保証します。
      */
@@ -387,6 +415,7 @@ object ResourcePickerIcons {
             "CRIT" -> return Material.IRON_SWORD
             "CLOUD" -> return Material.GLASS
             "DUST", "REDSTONE" -> return Material.REDSTONE
+            "DUST_COLOR_TRANSITION" -> return Material.MAGENTA_DYE
             "FIREWORK", "FIREWORKS_SPARK" -> return Material.FIREWORK_ROCKET
             "TOTEM_OF_UNDYING", "TOTEM" -> return Material.TOTEM_OF_UNDYING
             "SOUL" -> return Material.SOUL_LANTERN
@@ -401,9 +430,17 @@ object ResourcePickerIcons {
             "END_ROD" -> return Material.END_ROD
             "SWEEP_ATTACK" -> return Material.DIAMOND_SWORD
             "SONIC_BOOM" -> return Material.ECHO_SHARD
+            "EFFECT" -> return Material.POTION
+            "FLASH" -> return Material.NETHER_STAR
+            "ITEM" -> return Material.ITEM_FRAME
+            "BLOCK_CRUMBLE" -> return Material.GRAVEL
+            "SMALL_FLAME" -> return Material.TORCH
+            "SOUL_FIRE_FLAME" -> return Material.SOUL_TORCH
+            "SNOWFLAKE" -> return Material.SNOWBALL
+            "GLOW" -> return Material.GLOW_INK_SAC
         }
         return when (path) {
-            "SMALL_FLAME", "CAMPFIRE_COSY_SMOKE", "CAMPFIRE_SIGNAL_SMOKE" -> Material.BLAZE_POWDER
+            "CAMPFIRE_COSY_SMOKE", "CAMPFIRE_SIGNAL_SMOKE" -> Material.BLAZE_POWDER
             "FISHING", "DRIPPING_WATER",
             "FALLING_WATER", "RAIN",
             -> Material.WATER_BUCKET
@@ -414,9 +451,8 @@ object ResourcePickerIcons {
             "REVERSE_PORTAL" -> Material.ENDER_PEARL
             "SPELL", "SPELL_MOB", "SPELL_MOB_AMBIENT", "SPELL_WITCH", "SPELL_INSTANT" -> Material.POTION
             "SLIME" -> Material.SLIME_BALL
-            "SNOWBALL", "SNOWFLAKE", "SNOW_SHOVEL" -> Material.SNOWBALL
-            "FLASH" -> Material.FIREWORK_ROCKET
-            "SOUL_FIRE_FLAME", "SNIFFER_EGG", "SCULK_SOUL", "SCULK_CHARGE",
+            "SNOWBALL", "SNOW_SHOVEL" -> Material.SNOWBALL
+            "SNIFFER_EGG", "SCULK_SOUL", "SCULK_CHARGE",
             "SCULK_CHARGE_POP", "SHRIEK",
             -> Material.SOUL_LANTERN
             else -> null

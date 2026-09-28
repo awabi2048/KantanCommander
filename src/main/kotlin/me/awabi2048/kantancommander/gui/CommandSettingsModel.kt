@@ -1289,7 +1289,9 @@ object CommandSettingsModel {
         } else {
             node.markConfigured(key)
         }
-        if (node.type == CommandType.PARTICLE && key == ParticleSettings.PARAM_PARTICLE) {
+        if ((node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) &&
+            key == ParticleSettings.PARAM_PARTICLE
+        ) {
             normalizeParticleData(node)
         }
     }

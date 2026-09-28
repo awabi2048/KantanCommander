@@ -1223,7 +1223,9 @@ internal object CommandDialogSpecs {
                 else -> field(fieldKey)
             }
         }
-        if (node.type == CommandType.PARTICLE) {
+        // パーティクル種類・詳細データの入力仕様は通常表示と図形表示で共通です。
+        // 図形表示でもdust等の詳細データを持つ種類を同じ形式で検証します。
+        if (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) {
             return when (fieldKey) {
                 ParticleSettings.PARAM_PARTICLE -> Spec(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,

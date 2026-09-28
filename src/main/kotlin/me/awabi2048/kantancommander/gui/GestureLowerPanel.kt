@@ -57,6 +57,7 @@ import me.awabi2048.kantancommander.model.variableScope
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
@@ -201,10 +202,13 @@ class GestureLowerPanel(
     /**
      * 資源ID項目のプリセット一覧を親タブ直下へ直接配置します。
      *
-     * 子画面遷移は行いません。表示は使用頻度の高い [ResourcePresets] 24件に限定し、
+     * 表示は [ResourcePresets] の先頭から 8列×4行で最大32件に限定し、
      * プリセット外の値は入力カードからのDialog入力と候補検索でのみ指定します。
      * 保存・検証の正本は全件のまま変えません。一覧を上、入力カードを下に置き、
      * 現在値がプリセット外のときは入力カードを選択済みとして扱います。
+     * パーティクルは一覧が4行になるため入力カードを縮め、プリセット外の現在値が
+     * 詳細データを必要とする場合だけ、入力カードの右隣に詳細設定の正方形ボタンを
+     * 置きます。選択済みプリセットの再クリックも詳細設定へ進む契約です。
      * Nameへ生値を出しません。
      * グリッド位置は呼び出し側が項目行に合わせて指定します。
      */
@@ -217,7 +221,6 @@ class GestureLowerPanel(
         kind: GestureResourcePickerKind,
         gridTopY: Double,
         inputCx: Double,
-        inputCy: Double,
         inputW: Double,
         gridLeftX: Double = INLINE_RESOURCE_GRID_LEFT_X,
         columns: Int = INLINE_RESOURCE_COLUMNS,
@@ -232,10 +235,22 @@ class GestureLowerPanel(
         // プリセット外の現在値は入力カード側を選択済みにします。
         val isCurrentPreset = ResourcePresets.isPreset(kind, currentRaw)
         // グリッド全体を1マス高さの半分だけ上げ、最底辺を詰めます。
-        // 入力カード位置は変えず、間の余白を広げる方向です。
         val topY = gridTopY + cellH / 2
         // ホバー文言は一覧の上側へ、1マス高さの1/3＋1/2だけ上げた位置へ表示します。
         val hoverY = topY + cellH * 2 / 3 + INLINE_RESOURCE_HOVER_ABOVE_GAP
+        val rowCount = (ids.size + columns - 1) / columns
+        // パーティクルは詳細設定ボタン用に入力カード右側を確保し、
+        // 4行分の高さを入力カードの縮小で補います。ボタンは入力カードの
+        // 短辺（高さ）を一辺とする正方形です。
+        val inputH = if (kind == GestureResourcePickerKind.PARTICLE) {
+            INLINE_RESOURCE_INPUT_HEIGHT
+        } else SETTING_INPUT_HEIGHT
+        val detailSlot = if (kind == GestureResourcePickerKind.PARTICLE) {
+            inputH + INLINE_RESOURCE_DETAIL_GAP
+        } else 0.0
+        val effectiveInputW = inputW - detailSlot
+        val effectiveInputCx = inputCx - detailSlot / 2
+        val inputCy = topY - (rowCount - 1) * pitchY - cellH / 2 - INLINE_RESOURCE_INPUT_GAP - inputH / 2
         val cards = ids.mapIndexed { index, id ->
             val selected = CommandDialogSpecs.normalize(valueFieldKey, id) == currentRaw ||
                 id == node.string(valueFieldKey)
@@ -273,10 +288,10 @@ class GestureLowerPanel(
                 background = Bukkit.createBlockData(
                     if (!isCurrentPreset && currentRaw.isNotBlank()) Material.CYAN_TERRACOTTA else Material.CYAN_CONCRETE,
                 ),
-                cx = inputCx,
+                cx = effectiveInputCx,
                 cy = inputCy,
-                w = inputW,
-                h = SETTING_INPUT_HEIGHT,
+                w = effectiveInputW,
+                h = inputH,
                 labelSize = 0.0048,
                 labelWidth = 120,
                 gestures = GestureGuiClickPolicy.CLICK,
@@ -292,6 +307,34 @@ class GestureLowerPanel(
                 } else null,
             ),
         )
+        // プリセット外の現在値が詳細データを必要とする場合だけ、入力カードの
+        // 右隣に詳細設定の正方形ボタンを置きます。選択状態ではなく、
+        // 詳細設定子画面への操作入口です。
+        val particle = if (kind == GestureResourcePickerKind.PARTICLE) ParticleSettings.particle(node) else null
+        if (particle != null && !isCurrentPreset && ParticleSettings.requiresData(particle)) {
+            DeclarativeSettings.resourcePickerSection(
+                nodes,
+                frame,
+                listOf(
+                    me.awabi2048.kantancommander.gui.declarative.ResourcePickerCard(
+                        elementId = InlineResourcePicker.detailElementId(fieldKey),
+                        icon = ItemStack(Material.WRITABLE_BOOK),
+                        background = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                        outline = null,
+                        cx = effectiveInputCx + effectiveInputW / 2 + INLINE_RESOURCE_DETAIL_GAP + inputH / 2,
+                        cy = inputCy,
+                        w = inputH,
+                        h = inputH,
+                        hover = singleLineHover(
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
+                            x = HOVER_SLOT_X,
+                            y = hoverY,
+                        ),
+                        visualIndex = ids.size,
+                    ),
+                ),
+            )
+        }
     }
 
     /**
@@ -2516,7 +2559,6 @@ class GestureLowerPanel(
                     nodes, frame, player, node, field.key, pickerKind,
                     gridTopY = inlineGridTopY,
                     inputCx = GestureChoicePane.PARENT.centerX,
-                    inputCy = inlineGridTopY - 2 * INLINE_RESOURCE_GRID_PITCH_Y - INLINE_RESOURCE_INPUT_BELOW_DY,
                     inputW = 1.2,
                 )
             } else {
@@ -4559,6 +4601,13 @@ class GestureLowerPanel(
                 ),
             )
         }
+        // パーティクル種類の選択は親タブ直下のプリセット一覧が本体です。
+        // 詳細設定子画面の経路起点としてのみ使うため、候補行は持ちません。
+        GestureSettingScreen.PARTICLE -> emptyList()
+        // パーティクル詳細データの子画面です。詳細入力欄を行ごとに出し、
+        // 行クリックでテキスト入力へ進みます。詳細データを必要としない
+        // 種類では候補を出しません。
+        GestureSettingScreen.PARTICLE_DETAIL -> particleDetailChoices(node, player)
         // #2: WORLD scope の変数名は定義済み候補から選択します。候補にない名前は
         // 直接入力から定義フロー（DEFINE）へ進めます。EXECUTION scope は文字列入力の
         // ためこの画面を使いません（TEXT表示）。
@@ -5327,6 +5376,25 @@ class GestureLowerPanel(
                 id = "myworld-spawn:${kind.name}",
                 label = KcI18n.text(player, label),
                 selected = current == kind,
+            )
+        }
+    }
+
+    /**
+     * パーティクル詳細データの子画面行です。
+     *
+     * 種類入力欄は含めず、詳細データの入力欄だけを行として出します。
+     * VIBRATION／TRAILは終点XYZ・色・tickを分解した行になります。
+     * 行は選択状態を持たず、クリックで該当欄のテキスト入力へ進みます。
+     */
+    private fun particleDetailChoices(node: CommandNode, player: Player): List<SettingChoice> {
+        val particle = ParticleSettings.particle(node) ?: return emptyList()
+        if (!ParticleSettings.requiresData(particle)) return emptyList()
+        return CommandDialogSpecs.particleInputs(node).drop(1).map { input ->
+            SettingChoice(
+                "particleData:${input.id}",
+                labeled(player, input.labelKey, input.initial.takeIf(String::isNotBlank)),
+                selected = false,
             )
         }
     }
@@ -6124,7 +6192,7 @@ class GestureLowerPanel(
         const val POSITION_TARGET_CHOICE_HEIGHT = 0.15
         const val POSITION_TARGET_CHOICE_Y = -0.25
         // 親タブ直下の資源プリセット配置です。子画面遷移は行いません。
-        // 右詳細域へ収まるよう、8列×3行で24件を収めます。図柄のはみ出しを
+        // 右詳細域へ収まるよう、8列×4行で最大32件を収めます。図柄のはみ出しを
         // 防ぐため、セル寸法に対して図柄係数と行間を一体で調整します。
         const val INLINE_RESOURCE_COLUMNS = 8
         const val INLINE_RESOURCE_CELL_W = 0.13
@@ -6135,13 +6203,18 @@ class GestureLowerPanel(
         // 外縁-0.275〜0.835に対し余白が左右ほぼ均等となり、
         // グリッド＋余白の横幅はボタンの1.2と一致します。
         const val INLINE_RESOURCE_GRID_LEFT_X = -0.21
-        // 通常入力行の直下へ3行を置くための、入力行からの下げ幅です。
+        // 通常入力行の直下へ4行を置くための、入力行からの下げ幅です。
         // 入力カードとの余白確保のため、グリッド全体はこの分だけ上に寄ります。
         const val INLINE_RESOURCE_GRID_TOP_DY = -0.01
         // ホバー文言をグリッド上側へ置くための、グリッド上端からの上げ幅です。
         const val INLINE_RESOURCE_HOVER_ABOVE_GAP = 0.03
-        // 一覧の下へ入力カードを置くための、グリッド最終行を超える下げ幅です。
-        const val INLINE_RESOURCE_INPUT_BELOW_DY = 0.13
+        // 一覧最終行と入力カードの間の余白です。
+        const val INLINE_RESOURCE_INPUT_GAP = 0.05
+        // パーティクル項目のID入力カードの高さです。詳細設定ボタンの配置と
+        // 4行一覧の収容のため、通常の入力カード（0.16）より縮めます。
+        const val INLINE_RESOURCE_INPUT_HEIGHT = 0.10
+        // ID入力カードと詳細設定ボタンの間隔です。
+        const val INLINE_RESOURCE_DETAIL_GAP = 0.04
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "sound", "soundSetting", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
