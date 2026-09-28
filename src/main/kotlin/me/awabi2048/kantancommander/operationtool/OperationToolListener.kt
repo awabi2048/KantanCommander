@@ -6,9 +6,9 @@ import io.papermc.paper.event.player.PrePlayerAttackEntityEvent
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.item.KantanItemKind
 import me.awabi2048.kantancommander.item.KantanItemService
+import me.awabi2048.kantancommander.model.RegionMath
 import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.toSpatialVector
-import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.entity.Entity
@@ -62,16 +62,6 @@ class OperationToolListener(
     private var editTask: BukkitTask? = null
     private val lastCandidateCounts = mutableMapOf<UUID, Int>()
     private val glow = OperationToolGlow(plugin)
-    private val tagDisplays = OperationToolTagDisplay(
-        plugin = plugin,
-        holdsWand = { player ->
-            KantanItemService.kind(player.inventory.itemInMainHand) == KantanItemKind.WAND
-        },
-        isViewable = { player, entity -> isOperableTarget(player, entity) },
-        moreLine = { player, rest ->
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TAGS_MORE, mapOf("count" to rest))
-        },
-    )
 
     /**
      * Entity右クリックを処理したtickです。
@@ -89,10 +79,9 @@ class OperationToolListener(
 
     fun displays(): OperationToolBoxDisplay = displays
 
-    /** 発光表示のパケット連携とタグ一覧表示を開始します。プラグイン有効化時に呼び出します。 */
+    /** 発光表示のパケット連携を開始します。プラグイン有効化時に呼び出します。 */
     fun start() {
         glow.start()
-        tagDisplays.start()
     }
 
     /** 編集中Boxの追従タスクを停止します。プラグイン無効化時に呼び出します。 */
@@ -100,7 +89,6 @@ class OperationToolListener(
         editTask?.cancel()
         editTask = null
         glow.stop()
-        tagDisplays.stop()
         lastCandidateCounts.clear()
         entityClickTicks.clear()
         displays.removeAll()
@@ -120,13 +108,12 @@ class OperationToolListener(
     /**
      * ツール表示を除外した操作可能判定です。
      *
-     * [isOperable] 本体は注入可能な共有predicateとして残し、範囲表示・
-     * タグ表示のEntityが選択候補へ混ざらないよう、実使用側ではこちらを呼びます。
+     * [isOperable] 本体は注入可能な共有predicateとして残し、範囲表示の
+     * Entityが選択候補へ混ざらないよう、実使用側ではこちらを呼びます。
      */
     private fun isOperableTarget(operator: Player, entity: Entity): Boolean =
         isOperable(operator, entity) &&
-            !displays.isToolDisplay(entity.uniqueId) &&
-            !tagDisplays.isTagDisplay(entity.uniqueId)
+            !displays.isToolDisplay(entity.uniqueId)
 
     // wand所持中の掘削・破壊は選択操作と誤認されるため抑止します。
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -171,8 +158,21 @@ class OperationToolListener(
             return
         }
         when (session.mode) {
-            OperationToolMode.AREA -> plugin.operationMenu.openArea(player)
-            else -> plugin.operationMenu.openEntity(player)
+            OperationToolMode.AREA -> {
+                if (session.hasValidArea()) {
+                    plugin.operationMenu.openArea(player)
+                } else {
+                    // 選択前のEntity左クリックは、そのEntityのタグ一覧を表示します。
+                    plugin.operationMenu.openEntityTags(player, event.attacked)
+                }
+            }
+            OperationToolMode.ENTITY_RANGE, OperationToolMode.ENTITY_DIRECT -> {
+                if (session.selected().isEmpty()) {
+                    plugin.operationMenu.openEntityTags(player, event.attacked)
+                } else {
+                    plugin.operationMenu.openEntity(player)
+                }
+            }
         }
     }
 
@@ -317,19 +317,73 @@ class OperationToolListener(
     }
 
     /**
-     * wandを投げ捨てた場合は編集中Boxを解除します。
+     * Qキーによるwand投げ捨てを、AREAモードの構造物原点設定へ転用します。
      *
-     * インベントリ確定がイベントより遅れる場合があるため、1tick後に
-     * メインハンドを再確認してから解除します。確定済み選択は保持します。
+     * 有効なエリア選択中は投げ捨てを抑止し、領域内を向いた視線先ブロックを
+     * 原点として設定します。視線先が届かない・領域外の場合は、プレイヤーが
+     * 領域内にいればその位置を原点にします。エリア未選択時は従来どおり
+     * 投げ捨てを許可し、手から離れたなら編集中Boxを解除します。
+     * インベントリ確定がイベントより遅れる場合があるため、確認は1tick後です。
      */
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onDrop(event: PlayerDropItemEvent) {
         if (KantanItemService.kind(event.itemDrop.itemStack) != KantanItemKind.WAND) return
-        val playerId = event.player.uniqueId
+        val player = event.player
+        val session = sessions.get(player.uniqueId)
+        if (session != null && session.mode == OperationToolMode.AREA && session.hasValidArea()) {
+            event.isCancelled = true
+            setStructureOrigin(player, session)
+            return
+        }
+        val playerId = player.uniqueId
         plugin.server.scheduler.runTaskLater(plugin, Runnable {
-            val player = plugin.server.getPlayer(playerId) ?: return@Runnable
-            cancelEditingIfHandLeft(player, player.inventory.itemInMainHand)
+            val online = plugin.server.getPlayer(playerId) ?: return@Runnable
+            cancelEditingIfHandLeft(online, online.inventory.itemInMainHand)
         }, 1L)
+    }
+
+    /**
+     * Qキー入力から構造物の原点を解決して設定します。
+     *
+     * 視線先ブロックが領域内ならそのブロック、視線が届かない・領域外なら
+     * プレイヤーが領域内にいる場合だけその位置を原点にします。
+     */
+    private fun setStructureOrigin(player: Player, session: OperationToolSession) {
+        val bounds = session.areaBounds() ?: return
+        val hit = runCatching {
+            player.rayTraceBlocks(ORIGIN_RAY_DISTANCE, org.bukkit.FluidCollisionMode.NEVER)?.hitBlock
+        }.getOrNull()
+        val origin = when {
+            hit != null && RegionMath.contains(
+                SpatialVector(hit.x.toDouble(), hit.y.toDouble(), hit.z.toDouble()),
+                bounds.minimum, bounds.dx, bounds.dy, bounds.dz,
+            ) -> SpatialVector(hit.x.toDouble(), hit.y.toDouble(), hit.z.toDouble())
+            RegionMath.contains(
+                player.location.toSpatialVector(),
+                bounds.minimum, bounds.dx, bounds.dy, bounds.dz,
+            ) -> SpatialVector(
+                player.location.blockX.toDouble(),
+                player.location.blockY.toDouble(),
+                player.location.blockZ.toDouble(),
+            )
+            else -> null
+        }
+        if (origin == null) {
+            OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_ORIGIN_FAILED,
+                emptyMap(),
+                NamedTextColor.RED,
+            )
+            return
+        }
+        session.setOrigin(RegionPoint(player.world.name, origin))
+        OperationToolFeedback.notifyKey(
+            player, session,
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_ORIGIN_SET,
+            mapOf("x" to origin.x.toInt(), "y" to origin.y.toInt(), "z" to origin.z.toInt()),
+            NamedTextColor.AQUA,
+        )
     }
 
     /**
@@ -395,7 +449,6 @@ class OperationToolListener(
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         glow.clear(event.player.uniqueId)
-        tagDisplays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         entityClickTicks.remove(event.player.uniqueId)
         plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
@@ -406,7 +459,6 @@ class OperationToolListener(
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         glow.clear(event.player.uniqueId)
-        tagDisplays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         entityClickTicks.remove(event.player.uniqueId)
         plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
@@ -426,7 +478,6 @@ class OperationToolListener(
         session.clearAll()
         displays.clear(event.player.uniqueId)
         glow.clear(event.player.uniqueId)
-        tagDisplays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         OperationToolFeedback.notifyKey(
             event.player, session,
@@ -438,9 +489,8 @@ class OperationToolListener(
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onJoin(event: PlayerJoinEvent) {
-        // 表示は操作者専用のため、参加者から他者のBox・タグ表示を隠します。
+        // 表示は操作者専用のため、参加者から他者のBox表示を隠します。
         displays.hideFrom(event.player.uniqueId)
-        tagDisplays.hideFrom(event.player.uniqueId)
         // ログアウトで破棄された表示のうち、同ワールドのエリア指定と
         // 選択Entityの発光を復元します。
         val playerId = event.player.uniqueId
@@ -455,10 +505,10 @@ class OperationToolListener(
     /**
      * 左クリックはメニュー起動の操作です。
      *
-     * 対象・スニーク・ブロック破壊の成否に関わらず、全ての左クリックで
-     * 現在モードのメニューを開きます。例外は、AREAモードのスニーク+
-     * 左クリック（pos1設定）と、Box編集中の左クリック（編集キャンセル）
-     * だけです。
+     * 選択が済んでいない間はメニューを開かず、操作案内だけを通知します。
+     * 例外は、AREAモードのスニーク+左クリック（pos1設定）、Box編集中の
+     * 左クリック（編集キャンセル）、未選択時のEntity左クリック
+     * （[onAttack] で対象のタグ一覧を開く）です。
      */
     private fun onLeftClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
         when (session.mode) {
@@ -475,6 +525,7 @@ class OperationToolListener(
                         emptyMap(),
                         NamedTextColor.YELLOW,
                     )
+                    return
                 }
                 plugin.operationMenu.openArea(player)
             }
@@ -485,6 +536,15 @@ class OperationToolListener(
                     displays.dropEditing(player.uniqueId)
                     lastCandidateCounts.remove(player.uniqueId)
                     OperationToolFeedback.showStatus(player, session)
+                    return
+                }
+                if (session.selected().isEmpty()) {
+                    OperationToolFeedback.notifyKey(
+                        player, session,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_NO_SELECTION,
+                        emptyMap(),
+                        NamedTextColor.YELLOW,
+                    )
                     return
                 }
                 plugin.operationMenu.openEntity(player)
@@ -712,6 +772,12 @@ class OperationToolListener(
         plugin.placementAccess.requireManage(player, player.world.name)
 
     companion object {
+        /**
+         * Qキー原点設定で視線先ブロックを探す距離です。
+         * これを超えると視線外とみなし、領域内のプレイヤー位置へフォールバックします。
+         */
+        const val ORIGIN_RAY_DISTANCE = 64.0
+
         /** 視点から視線方向へ進んだ点を返します。Box端点に使います。 */
         fun eyePoint(player: Player, distance: Double): SpatialVector {
             val eye = player.eyeLocation

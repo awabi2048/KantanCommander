@@ -31,6 +31,16 @@ class OperationToolSession(
     var pos2: RegionPoint? = null
         private set
 
+    /**
+     * 構造物保存時の原点ブロックです。
+     *
+     * Qキーで領域内のブロックを指定した場合だけ設定され、未設定時は
+     * 範囲の最小角が原点として扱われます。pos1/pos2の再指定では保持し、
+     * 保存時に範囲外なら無視します。
+     */
+    var origin: RegionPoint? = null
+        private set
+
     /** 現在編集中の未確定Boxです。確定・キャンセルでnullへ戻ります。 */
     var editingBox: EditingBox? = null
         private set
@@ -44,7 +54,7 @@ class OperationToolSession(
      * ワールドへ紐付く選択状態（Entity選択・エリア指定・未確定Box）が残っているかを返します。
      */
     fun hasSelectionState(): Boolean =
-        selectedEntities.isNotEmpty() || pos1 != null || pos2 != null || editingBox != null
+        selectedEntities.isNotEmpty() || pos1 != null || pos2 != null || editingBox != null || origin != null
 
     /**
      * モードを変更し、その時点の選択状態と選択Undo履歴をすべて解除します。
@@ -65,6 +75,11 @@ class OperationToolSession(
     /** 右クリックしたBlockをpos2として設定します。再指定時は更新します。 */
     fun setPos2(point: RegionPoint) {
         pos2 = point
+    }
+
+    /** Qキーで指定した構造物原点を設定します。領域内のブロックかどうかは呼び出し側で判定済みです。 */
+    fun setOrigin(point: RegionPoint?) {
+        origin = point
     }
 
     /** 有効なエリア（同ワールドのpos1・pos2両指定）が選択済みかどうかを返します。 */
@@ -135,6 +150,7 @@ class OperationToolSession(
         pos1 = null
         pos2 = null
         editingBox = null
+        origin = null
     }
 
     companion object {

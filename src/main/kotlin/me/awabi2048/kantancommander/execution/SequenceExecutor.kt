@@ -2330,7 +2330,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val mirror = StructureMirror.from(node.string("mirror", StructureMirror.NONE.value))
             ?.toBukkit() ?: return false
         val world = location.world ?: return false
-        val bounds = plugin.structures.boundsAt(name, location, rotation) ?: return false
+        // 原点オフセット・回転・反転を設置と同じ順で適用し、保護判定範囲を
+        // 実際の設置範囲と一致させます。
+        val bounds = plugin.structures.boundsAt(name, location, rotation, mirror) ?: return false
         if (bounds.volume() !in 1L..MAX_BLOCK_OPERATION_VOLUME) return false
         if (BlockOperationProtectionPolicy.hasProtectedBlock(
                 bounds.minX,

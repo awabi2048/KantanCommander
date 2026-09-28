@@ -1,5 +1,8 @@
 package me.awabi2048.kantancommander.structure
 
+import com.google.gson.Gson
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.block.structure.Mirror
@@ -32,8 +35,19 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
      */
     private val lock = ReentrantLock()
 
+    /**
+     * 構造物の原点オフセットです。
+     *
+     * バニラ構造物形式（`.nbt`）は原点を保持しないため、保存時に指定された
+     * 原点ブロックと範囲最小角の差分だけを別ファイル `origins.json` へ
+     * 永続化します。設置時はこのオフセット分だけ平行移動し、指定ブロックが
+     * 設置位置へ来るようにします。
+     */
+    private val origins = mutableMapOf<String, OriginOffset>()
+
     init {
         if (!directory.exists()) directory.mkdirs()
+        loadOrigins()
     }
 
     /**
@@ -75,23 +89,44 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
      * BlockEntity 内容と看板テキストはそのまま保持されます。saveStructure は
      * 一時ファイルを作らないため、失敗時は書きかけのファイルが残り得ます。
      * それを避けるため、書き込み先を一時名に切り替えてから置換します。
+     *
+     * [origin] は設置時に基準位置へ来るブロックです。範囲内かつ同ワールドの
+     * 場合だけ原点として記録し、未指定・範囲外の場合は最小角が原点になります。
      */
-    fun save(name: String, from: Location, to: Location): StructureSaveResult {
+    fun save(name: String, from: Location, to: Location, origin: Location? = null): StructureSaveResult {
         val target = fileFor(name) ?: return StructureSaveResult.InvalidName
         val structure = Bukkit.getStructureManager().createStructure()
+        val minX = minOf(from.x, to.x)
+        val minY = minOf(from.y, to.y)
+        val minZ = minOf(from.z, to.z)
+        val sizeX = kotlin.math.abs(to.x - from.x).toInt() + 1
+        val sizeY = kotlin.math.abs(to.y - from.y).toInt() + 1
+        val sizeZ = kotlin.math.abs(to.z - from.z).toInt() + 1
         runCatching {
             // CraftStructure.fill は第2引数を排他的上端として扱うため、
             // 選択最大点そのものを渡すと同面選択（高さ0）で失敗します。
             // ブロック含みの最大点+1を上端として渡します。
             structure.fill(
-                Location(from.world, minOf(from.x, to.x), minOf(from.y, to.y), minOf(from.z, to.z)),
-                Location(from.world, maxOf(from.x, to.x) + 1.0, maxOf(from.y, to.y) + 1.0, maxOf(from.z, to.z) + 1.0),
+                Location(from.world, minX, minY, minZ),
+                Location(from.world, minX + sizeX, minY + sizeY, minZ + sizeZ),
                 true,
             )
         }.onFailure { failure ->
             logger.log(Level.WARNING, "建造物の切り出しに失敗しました: name=$name", failure)
             return StructureSaveResult.Failed
         }
+
+        // 原点は構造物ローカルのブロックオフセット（最小角からの差分）として記録します。
+        val originOffset = origin
+            ?.takeIf { it.world?.uid == from.world?.uid }
+            ?.let {
+                OriginOffset(
+                    it.blockX - minX.toInt(),
+                    it.blockY - minY.toInt(),
+                    it.blockZ - minZ.toInt(),
+                )
+            }
+            ?.takeIf { it.x in 0 until sizeX && it.y in 0 until sizeY && it.z in 0 until sizeZ }
 
         val temporary = File(target.parentFile, "${target.name}.tmp")
         return lock.withLock {
@@ -103,6 +138,12 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
                     temporary.copyTo(target, overwrite = true)
                     temporary.delete()
                 }
+                if (originOffset != null) {
+                    origins[name] = originOffset
+                } else {
+                    origins.remove(name)
+                }
+                saveOrigins()
             }.fold(
                 onSuccess = { StructureSaveResult.Saved },
                 onFailure = { failure ->
@@ -128,10 +169,18 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
         mirror: Mirror,
     ): Boolean {
         val structure = load(name) ?: return false
+        val size = structure.size
+        // 保存時に指定された原点ブロックが設置位置へ来るよう平行移動します。
+        val offset = transformedOffset(origins[name], size.blockX, size.blockZ, rotation, mirror)
+        val base = location.clone().subtract(
+            offset.x.toDouble(),
+            offset.y.toDouble(),
+            offset.z.toDouble(),
+        )
         return runCatching {
             // palette=0（先頭パレット）／integrity=1.0（全ブロック設置）。
             // includeEntities=false とし、エンティティは建造物として複製しません。
-            structure.place(location, false, rotation, mirror, 0, 1.0f, java.util.Random(0L))
+            structure.place(base, false, rotation, mirror, 0, 1.0f, java.util.Random(0L))
         }.onFailure { failure ->
             logger.log(Level.WARNING, "建造物の設置に失敗しました: name=$name", failure)
         }.isSuccess
@@ -141,21 +190,108 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
      * 設置範囲の保護判定用に、建造物の大きさから対象範囲を求めます。
      * 実行層はこれを [me.awabi2048.kantancommander.execution.BlockOperationProtectionPolicy]
      * と組み合わせ、1座標でも保護対象なら全体を失敗させます。
+     * 原点オフセット・回転・反転を [place] と同じ順で適用し、判定範囲を
+     * 実際の設置範囲と一致させます。
      */
-    fun boundsAt(name: String, location: Location, rotation: StructureRotation): StructureBounds? {
+    fun boundsAt(
+        name: String,
+        location: Location,
+        rotation: StructureRotation,
+        mirror: Mirror = Mirror.NONE,
+    ): StructureBounds? {
         val structure = load(name) ?: return null
         val size = structure.size
+        val offset = transformedOffset(origins[name], size.blockX, size.blockZ, rotation, mirror)
         val (width, depth) = rotatedFootprint(size.blockX, size.blockZ, rotation)
+        val baseX = location.blockX - offset.x
+        val baseY = location.blockY - offset.y
+        val baseZ = location.blockZ - offset.z
         return StructureBounds(
             world = location.world ?: return null,
-            minX = location.blockX,
-            minY = location.blockY,
-            minZ = location.blockZ,
-            maxX = location.blockX + width - 1,
-            maxY = location.blockY + size.blockY - 1,
-            maxZ = location.blockZ + depth - 1,
+            minX = baseX,
+            minY = baseY,
+            minZ = baseZ,
+            maxX = baseX + width - 1,
+            maxY = baseY + size.blockY - 1,
+            maxZ = baseZ + depth - 1,
         )
     }
+
+    /**
+     * 原点オフセットを設置時の変形（反転→回転の順）へ適用します。
+     *
+     * 保存ローカル座標のオフセットは、バニラ構造物と同じ変換規則で
+     * ワールド方向のオフセットへ変換します。未指定時は零です。
+     */
+    private fun transformedOffset(
+        offset: OriginOffset?,
+        sizeX: Int,
+        sizeZ: Int,
+        rotation: StructureRotation,
+        mirror: Mirror,
+    ): OriginOffset {
+        if (offset == null) return OriginOffset(0, 0, 0)
+        var x = offset.x
+        var z = offset.z
+        when (mirror) {
+            Mirror.FRONT_BACK -> x = sizeX - 1 - x
+            Mirror.LEFT_RIGHT -> z = sizeZ - 1 - z
+            else -> Unit
+        }
+        val (rx, rz) = when (rotation) {
+            StructureRotation.NONE -> x to z
+            StructureRotation.CLOCKWISE_90 -> (sizeZ - 1 - z) to x
+            StructureRotation.CLOCKWISE_180 -> (sizeX - 1 - x) to (sizeZ - 1 - z)
+            StructureRotation.COUNTERCLOCKWISE_90 -> z to (sizeX - 1 - x)
+        }
+        return OriginOffset(rx, offset.y, rz)
+    }
+
+    /** 原点オフセットの永続化ファイルを読み込みます。壊れている場合は空として扱います。 */
+    private fun loadOrigins() {
+        val file = originsFile()
+        if (!file.isFile) return
+        runCatching {
+            val root = JsonParser.parseString(file.readText()).asJsonObject
+            root.entrySet().forEach { (name, element) ->
+                val entry = element.asJsonObject
+                if (NAME_PATTERN.matches(name)) {
+                    origins[name] = OriginOffset(
+                        entry.get("x").asInt,
+                        entry.get("y").asInt,
+                        entry.get("z").asInt,
+                    )
+                }
+            }
+        }.onFailure { failure ->
+            logger.log(Level.WARNING, "建造物原点の読み込みに失敗しました: file=${file.path}", failure)
+        }
+    }
+
+    /** 原点オフセットを永続化します。保存・除去と同じロック内で呼び出します。 */
+    private fun saveOrigins() {
+        val file = originsFile()
+        val root = JsonObject()
+        origins.toSortedMap().forEach { (name, offset) ->
+            root.add(name, JsonObject().apply {
+                addProperty("x", offset.x)
+                addProperty("y", offset.y)
+                addProperty("z", offset.z)
+            })
+        }
+        runCatching {
+            val temporary = File(directory, "${file.name}.tmp")
+            temporary.writeText(GSON.toJson(root))
+            if (!temporary.renameTo(file)) {
+                temporary.copyTo(file, overwrite = true)
+                temporary.delete()
+            }
+        }.onFailure { failure ->
+            logger.log(Level.WARNING, "建造物原点の保存に失敗しました: file=${file.path}", failure)
+        }
+    }
+
+    private fun originsFile(): File = File(directory, ORIGINS_FILE)
 
     /** 建造物名から保存ファイルを解決します。不正名は null を返します。 */
     private fun fileFor(name: String): File? {
@@ -189,18 +325,28 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
      * 削除失敗分は残して次回に委ねます。
      */
     fun deleteUnreferenced(referenced: Set<String>): List<String> = lock.withLock {
-        list().filter { it !in referenced }.filter { name ->
+        val removed = list().filter { it !in referenced }.filter { name ->
             val file = fileFor(name) ?: return@filter false
             if (file.delete()) true else {
                 logger.log(Level.WARNING, "未参照建造物の削除に失敗しました: file=${file.path}")
                 false
             }
         }
+        if (removed.isNotEmpty()) {
+            removed.forEach { origins.remove(it) }
+            saveOrigins()
+        }
+        removed
     }
 
     internal companion object {
         /** 構造物の拡張子です。バニラの構造物形式（`.nbt`）に固定します。 */
         const val EXTENSION = "nbt"
+
+        /** 原点オフセットの永続化ファイル名です。構造物と同じディレクトリへ置きます。 */
+        const val ORIGINS_FILE = "origins.json"
+
+        private val GSON = Gson()
         /** 検証層と同じ形式を二重に持たず、片方だけ通過する事故を防ぎます。 */
         val NAME_PATTERN = Regex("[a-z0-9_-]{1,64}")
 
@@ -212,6 +358,9 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
             }
     }
 }
+
+/** 構造物ローカルの原点オフセットです。保存範囲の最小角からのブロック差分です。 */
+data class OriginOffset(val x: Int, val y: Int, val z: Int)
 
 /** 保存結果です。呼び出し側が失敗理由ごとの文言を選べます。 */
 enum class StructureSaveResult {
