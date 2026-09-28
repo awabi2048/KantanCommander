@@ -37,13 +37,19 @@ class OperationToolBoxDisplay(
     /**
      * Box表示の様式です。編集中は黄色・確定後はグレー・エリアは水色です。
      *
+     * 発光色は表示ブロックの色に合わせます（スコアボードチームの色で決まるため、
+     * 近似のNamedTextColorを各様式へ割り当てます）。
      * 追従の補間tickは様式ごとに持ちます。Box追従は高応答を保ちつつ微振動を
      * 抑えるため1tickとし、エリア選択は補間を使用しません。
      */
-    enum class BoxStyle(val material: Material, val interpolationTicks: Int) {
-        EDITING(Material.YELLOW_CONCRETE, 1),
-        CONFIRMED(Material.GRAY_CONCRETE, 1),
-        AREA(Material.LIGHT_BLUE_CONCRETE, 0),
+    enum class BoxStyle(
+        val material: Material,
+        val interpolationTicks: Int,
+        val glowColor: NamedTextColor,
+    ) {
+        EDITING(Material.YELLOW_CONCRETE, 1, NamedTextColor.YELLOW),
+        CONFIRMED(Material.GRAY_CONCRETE, 1, NamedTextColor.GRAY),
+        AREA(Material.LIGHT_BLUE_CONCRETE, 0, NamedTextColor.AQUA),
     }
 
     private data class EdgeDisplays(
@@ -57,6 +63,14 @@ class OperationToolBoxDisplay(
     private val confirmed = ConcurrentHashMap<UUID, EdgeDisplays>()
     private val area = ConcurrentHashMap<UUID, EdgeDisplays>()
     private val trackedIds = ConcurrentHashMap.newKeySet<UUID>()
+
+    init {
+        // 旧式の単一発光チーム（緑固定）を掃除します。非永続DisplayのUUIDが
+        // 残り続けないよう、起動ごとに解除します。
+        runCatching {
+            plugin.server.scoreboardManager?.mainScoreboard?.getTeam(LEGACY_GLOW_TEAM)?.unregister()
+        }
+    }
 
     /** 管理中のツール表示かどうかを返します。候補収集から除外するために使います。 */
     fun isToolDisplay(entityId: UUID): Boolean = trackedIds.contains(entityId)
@@ -184,31 +198,48 @@ class OperationToolBoxDisplay(
     private fun removeDisplays(displays: List<BlockDisplay>) {
         displays.forEach { display ->
             trackedIds.remove(display.uniqueId)
-            runCatching { glowTeam().removeEntry(display.uniqueId.toString()) }
+            removeFromGlowTeams(display.uniqueId)
             runCatching { display.remove() }
         }
     }
 
     /**
-     * 範囲表示の緑発光チームです。
+     * 様式ごとの発光色チームです。
      *
-     * 発光色はスコアボードチームの色で決まるため、メインスコアボードへ専用チームを
-     * 用意し、辺Displayを登録・抹消します。登録済みの場合は再利用します。
+     * 発光色はスコアボードチームの色で決まるため、様式別に専用チームを
+     * メインスコアボードへ用意し、辺Displayを登録・抹消します。
+     * 登録済みの場合は再利用します。
      */
-    private fun glowTeam(): Team {
+    private fun glowTeam(style: BoxStyle): Team {
         val board = plugin.server.scoreboardManager?.mainScoreboard
             ?: error("scoreboard is unavailable")
-        val team = board.getTeam(GLOW_TEAM_NAME) ?: board.registerNewTeam(GLOW_TEAM_NAME)
-        if (team.color() != NamedTextColor.GREEN) {
-            team.color(NamedTextColor.GREEN)
+        val name = GLOW_TEAM_PREFIX + style.name.lowercase()
+        val team = board.getTeam(name) ?: board.registerNewTeam(name)
+        if (team.color() != style.glowColor) {
+            team.color(style.glowColor)
         }
         return team
     }
 
+    /** 全様式の発光チームからDisplayを外します。除去・restyle時に呼び出します。 */
+    private fun removeFromGlowTeams(entityId: UUID) {
+        val board = plugin.server.scoreboardManager?.mainScoreboard ?: return
+        BoxStyle.entries.forEach { style ->
+            runCatching {
+                board.getTeam(GLOW_TEAM_PREFIX + style.name.lowercase())
+                    ?.removeEntry(entityId.toString())
+            }
+        }
+    }
+
     private fun restyle(displays: List<BlockDisplay>, style: BoxStyle) {
         val blockData = style.material.createBlockData()
+        val team = glowTeam(style)
         displays.forEach { display ->
             runCatching { display.setBlock(blockData) }
+            // 発光色もブロック色へ追従させます（編集中→確定の色替え）。
+            removeFromGlowTeams(display.uniqueId)
+            runCatching { team.addEntry(display.uniqueId.toString()) }
         }
     }
 
@@ -250,14 +281,16 @@ class OperationToolBoxDisplay(
                     display.teleportDuration = style.interpolationTicks
                     display.isPersistent = false
                     // 選択範囲は操作者だけに見えるため、実体フラグの発光でも
-                    // 他プレイヤーへは露出しません。緑色はスコアボードチームで付与します。
+                    // 他プレイヤーへは露出しません。発光色はブロック色に合わせた
+                    // スコアボードチームで付与します。
                     display.isGlowing = true
                 }
             }.getOrNull()
         }
+        val team = glowTeam(style)
         displays.forEach { display ->
             trackedIds.add(display.uniqueId)
-            runCatching { glowTeam().addEntry(display.uniqueId.toString()) }
+            runCatching { team.addEntry(display.uniqueId.toString()) }
             if (owner != null) {
                 plugin.server.onlinePlayers
                     .filter { it.uniqueId != playerId }
@@ -288,8 +321,11 @@ class OperationToolBoxDisplay(
          */
         const val EDGE_CULL_SIZE = 512.0f
 
-        /** 範囲表示へ緑の発光色を与えるスコアボードチーム名です。 */
-        const val GLOW_TEAM_NAME = "kc_wand_edges"
+        /** 様式別発光チーム名の接頭辞です。チーム名は `接頭辞 + 様式名（小文字）` です。 */
+        const val GLOW_TEAM_PREFIX = "kc_wand_glow_"
+
+        /** 旧式の単一発光チーム名です。起動時に掃除対象として参照します。 */
+        const val LEGACY_GLOW_TEAM = "kc_wand_edges"
 
         /** AABBの12辺の始点・終点です。Block単位へのsnapは行いません。 */
         fun boxEdges(minimum: SpatialVector, maximum: SpatialVector): List<Pair<SpatialVector, SpatialVector>> {

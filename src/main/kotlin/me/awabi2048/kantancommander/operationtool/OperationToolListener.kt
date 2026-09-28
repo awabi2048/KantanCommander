@@ -162,13 +162,13 @@ class OperationToolListener(
                 if (session.hasValidArea()) {
                     plugin.operationMenu.openArea(player)
                 } else {
-                    // 選択前のEntity左クリックは、そのEntityのタグ一覧を表示します。
-                    plugin.operationMenu.openEntityTags(player, event.attacked)
+                    // 選択前のEntity左クリックは、そのEntityのタグ一覧をチャットへ出します。
+                    plugin.operationMenu.sendEntityTags(player, event.attacked)
                 }
             }
             OperationToolMode.ENTITY_RANGE, OperationToolMode.ENTITY_DIRECT -> {
                 if (session.selected().isEmpty()) {
-                    plugin.operationMenu.openEntityTags(player, event.attacked)
+                    plugin.operationMenu.sendEntityTags(player, event.attacked)
                 } else {
                     plugin.operationMenu.openEntity(player)
                 }
@@ -503,18 +503,20 @@ class OperationToolListener(
     }
 
     /**
-     * 左クリックはメニュー起動の操作です。
+     * 左クリックは、選択が完了している場合だけメニュー起動の操作です。
      *
-     * 選択が済んでいない間はメニューを開かず、操作案内だけを通知します。
-     * 例外は、AREAモードのスニーク+左クリック（pos1設定）、Box編集中の
-     * 左クリック（編集キャンセル）、未選択時のEntity左クリック
-     * （[onAttack] で対象のタグ一覧を開く）です。
+     * AREAモードではブロックへの通常左クリックがpos1設定で、選択完了後の
+     * pos1再指定だけがスニーク+左クリックです。選択が済んでいない間は
+     * メニューを開かず操作案内だけを通知します。例外は、Box編集中の
+     * 左クリック（編集キャンセル）と、未選択時のEntity左クリック
+     * （[onAttack] で対象のタグ一覧をチャットへ出す）です。
      */
     private fun onLeftClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
         when (session.mode) {
             OperationToolMode.AREA -> {
                 val block = if (event.action == Action.LEFT_CLICK_BLOCK) event.clickedBlock else null
-                if (block != null && player.isSneaking) {
+                // pos1は通常左クリックで指定します。選択済みの再指定だけスニーク+左クリックです。
+                if (block != null && (!session.hasValidArea() || player.isSneaking)) {
                     setPos1(player, session, block)
                     return
                 }
