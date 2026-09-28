@@ -1,14 +1,13 @@
 package me.awabi2048.kantancommander.operationtool
 
 import me.awabi2048.kantancommander.model.SpatialVector
-import net.kyori.adventure.text.format.NamedTextColor
+import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.World
 import org.bukkit.entity.BlockDisplay
 import org.bukkit.entity.Display
 import org.bukkit.plugin.java.JavaPlugin
-import org.bukkit.scoreboard.Team
 import org.bukkit.util.Transformation
 import org.joml.AxisAngle4f
 import org.joml.Vector3f
@@ -37,19 +36,20 @@ class OperationToolBoxDisplay(
     /**
      * Box表示の様式です。編集中は黄色・確定後はグレー・エリアは水色です。
      *
-     * 発光色は表示ブロックの色に合わせます（スコアボードチームの色で決まるため、
-     * 近似のNamedTextColorを各様式へ割り当てます）。
+     * 発光色は表示ブロックの色に合わせます。チーム色は16色の近似しか持てない
+     * ため、[Display.setGlowColorOverride]でコンクリートの色へ合わせた
+     * RGBを直接指定します（染料色の公式パレット値を使用）。
      * 追従の補間tickは様式ごとに持ちます。Box追従は高応答を保ちつつ微振動を
      * 抑えるため1tickとし、エリア選択は補間を使用しません。
      */
     enum class BoxStyle(
         val material: Material,
         val interpolationTicks: Int,
-        val glowColor: NamedTextColor,
+        val glowColor: Color,
     ) {
-        EDITING(Material.YELLOW_CONCRETE, 1, NamedTextColor.YELLOW),
-        CONFIRMED(Material.GRAY_CONCRETE, 1, NamedTextColor.GRAY),
-        AREA(Material.LIGHT_BLUE_CONCRETE, 0, NamedTextColor.AQUA),
+        EDITING(Material.YELLOW_CONCRETE, 1, Color.fromRGB(0xFED83D)),
+        CONFIRMED(Material.GRAY_CONCRETE, 1, Color.fromRGB(0x474F52)),
+        AREA(Material.LIGHT_BLUE_CONCRETE, 0, Color.fromRGB(0x3AB3DA)),
     }
 
     private data class EdgeDisplays(
@@ -65,10 +65,14 @@ class OperationToolBoxDisplay(
     private val trackedIds = ConcurrentHashMap.newKeySet<UUID>()
 
     init {
-        // 旧式の単一発光チーム（緑固定）を掃除します。非永続DisplayのUUIDが
-        // 残り続けないよう、起動ごとに解除します。
-        runCatching {
-            plugin.server.scoreboardManager?.mainScoreboard?.getTeam(LEGACY_GLOW_TEAM)?.unregister()
+        // 発光色はDisplayのglowColorOverrideへ移行したため、旧実装の
+        // 発光チーム（緑固定＋様式別）をすべて掃除します。非永続Displayの
+        // UUIDが残り続けないよう、起動ごとに解除します。
+        val board = plugin.server.scoreboardManager?.mainScoreboard
+        if (board != null) {
+            LEGACY_TEAM_NAMES.forEach { name ->
+                runCatching { board.getTeam(name)?.unregister() }
+            }
         }
     }
 
@@ -198,48 +202,16 @@ class OperationToolBoxDisplay(
     private fun removeDisplays(displays: List<BlockDisplay>) {
         displays.forEach { display ->
             trackedIds.remove(display.uniqueId)
-            removeFromGlowTeams(display.uniqueId)
             runCatching { display.remove() }
-        }
-    }
-
-    /**
-     * 様式ごとの発光色チームです。
-     *
-     * 発光色はスコアボードチームの色で決まるため、様式別に専用チームを
-     * メインスコアボードへ用意し、辺Displayを登録・抹消します。
-     * 登録済みの場合は再利用します。
-     */
-    private fun glowTeam(style: BoxStyle): Team {
-        val board = plugin.server.scoreboardManager?.mainScoreboard
-            ?: error("scoreboard is unavailable")
-        val name = GLOW_TEAM_PREFIX + style.name.lowercase()
-        val team = board.getTeam(name) ?: board.registerNewTeam(name)
-        if (team.color() != style.glowColor) {
-            team.color(style.glowColor)
-        }
-        return team
-    }
-
-    /** 全様式の発光チームからDisplayを外します。除去・restyle時に呼び出します。 */
-    private fun removeFromGlowTeams(entityId: UUID) {
-        val board = plugin.server.scoreboardManager?.mainScoreboard ?: return
-        BoxStyle.entries.forEach { style ->
-            runCatching {
-                board.getTeam(GLOW_TEAM_PREFIX + style.name.lowercase())
-                    ?.removeEntry(entityId.toString())
-            }
         }
     }
 
     private fun restyle(displays: List<BlockDisplay>, style: BoxStyle) {
         val blockData = style.material.createBlockData()
-        val team = glowTeam(style)
         displays.forEach { display ->
             runCatching { display.setBlock(blockData) }
             // 発光色もブロック色へ追従させます（編集中→確定の色替え）。
-            removeFromGlowTeams(display.uniqueId)
-            runCatching { team.addEntry(display.uniqueId.toString()) }
+            runCatching { display.glowColorOverride = style.glowColor }
         }
     }
 
@@ -281,16 +253,15 @@ class OperationToolBoxDisplay(
                     display.teleportDuration = style.interpolationTicks
                     display.isPersistent = false
                     // 選択範囲は操作者だけに見えるため、実体フラグの発光でも
-                    // 他プレイヤーへは露出しません。発光色はブロック色に合わせた
-                    // スコアボードチームで付与します。
+                    // 他プレイヤーへは露出しません。発光色はブロック色へ合わせた
+                    // RGBをglowColorOverrideで直接指定します。
                     display.isGlowing = true
+                    display.glowColorOverride = style.glowColor
                 }
             }.getOrNull()
         }
-        val team = glowTeam(style)
         displays.forEach { display ->
             trackedIds.add(display.uniqueId)
-            runCatching { team.addEntry(display.uniqueId.toString()) }
             if (owner != null) {
                 plugin.server.onlinePlayers
                     .filter { it.uniqueId != playerId }
@@ -321,11 +292,18 @@ class OperationToolBoxDisplay(
          */
         const val EDGE_CULL_SIZE = 512.0f
 
-        /** 様式別発光チーム名の接頭辞です。チーム名は `接頭辞 + 様式名（小文字）` です。 */
-        const val GLOW_TEAM_PREFIX = "kc_wand_glow_"
-
-        /** 旧式の単一発光チーム名です。起動時に掃除対象として参照します。 */
-        const val LEGACY_GLOW_TEAM = "kc_wand_edges"
+        /**
+         * 旧実装の発光チーム名です。
+         *
+         * 緑固定の単一チーム（26.928.6以前）と様式別チーム（26.928.7）の双方を
+         * 起動時に解除します。
+         */
+        val LEGACY_TEAM_NAMES = listOf(
+            "kc_wand_edges",
+            "kc_wand_glow_editing",
+            "kc_wand_glow_confirmed",
+            "kc_wand_glow_area",
+        )
 
         /** AABBの12辺の始点・終点です。Block単位へのsnapは行いません。 */
         fun boxEdges(minimum: SpatialVector, maximum: SpatialVector): List<Pair<SpatialVector, SpatialVector>> {
