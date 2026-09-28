@@ -1,12 +1,14 @@
 package me.awabi2048.kantancommander.operationtool
 
 import me.awabi2048.kantancommander.model.SpatialVector
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.World
 import org.bukkit.entity.BlockDisplay
 import org.bukkit.entity.Display
 import org.bukkit.plugin.java.JavaPlugin
+import org.bukkit.scoreboard.Team
 import org.bukkit.util.Transformation
 import org.joml.AxisAngle4f
 import org.joml.Vector3f
@@ -182,8 +184,25 @@ class OperationToolBoxDisplay(
     private fun removeDisplays(displays: List<BlockDisplay>) {
         displays.forEach { display ->
             trackedIds.remove(display.uniqueId)
+            runCatching { glowTeam().removeEntry(display.uniqueId.toString()) }
             runCatching { display.remove() }
         }
+    }
+
+    /**
+     * 範囲表示の緑発光チームです。
+     *
+     * 発光色はスコアボードチームの色で決まるため、メインスコアボードへ専用チームを
+     * 用意し、辺Displayを登録・抹消します。登録済みの場合は再利用します。
+     */
+    private fun glowTeam(): Team {
+        val board = plugin.server.scoreboardManager?.mainScoreboard
+            ?: error("scoreboard is unavailable")
+        val team = board.getTeam(GLOW_TEAM_NAME) ?: board.registerNewTeam(GLOW_TEAM_NAME)
+        if (team.color() != NamedTextColor.GREEN) {
+            team.color(NamedTextColor.GREEN)
+        }
+        return team
     }
 
     private fun restyle(displays: List<BlockDisplay>, style: BoxStyle) {
@@ -215,11 +234,6 @@ class OperationToolBoxDisplay(
         val world = plugin.server.getWorld(worldName) ?: return EdgeDisplays(emptyList(), minimum, maximum, style)
         val owner = plugin.server.getPlayer(playerId)
         val blockData = style.material.createBlockData()
-        val diagonal = kotlin.math.sqrt(
-            (maximum.x - minimum.x).let { it * it } +
-                (maximum.y - minimum.y).let { it * it } +
-                (maximum.z - minimum.z).let { it * it },
-        ).toFloat() + 2.0f
         val displays = boxEdges(minimum, maximum).mapNotNull { (start, end) ->
             val (origin, transformation) = edgePlacement(start, end)
             runCatching {
@@ -228,16 +242,22 @@ class OperationToolBoxDisplay(
                     display.transformation = transformation
                     display.brightness = Display.Brightness(15, 15)
                     display.viewRange = 1.0f
-                    display.displayWidth = diagonal
-                    display.displayHeight = diagonal
+                    // 辺の原点が視界外でも表示が崩れないよう、カリング判定の
+                    // width/heightへ辺長より十分大きな値を固定で与えます。
+                    display.displayWidth = EDGE_CULL_SIZE
+                    display.displayHeight = EDGE_CULL_SIZE
                     display.interpolationDuration = style.interpolationTicks
                     display.teleportDuration = style.interpolationTicks
                     display.isPersistent = false
+                    // 選択範囲は操作者だけに見えるため、実体フラグの発光でも
+                    // 他プレイヤーへは露出しません。緑色はスコアボードチームで付与します。
+                    display.isGlowing = true
                 }
             }.getOrNull()
         }
         displays.forEach { display ->
             trackedIds.add(display.uniqueId)
+            runCatching { glowTeam().addEntry(display.uniqueId.toString()) }
             if (owner != null) {
                 plugin.server.onlinePlayers
                     .filter { it.uniqueId != playerId }
@@ -258,6 +278,18 @@ class OperationToolBoxDisplay(
 
         /** 辺の太さです。Block単位へのsnapは行わないため細めに固定します。 */
         const val EDGE_THICKNESS = 0.06
+
+        /**
+         * 辺Displayのカリング判定サイズです。
+         *
+         * displayWidth/displayHeightは原点中心の描画判定箱であり、辺の実寸が
+         * これを超えるとカメラ位置によって一部が欠けます。Box最大一辺（128）より
+         * 十分大きい固定値へ揃え、視点位置で表示が崩れないようにします。
+         */
+        const val EDGE_CULL_SIZE = 512.0f
+
+        /** 範囲表示へ緑の発光色を与えるスコアボードチーム名です。 */
+        const val GLOW_TEAM_NAME = "kc_wand_edges"
 
         /** AABBの12辺の始点・終点です。Block単位へのsnapは行いません。 */
         fun boxEdges(minimum: SpatialVector, maximum: SpatialVector): List<Pair<SpatialVector, SpatialVector>> {

@@ -56,21 +56,28 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         runtime.register(entityDefinition())
     }
 
-    /** エリア操作GUIを開きます。有効なエリアがない場合は何もしません。 */
+    /**
+     * エリア操作GUIを開きます。
+     *
+     * 左クリック＝メニュー起動の操作体系に合わせ、エリア未選択でも開き、
+     * 現在状態だけを表示します。権限は選択エリアのあるワールドで判定します。
+     */
     fun openArea(player: Player) {
-        val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return
-        if (!session.hasValidArea()) return
-        // 権限は現在ワールドではなく選択エリアのあるワールドで判定します。
-        val first = session.pos1 ?: return
-        if (!plugin.placementAccess.requireManage(player, first.worldName)) return
+        val session = plugin.operationTool.sessions().getOrCreate(player.uniqueId)
+        val worldName = session.pos1?.worldName ?: player.world.name
+        if (!plugin.placementAccess.requireManage(player, worldName)) return
         runtime.open(player, MenuRoute(OWNER, AREA_MENU_ID, emptyMap()))
     }
 
-    /** Entity操作GUIを開きます。選択が空の場合は何もしません。 */
+    /**
+     * Entity操作GUIを開きます。
+     *
+     * 左クリック＝メニュー起動の操作体系に合わせ、選択が空でも開き、
+     * 現在状態だけを表示します。
+     */
     fun openEntity(player: Player) {
-        val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return
+        val session = plugin.operationTool.sessions().getOrCreate(player.uniqueId)
         resolveTargets(player, session)
-        if (session.selected().isEmpty()) return
         if (!plugin.placementAccess.requireManage(player, player.world.name)) return
         runtime.open(player, MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap()))
     }
@@ -122,14 +129,15 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     )
 
     private fun renderArea(player: Player): InventoryMenuView {
-        val layout = KcGui.layouts.settings54()
+        val layout = KcGui.layouts.settings45()
         val session = plugin.operationTool.sessions().get(player.uniqueId)
         val elements = mutableListOf<MenuElement>()
         val bounds = session?.areaBounds()
+        // ワールド名は通知・画面ともに省略し、座標だけを示します。
         val areaText = if (session != null && bounds != null) {
             val first = requireNotNull(session.pos1)
             val second = requireNotNull(session.pos2)
-            "${first.worldName} ${formatPoint(first.position)} → ${formatPoint(second.position)}"
+            "${formatPoint(first.position)} → ${formatPoint(second.position)}"
         } else {
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         }
@@ -151,6 +159,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 material = Material.STRUCTURE_BLOCK,
                 name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_SAVE_STRUCTURE),
                 style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_SAVE_STRUCTURE),
                 actions = listOf(GuiMenuActionIntent.AnyClick(ACTION_SAVE_STRUCTURE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_SAVE_STRUCTURE))),
             )
         }
@@ -159,7 +168,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun renderEntity(player: Player): InventoryMenuView {
-        val layout = KcGui.layouts.settings54()
+        val layout = KcGui.layouts.settings45()
         val session = plugin.operationTool.sessions().get(player.uniqueId)
         val count = session?.selected()?.size ?: 0
         val modeName = session?.let { KcI18n.text(player, it.mode.displayNameKey()) }.orEmpty()
@@ -171,33 +180,92 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TITLE_ENTITY),
             style = GuiNameStyle.PRIMARY,
             role = GuiElementRole.CONTENT,
-            data = listOf(
-                GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STATUS_MODE), modeName),
-                GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STATUS_COUNT), count),
-            ),
+            data = buildList {
+                add(GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STATUS_MODE), modeName))
+                add(GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STATUS_COUNT), count))
+                addAll(tagDataRows(player, session))
+            },
         )
         if (count > 0) {
             val actions = listOf(
-                Triple(ACTION_TAG_ADD, Material.NAME_TAG, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_TAG_ADD),
-                Triple(ACTION_TAG_REMOVE, Material.SHEARS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_TAG_REMOVE),
-                Triple(ACTION_DELETE, Material.LAVA_BUCKET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_ENTITY_DELETE),
-                Triple(ACTION_GROUP_CREATE, Material.CHEST, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_GROUP_CREATE),
+                EntityAction(ACTION_TAG_ADD, Material.NAME_TAG,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_TAG_ADD,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_TAG_ADD),
+                EntityAction(ACTION_TAG_REMOVE, Material.SHEARS,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_TAG_REMOVE,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_TAG_REMOVE),
+                EntityAction(ACTION_DELETE, Material.LAVA_BUCKET,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_ENTITY_DELETE,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_ENTITY_DELETE),
+                EntityAction(ACTION_GROUP_CREATE, Material.CHEST,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_GROUP_CREATE,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_GROUP_CREATE),
             )
-            actions.forEachIndexed { index, (actionId, material, labelKey) ->
-                val label = KcI18n.text(player, labelKey)
+            actions.forEachIndexed { index, action ->
+                val label = KcI18n.text(player, action.labelKey)
                 elements += KcGui.menuEntry(
                     player = player,
                     slot = ENTITY_ACTION_SLOTS[index],
-                    material = material,
+                    material = action.material,
                     name = label,
                     style = GuiNameStyle.PRIMARY,
-                    actions = listOf(GuiMenuActionIntent.AnyClick(actionId, label)),
+                    description = KcI18n.list(player, action.descriptionKey),
+                    actions = listOf(GuiMenuActionIntent.AnyClick(action.actionId, label)),
                 )
             }
         }
         elements += KcGui.elements.backEntry(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TITLE_ENTITY)), elements)
     }
+
+    /**
+     * 選択中Entityへ付与されているタグの一覧行です。
+     *
+     * タグ除去の入力ダイアログからも見えるよう、タグごとの付与数を
+     * データ行として示します。行が多い場合は末尾を「他{count}件」で畳みます。
+     */
+    private fun tagDataRows(player: Player, session: OperationToolSession?): List<GuiMenuEntryData> {
+        val label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STATUS_TAGS)
+        val tagCounts = selectedTagCounts(session)
+        if (tagCounts.isEmpty()) {
+            return listOf(GuiMenuEntryData(label, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TAGS_NONE)))
+        }
+        val rows = mutableListOf(GuiMenuEntryData(label, tagCounts.size))
+        tagCounts.entries.take(TAG_ROW_LIMIT).forEach { (tag, tagged) ->
+            rows += GuiMenuEntryData(tag, tagged)
+        }
+        val rest = tagCounts.size - TAG_ROW_LIMIT
+        if (rest > 0) {
+            rows += GuiMenuEntryData(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TAGS_MORE, mapOf("count" to rest)),
+                null,
+            )
+        }
+        return rows
+    }
+
+    /** 選択中Entityへ付与されているタグの名前→件数です。ロード済みのEntityだけを数えます。 */
+    private fun selectedTagCounts(session: OperationToolSession?): Map<String, Int> {
+        if (session == null) return emptyMap()
+        return session.selected().asSequence()
+            .mapNotNull { plugin.server.getEntity(it) }
+            .filter { it.isValid && !it.isDead }
+            .flatMap { it.scoreboardTags }
+            .groupingBy { it }
+            .eachCount()
+            .toSortedMap()
+    }
+
+    /** 選択中Entityへ付与されているタグ名の一覧です。ダイアログ本文の現行表示に使います。 */
+    private fun selectedTagNames(session: OperationToolSession?): List<String> =
+        selectedTagCounts(session).keys.toList()
+
+    private data class EntityAction(
+        val actionId: String,
+        val material: Material,
+        val labelKey: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>,
+        val descriptionKey: com.awabi2048.ccsystem.api.localization.LocalizationKey<List<String>>,
+    )
 
     private fun showStructureDialog(player: Player) {
         val dialogId = "wand-structure-${UUID.randomUUID()}"
@@ -276,14 +344,24 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     private fun showTagDialog(player: Player, add: Boolean) {
         val dialogId = "wand-tag-${UUID.randomUUID()}"
         pendingDialogs[player.uniqueId] = dialogId
+        // 除去対象を選べるよう、現在付与されているタグ一覧を本文へ添えます。
+        val session = plugin.operationTool.sessions().get(player.uniqueId)
+        val tags = selectedTagNames(session)
+        val tagsText = if (tags.isEmpty()) {
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TAGS_NONE)
+        } else {
+            tags.joinToString(", ")
+        }
+        val body = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_TAG_BODY)
+            .map { Component.text(it) } +
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_TAG_CURRENT, mapOf("tags" to tagsText)))
         dialogs.show(
             player,
             MenuDialogRequest(
                 owner = OWNER,
                 id = dialogId,
                 title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_TAG_TITLE)),
-                body = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_TAG_BODY)
-                    .map { Component.text(it) },
+                body = body,
                 inputs = listOf(
                     MenuDialogInput.Text(
                         id = INPUT_TAG,
@@ -549,6 +627,9 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
 
         private const val ACTION_SLOT_SINGLE = 22
         private val ENTITY_ACTION_SLOTS = listOf(19, 21, 23, 25)
+
+        /** タグ一覧データ行の表示上限です。超過分は「他{count}件」で畳みます。 */
+        private const val TAG_ROW_LIMIT = 8
 
         /**
          * 各EntityのBounding Box中心の重心を求めます。

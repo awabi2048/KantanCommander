@@ -80,9 +80,12 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
         val target = fileFor(name) ?: return StructureSaveResult.InvalidName
         val structure = Bukkit.getStructureManager().createStructure()
         runCatching {
+            // CraftStructure.fill は第2引数を排他的上端として扱うため、
+            // 選択最大点そのものを渡すと同面選択（高さ0）で失敗します。
+            // ブロック含みの最大点+1を上端として渡します。
             structure.fill(
                 Location(from.world, minOf(from.x, to.x), minOf(from.y, to.y), minOf(from.z, to.z)),
-                Location(from.world, maxOf(from.x, to.x), maxOf(from.y, to.y), maxOf(from.z, to.z)),
+                Location(from.world, maxOf(from.x, to.x) + 1.0, maxOf(from.y, to.y) + 1.0, maxOf(from.z, to.z) + 1.0),
                 true,
             )
         }.onFailure { failure ->

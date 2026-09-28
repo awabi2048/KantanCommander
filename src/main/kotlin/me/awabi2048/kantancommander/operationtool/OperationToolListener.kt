@@ -8,6 +8,7 @@ import me.awabi2048.kantancommander.item.KantanItemKind
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.toSpatialVector
+import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.entity.Entity
@@ -61,6 +62,16 @@ class OperationToolListener(
     private var editTask: BukkitTask? = null
     private val lastCandidateCounts = mutableMapOf<UUID, Int>()
     private val glow = OperationToolGlow(plugin)
+    private val tagDisplays = OperationToolTagDisplay(
+        plugin = plugin,
+        holdsWand = { player ->
+            KantanItemService.kind(player.inventory.itemInMainHand) == KantanItemKind.WAND
+        },
+        isViewable = { player, entity -> isOperableTarget(player, entity) },
+        moreLine = { player, rest ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TAGS_MORE, mapOf("count" to rest))
+        },
+    )
 
     /**
      * Entity右クリックを処理したtickです。
@@ -78,9 +89,10 @@ class OperationToolListener(
 
     fun displays(): OperationToolBoxDisplay = displays
 
-    /** 発光表示のパケット連携を開始します。プラグイン有効化時に呼び出します。 */
+    /** 発光表示のパケット連携とタグ一覧表示を開始します。プラグイン有効化時に呼び出します。 */
     fun start() {
         glow.start()
+        tagDisplays.start()
     }
 
     /** 編集中Boxの追従タスクを停止します。プラグイン無効化時に呼び出します。 */
@@ -88,6 +100,7 @@ class OperationToolListener(
         editTask?.cancel()
         editTask = null
         glow.stop()
+        tagDisplays.stop()
         lastCandidateCounts.clear()
         entityClickTicks.clear()
         displays.removeAll()
@@ -104,6 +117,17 @@ class OperationToolListener(
         glow.sync(player, sessions.get(player.uniqueId)?.selected() ?: emptySet())
     }
 
+    /**
+     * ツール表示を除外した操作可能判定です。
+     *
+     * [isOperable] 本体は注入可能な共有predicateとして残し、範囲表示・
+     * タグ表示のEntityが選択候補へ混ざらないよう、実使用側ではこちらを呼びます。
+     */
+    private fun isOperableTarget(operator: Player, entity: Entity): Boolean =
+        isOperable(operator, entity) &&
+            !displays.isToolDisplay(entity.uniqueId) &&
+            !tagDisplays.isTagDisplay(entity.uniqueId)
+
     // wand所持中の掘削・破壊は選択操作と誤認されるため抑止します。
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onBlockDamage(event: BlockDamageEvent) {
@@ -112,7 +136,10 @@ class OperationToolListener(
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    // KantanInteractionListener.onBlockBreak（HIGH）は制御ブロックを撤去して出力するため、
+    // wand所持中はそれより先（LOWEST）に破壊を抑止します。左クリック＝メニュー起動の
+    // 操作体系で、制御ブロックが誤撤去されないようにするための優先度です。
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     fun onBlockBreak(event: BlockBreakEvent) {
         if (KantanItemService.kind(event.player.inventory.itemInMainHand) == KantanItemKind.WAND) {
             event.isCancelled = true
@@ -123,13 +150,17 @@ class OperationToolListener(
      * wand所持中のEntity攻撃は対象を破壊し得るため抑止し、左クリック＝メニュー起動
      * の操作体系に合わせてEntity操作GUIを開きます。
      */
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    // GestureGuiInputListener（CC-System・LOWEST）が追従画面のセッション中に
+    // スニーク右クリックや攻撃・腕振りを消費するため、wandの操作は
+    // ignoreCancelled=falseで受け取ります。先にキャンセル済みでも選択操作と
+    // メニュー起動だけを実行し、イベントはキャンセルのまま維持します。
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     fun onAttack(event: PrePlayerAttackEntityEvent) {
         val player = event.player
         if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
         event.isCancelled = true
         if (!requireManage(player)) return
-        val session = sessions.get(player.uniqueId) ?: return
+        val session = sessions.getOrCreate(player.uniqueId)
         if (session.editingBox != null) {
             // Box編集中の左クリックは編集キャンセルです。Entityへの左クリックは
             // PlayerInteractEventを通らず攻撃イベントになるため、ここでも揃えます。
@@ -140,12 +171,12 @@ class OperationToolListener(
             return
         }
         when (session.mode) {
-            OperationToolMode.AREA -> if (session.hasValidArea()) plugin.operationMenu.openArea(player)
-            else -> if (session.selected().isNotEmpty()) plugin.operationMenu.openEntity(player)
+            OperationToolMode.AREA -> plugin.operationMenu.openArea(player)
+            else -> plugin.operationMenu.openEntity(player)
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = false)
     fun onInteract(event: PlayerInteractEvent) {
         val player = event.player
         if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
@@ -160,10 +191,10 @@ class OperationToolListener(
             event.isCancelled = true
             return
         }
-        // かんたんコマンダー制御ブロックへのスニーク右クリックは、KantanInteractionListenerが
-        // バニラの使用・配置へ素通しします。wandの選択操作で横取りせず、所有権をそちらへ寄せます。
-        // 非スニークはKantan側が先にキャンセルするため、ここへは到達しません。
-        if (player.isSneaking && event.action == Action.RIGHT_CLICK_BLOCK &&
+        // かんたんコマンダー制御ブロックへの右クリックはwand操作としません。
+        // 非スニークはKantanInteractionListenerが編集入口として先に消費し、
+        // スニークはバニラの使用・配置へ素通しさせます。
+        if (event.action == Action.RIGHT_CLICK_BLOCK &&
             event.clickedBlock?.let { plugin.placements.find(it.location) } != null
         ) {
             return
@@ -181,7 +212,7 @@ class OperationToolListener(
         event.isCancelled = true
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = false)
     fun onInteractEntity(event: PlayerInteractEntityEvent) {
         val player = event.player
         if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
@@ -204,7 +235,7 @@ class OperationToolListener(
         when (session.mode) {
             // 直接選択モードでは対象Entityへの右クリックが選択トグルです。
             OperationToolMode.ENTITY_DIRECT -> {
-                if (isOperable(player, event.rightClicked)) {
+                if (isOperableTarget(player, event.rightClicked)) {
                     toggleDirectSelection(player, session, event.rightClicked)
                 }
             }
@@ -322,7 +353,7 @@ class OperationToolListener(
      * Fキーを専用の解除ボタンとして扱います。wandがオフハンド側にある
      * 場合の入替はメインハンドへ戻す通常操作として通します。
      */
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = false)
     fun onSwapHands(event: PlayerSwapHandItemsEvent) {
         if (KantanItemService.kind(event.offHandItem) != KantanItemKind.WAND) return
         event.isCancelled = true
@@ -364,6 +395,7 @@ class OperationToolListener(
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         glow.clear(event.player.uniqueId)
+        tagDisplays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         entityClickTicks.remove(event.player.uniqueId)
         plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
@@ -374,6 +406,7 @@ class OperationToolListener(
         sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         glow.clear(event.player.uniqueId)
+        tagDisplays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         entityClickTicks.remove(event.player.uniqueId)
         plugin.operationMenu.clearPendingDialog(event.player.uniqueId)
@@ -393,6 +426,7 @@ class OperationToolListener(
         session.clearAll()
         displays.clear(event.player.uniqueId)
         glow.clear(event.player.uniqueId)
+        tagDisplays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
         OperationToolFeedback.notifyKey(
             event.player, session,
@@ -404,8 +438,9 @@ class OperationToolListener(
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onJoin(event: PlayerJoinEvent) {
-        // 表示は操作者専用のため、参加者から他者のBox表示を隠します。
+        // 表示は操作者専用のため、参加者から他者のBox・タグ表示を隠します。
         displays.hideFrom(event.player.uniqueId)
+        tagDisplays.hideFrom(event.player.uniqueId)
         // ログアウトで破棄された表示のうち、同ワールドのエリア指定と
         // 選択Entityの発光を復元します。
         val playerId = event.player.uniqueId
@@ -420,22 +455,20 @@ class OperationToolListener(
     /**
      * 左クリックはメニュー起動の操作です。
      *
-     * AREAモードでは未選択時のみ左クリックのBlockをpos1として設定し、
-     * 選択済みではエリア操作GUIを開きます。選択済みの再指定はスニーク+
-     * 左クリックです。EntityモードではBox編集中の左クリックだけ例外として
-     * 編集キャンセルとし、それ以外はEntity操作GUIを開きます。
+     * 対象・スニーク・ブロック破壊の成否に関わらず、全ての左クリックで
+     * 現在モードのメニューを開きます。例外は、AREAモードのスニーク+
+     * 左クリック（pos1設定）と、Box編集中の左クリック（編集キャンセル）
+     * だけです。
      */
     private fun onLeftClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
         when (session.mode) {
             OperationToolMode.AREA -> {
                 val block = if (event.action == Action.LEFT_CLICK_BLOCK) event.clickedBlock else null
-                if (block != null && (player.isSneaking || !session.hasValidArea())) {
+                if (block != null && player.isSneaking) {
                     setPos1(player, session, block)
                     return
                 }
-                if (session.hasValidArea()) {
-                    plugin.operationMenu.openArea(player)
-                } else {
+                if (!session.hasValidArea()) {
                     OperationToolFeedback.notifyKey(
                         player, session,
                         KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_AREA_GUIDE,
@@ -443,6 +476,7 @@ class OperationToolListener(
                         NamedTextColor.YELLOW,
                     )
                 }
+                plugin.operationMenu.openArea(player)
             }
             OperationToolMode.ENTITY_RANGE, OperationToolMode.ENTITY_DIRECT -> {
                 if (session.editingBox != null) {
@@ -453,16 +487,7 @@ class OperationToolListener(
                     OperationToolFeedback.showStatus(player, session)
                     return
                 }
-                if (session.selected().isNotEmpty()) {
-                    plugin.operationMenu.openEntity(player)
-                } else {
-                    OperationToolFeedback.notifyKey(
-                        player, session,
-                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_NO_SELECTION,
-                        emptyMap(),
-                        NamedTextColor.YELLOW,
-                    )
-                }
+                plugin.operationMenu.openEntity(player)
             }
         }
     }
@@ -620,8 +645,7 @@ class OperationToolListener(
             org.bukkit.Location(player.world, centerX, centerY, centerZ),
             radiusX, radiusY, radiusZ,
         ).filter { entity ->
-            isOperable(player, entity) &&
-                !displays.isToolDisplay(entity.uniqueId) &&
+            isOperableTarget(player, entity) &&
                 entity.boundingBox.overlaps(selection)
         }.map { it.uniqueId }
     }
