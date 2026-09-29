@@ -148,13 +148,13 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalInteger(spec, "limit", path, errors)
+        optionalBoolean(spec, "detailed", path, errors)
         // issue #35-3: 旧FIXED_ENTITYの個体識別欄は撤去しました。
         // 旧保存データの kind 検証で隔離するため、欄自体の検証は不要です。
-        optionalObject(spec, "searchOrigin", path, errors)?.let { origin ->
-            val originPath = "$path/searchOrigin"
-            optionalString(origin, "positionTemp", originPath, errors)
-            optionalObject(origin, "position", originPath, errors)?.let {
-                validatePosition(it, "$originPath/position", errors)
+        // 領域・探索基準は撤去しました。旧保存データは互換読み込みせず破損として隔離します。
+        listOf("region", "searchOrigin").forEach { field ->
+            if (spec.has(field) && !spec[field].isJsonNull) {
+                errors += "$path/$field: 廃止された項目です"
             }
         }
     }

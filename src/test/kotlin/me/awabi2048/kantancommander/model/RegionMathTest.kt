@@ -6,10 +6,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * issue #4 の領域判定テストです。
+ * 領域判定テストです。
  *
- * Target絞り込み・Condition判定・出力で共有する containment と解決契約を
- * 固定します。Bukkit実体を必要とせず、サーバーなしで実行できます。
+ * Target絞り込みのセレクター直方体・操作ツールの範囲選択で共有する
+ * 幾何契約を固定します。Bukkit実体を必要とせず、サーバーなしで実行できます。
  */
 class RegionMathTest {
     private val base = SpatialVector(10.0, 64.0, -5.0)
@@ -51,39 +51,34 @@ class RegionMathTest {
     }
 
     @Test
-    fun `resolve distinguishes mismatch invalid and unresolved`() {
-        val origin = SpatialVector(0.0, 64.0, 0.0)
-        val resolved = RegionMath.resolve(
-            RegionKind.CUBOID, "world", "world", origin, 1.0, 1.0, 1.0, null, null,
-        )
-        assertTrue(resolved is RegionResolution.Resolved)
+    fun `selector cuboid treats unspecified axes as unbounded`() {
+        val origin = SpatialVector(10.0, 64.0, -5.0)
+        val boxMin = SpatialVector(11.5, 64.0, -4.8)
+        val boxMax = SpatialVector(12.0, 65.8, -4.1)
+        // 全軸未指定は常に交差します。
+        assertTrue(RegionMath.overlapsSelectorCuboid(origin, null, null, null, boxMin, boxMax))
+        // x軸だけ指定した場合、他軸は無制限です。
+        assertTrue(RegionMath.overlapsSelectorCuboid(origin, 2.0, null, null, boxMin, boxMax))
+        assertFalse(RegionMath.overlapsSelectorCuboid(origin, -20.0, null, null, boxMin, boxMax))
+    }
 
-        // world不一致は明示理由で返します。
-        assertEquals(
-            RegionResolution.WorldMismatch,
-            RegionMath.resolve(RegionKind.CUBOID, "other", "world", origin, 1.0, 1.0, 1.0, null, null),
-        )
-        // 基準未解決は区別します。
-        assertEquals(
-            RegionResolution.UnresolvedAnchor,
-            RegionMath.resolve(RegionKind.CUBOID, "world", "world", null, 1.0, 1.0, 1.0, null, null),
-        )
-        assertEquals(
-            RegionResolution.UnresolvedAnchor,
-            RegionMath.resolve(RegionKind.CUBOID, null, "world", origin, 1.0, 1.0, 1.0, null, null),
-        )
-        // 不正指定は検証層と同じ契約で拒否します。
-        assertEquals(
-            RegionResolution.InvalidSpec,
-            RegionMath.resolve(RegionKind.SPHERE, "world", "world", origin, 1.0, 1.0, 1.0, null, null),
-        )
-        assertEquals(
-            RegionResolution.InvalidSpec,
-            RegionMath.resolve(RegionKind.CUBOID, "world", "world", origin, -1.0, 1.0, 1.0, null, null),
-        )
-        assertEquals(
-            RegionResolution.InvalidSpec,
-            RegionMath.resolve(RegionKind.CUBOID, "world", "world", origin, 1.0, 1.0, 1.0, 5.0, 2.0),
-        )
+    @Test
+    fun `selector cuboid uses bounding box overlap like vanilla`() {
+        // extent=0 でも幅1ブロックの箱になります（バニラの +1.0）。
+        assertTrue(RegionMath.overlapsSelectorAxis(10.0, 0.0, 10.5, 11.0))
+        assertFalse(RegionMath.overlapsSelectorAxis(10.0, 0.0, 11.5, 12.0))
+        // 辺が接するだけでは交差しません。
+        assertFalse(RegionMath.overlapsSelectorAxis(10.0, 1.0, 12.0, 12.5))
+        assertTrue(RegionMath.overlapsSelectorAxis(10.0, 1.0, 11.9, 12.5))
+    }
+
+    @Test
+    fun `negative extents stretch the cuboid to the negative direction`() {
+        // dx=-2 は [origin-2, origin+1] の箱です（正方向の末端は常に +1.0）。
+        val (minimum, maximum) = RegionMath.selectorAxisRange(10.0, -2.0)
+        assertEquals(8.0, minimum)
+        assertEquals(11.0, maximum)
+        assertTrue(RegionMath.overlapsSelectorAxis(10.0, -2.0, 8.5, 9.0))
+        assertFalse(RegionMath.overlapsSelectorAxis(10.0, -2.0, 11.5, 12.0))
     }
 }

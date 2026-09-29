@@ -3639,10 +3639,6 @@ class GestureLowerPanel(
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
     internal fun choiceDescription(player: Player, choice: SettingChoice, fieldKey: String?): String? = when {
         // 対象分類は、ラベルと同一の文面ではなく項目の説明を表示します。
-        choice.id == "target:${TargetCategory.PLAYER.name}" ->
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PLAYER_TARGET)
-        choice.id == "target:${TargetCategory.NON_PLAYER_ENTITY.name}" ->
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ENTITY_TARGET)
         choice.id == "target:${TargetCategory.TEMPORARY.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_TEMPORARY)
         // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します。
@@ -4177,14 +4173,17 @@ class GestureLowerPanel(
         role: CommandSettingRole?,
     ): Set<String> = when {
         choiceId.startsWith("target:") || choiceId.startsWith("target-preset:") ||
-            choiceId.startsWith("kind:") || choiceId.startsWith("filter:") ->
+            choiceId.startsWith("filter:") ->
             setOfNotNull(role?.tabFieldKey ?: "target")
         choiceId.startsWith("position:") || choiceId.startsWith("position-preset:") ||
             choiceId == "position-entity" ||
             choiceId.startsWith("myworld-spawn:") ->
             setOfNotNull(role?.tabFieldKey ?: "position")
         choiceId.startsWith("facing:") || choiceId.startsWith("facing-preset:") ||
-            choiceId == "facing-entity" || choiceId.startsWith("facing-entity-preset:") ->
+            choiceId == "facing-entity" || choiceId.startsWith("facing-entity-preset:") ||
+            choiceId == "facing-entity-detail" ||
+            choiceId == "facing-copy" || choiceId.startsWith("facing-copy-preset:") ||
+            choiceId == "facing-copy-detail" ->
             setOfNotNull(role?.tabFieldKey ?: "facing")
         choiceId == "condition-kind" -> setOf("kind")
         choiceId.startsWith("condition-") -> setOf("condition")
@@ -4297,8 +4296,6 @@ class GestureLowerPanel(
                     })?.kind,
                 ) ==
                 targetCategoryFromChoice(id) &&
-                CommandSettingsModel.isFieldConfigured(node, "target", context.role)
-            id.startsWith("kind:") -> choice.selected &&
                 CommandSettingsModel.isFieldConfigured(node, "target", context.role)
             id.startsWith("filter:") -> CommandSettingsModel.isTargetFilterConfigured(
                 node,
@@ -5316,19 +5313,41 @@ class GestureLowerPanel(
         return presets + detailed
     }
 
+    /**
+     * 内包対象プリセット一覧に付ける「詳細設定」行です。
+     *
+     * プリセットに一致しない内包対象を詳細指定として選択表示し、
+     * 選択済みの再クリックで絞込子画面へ進むための導線です。
+     */
+    private fun embeddedTargetDetailChoice(
+        current: TargetSpec?,
+        player: Player,
+        id: String,
+    ): SettingChoice = SettingChoice(
+        id = id,
+        label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
+        selected = current != null && SettingPresets.matchTargetPreset(current) == null,
+        interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
+    )
+
+    /**
+     * 「詳細設定」の子画面に並べる絞り込み項目です。
+     *
+     * 詳細設定は @e（全実体）からの絞り込みとして扱い、バニラの
+     * ターゲットセレクターと同じ項目を列挙します。保存値がまだ無い
+     * 場合も @e ベースの空指定として表示します。
+     * issue #29: 位置・向きの役割で開いた場合は内包対象を表示します。
+     */
     internal fun targetFilterChoices(
         node: CommandNode,
         context: CommandSettingContext,
         player: Player,
-        kindOverride: TargetKind? = null,
     ): List<SettingChoice> {
-        // issue #29: 位置・向きの役割で開いた場合は内包対象を表示します。
-        val currentSpec = (if (CommandSettingsModel.isEmbeddedTargetRole(context.role)) {
+        val spec = (if (CommandSettingsModel.isEmbeddedTargetRole(context.role)) {
             CommandSettingsModel.embeddedTargetSpec(node, context.role)
         } else {
             CommandSettingsModel.targetSpec(node, context.role)
-        }) ?: me.awabi2048.kantancommander.model.TargetSpec(kindOverride ?: TargetKind.NEAREST_ENTITY)
-        val spec = kindOverride?.let { currentSpec.copy(kind = it) } ?: currentSpec
+        }) ?: me.awabi2048.kantancommander.model.TargetSpec(TargetKind.NEARBY_ENTITIES, detailed = true)
         fun value(parameter: String): String? = when (parameter) {
             "sort" -> KcI18n.text(player, when (spec.sort) {
                 TargetSort.NEAREST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_NEAREST
@@ -5341,122 +5360,29 @@ class GestureLowerPanel(
                     "entityType" -> it.entityType
                     "distance" -> displayDistance(it.minimumDistance, it.maximumDistance)
                     "range" -> displayTargetRange(player, it.dx, it.dy, it.dz)
-                    "region" -> CommandSettingsModel.formatRegionSummary(it.region) { key -> KcI18n.text(player, key) }
                     "limit" -> it.limit?.toString()
                     "tag" -> it.tag
                     else -> it.name
                 }
             }
         }
-        // Targetの上位画面で旧細分類（最も近い／全員／固定エンティティ等）は
-        // 3カテゴリへ統一して削除しました。ここでは詳細条件だけを残し、削除済み
-        // の選択肢を詳細画面へ再掲しないようにします。周囲系は最大距離だけを
-        // 設定項目とし、他の絞り込みは提示しません。
-        val filterChoices = listOf(
+        return listOf(
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
             "range" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
-            "region" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REGION,
             "limit" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             "sort" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT,
             "gameMode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE,
             "tag" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
             "name" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
         )
-            .filter { (id, _) -> id in CommandSettingsModel.visibleTargetFilterIds(spec.kind) }
-            .map { (id, label) ->
-                SettingChoice(
-                    "filter:$id",
-                    labeled(player, label, value(id)),
-                    // 領域の子項目は同じ一覧内の行として直接操作するため、行自体は
-                    // 選択だけを行い、子画面への遷移は持ちません。
-                    interactionMode = if (id == "region") GestureSettingInteractionMode.SELECT else null,
-                    children = if (id == "region") regionChildren(spec.region, player, "filter") else emptyList(),
+            .filter { (id, _) ->
+                id in CommandSettingsModel.visibleTargetFilterIds(
+                    spec.kind,
+                    singleOnly = !CommandSettingsModel.targetLimitEditable(context.role),
                 )
             }
-        return filterChoices
-    }
-
-    /**
-     * issue #4・#5 の領域編集の子選択肢です。
-     *
-     * 基準選択・範囲・距離・基準別参数・解除を一つの行へ集約します。
-     * `idPrefix` に対象絞り込み（`filter`）と条件（`condition`）の
-     * 派生ID接頭辞を渡し、受付側の画面と共有します。基準別参数は現在の
-     * 基準のときだけ出し、無関係な入力欄を提示しません。
-     */
-    private fun regionChildren(
-        region: me.awabi2048.kantancommander.model.RegionSpec?,
-        player: Player,
-        idPrefix: String,
-    ): List<SettingChoice> {
-        val active = region?.takeIf { it.hasAnySetting() }
-        val anchor = active?.anchor?.kind
-        fun extents(): String? = active?.let {
-            displayTargetRange(player, it.dx, it.dy, it.dz)
-        }
-        fun distances(): String? = active?.let {
-            if (it.minimumDistance == null && it.maximumDistance == null) null
-            else displayDistance(it.minimumDistance, it.maximumDistance)
-        }
-        val children = mutableListOf(
-            SettingChoice(
-                "$idPrefix:region-clear",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR),
-                selected = false,
-            ),
-        )
-        // 基準選択は4択を常時提示します。選択時に範囲等は引き継ぎます。
-        me.awabi2048.kantancommander.model.RegionAnchorKind.entries.forEach { kind ->
-            children += SettingChoice(
-                "$idPrefix:region-anchor:${kind.name}",
-                KcI18n.text(player, CommandSettingsModel.regionAnchorNameKey(kind)),
-                selected = anchor == kind,
-            )
-        }
-        children += SettingChoice(
-            "$idPrefix:region-range",
-            labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, extents()),
-        )
-        children += SettingChoice(
-            "$idPrefix:region-distance",
-            labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, distances()),
-        )
-        if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.FIXED) {
-            children += SettingChoice(
-                "$idPrefix:region-position",
-                labeled(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION_COORDINATES,
-                    active.anchor.position?.let { position ->
-                        listOf(position.x, position.y, position.z).joinToString(" / ") { value ->
-                            value?.let {
-                                if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
-                            }.orEmpty()
-                        }
-                    },
-                ),
-            )
-        }
-        if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.TEMPORARY) {
-            children += SettingChoice(
-                "$idPrefix:region-temp",
-                labeled(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_TEMPORARY,
-                    active.anchor.tempName,
-                ),
-            )
-        }
-        if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.TARGET_ENTITY) {
-            children += embeddedTargetPresetChoices(
-                active.anchor.target,
-                player,
-                "$idPrefix:region-target-preset",
-                null,
-            )
-        }
-        return children
+            .map { (id, label) -> SettingChoice("filter:$id", labeled(player, label, value(id))) }
     }
 
     /**
@@ -5672,7 +5598,7 @@ class GestureLowerPanel(
                     "facing-entity-preset",
                     context.role,
                     interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
-                ),
+                ) + embeddedTargetDetailChoice(current?.target, player, "facing-entity-detail"),
                 bottomAligned = true,
             ),
         )
@@ -5687,7 +5613,7 @@ class GestureLowerPanel(
                     "facing-copy-preset",
                     context.role,
                     interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
-                ),
+                ) + embeddedTargetDetailChoice(current?.target, player, "facing-copy-detail"),
                 bottomAligned = true,
             ),
         ) + listOf(

@@ -73,14 +73,6 @@ class SpatialSkeletonTest {
     }
 
     @Test
-    fun `region spec keeps cuboid and distance vocabulary`() {
-        val region = RegionSpec(dx = 1.0, maximumDistance = 8.0)
-        assertEquals(RegionKind.CUBOID, region.kind)
-        assertTrue(region.hasAnySetting())
-        assertFalse(RegionSpec().hasAnySetting())
-    }
-
-    @Test
     fun `relative semantics on non coordinate position fails validation`() {
         val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
@@ -188,37 +180,6 @@ class SpatialSkeletonTest {
 
         assertFalse(errors.any { it.message.contains("向きにローカル") })
         assertFalse(errors.any { it.message.contains("向きが未設定") })
-    }
-
-    @Test
-    fun `region skeleton rejects non cuboid shapes`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
-        val node = GraphEditor.append(script.graph, CommandType.WAIT)
-        val errors = mutableListOf<me.awabi2048.kantancommander.data.ScriptValidationError>()
-        ExecutableScriptValidator.validateRegionSpec(
-            RegionSpec(kind = RegionKind.SPHERE, dx = 1.0),
-            "root",
-            node,
-            errors,
-        )
-
-        assertTrue(errors.any { it.message.contains("未対応の領域形状") })
-    }
-
-    @Test
-    fun `region skeleton validates cuboid extents and distances`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
-        val node = GraphEditor.append(script.graph, CommandType.WAIT)
-        val errors = mutableListOf<me.awabi2048.kantancommander.data.ScriptValidationError>()
-        ExecutableScriptValidator.validateRegionSpec(
-            RegionSpec(dx = -1.0, minimumDistance = 8.0, maximumDistance = 4.0),
-            "root",
-            node,
-            errors,
-        )
-
-        assertTrue(errors.any { it.message.contains("dx は有限な0以上") })
-        assertTrue(errors.any { it.message.contains("最小距離が最大距離") })
     }
 
     @Test

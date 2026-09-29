@@ -45,7 +45,9 @@ class CommandDialogSpecsTest {
         assertEquals(64, range.maxLength)
         assertNull(range.validateInput(""))
         assertNull(range.validate("1.5"))
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, range.validate("-1"))
+        // 負の値は -方向の領域を意味するため許容します。
+        assertNull(range.validate("-1"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, range.validate("abc"))
     }
 
     @Test

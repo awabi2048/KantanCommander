@@ -885,7 +885,8 @@ internal object CommandDialogSpecs {
                 // TargetSpecのdx/dy/dzは実行時に必ず有限Doubleとして保持する型付き値です。
                 // 文字列テンプレートをここで許すと、Gesture側のDouble保存時に参照式が
                 // 消えるため、型付きセレクター欄では保存可能な数値だけを受け付けます。
-                if (value == null || !value.isFinite() || value < 0.0) {
+                // 負の値は -方向の領域を意味するため、バニラと同じく許容します。
+                if (value == null || !value.isFinite()) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID
                 } else null
             },

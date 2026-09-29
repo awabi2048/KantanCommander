@@ -59,9 +59,11 @@ object SettingPresets {
      * 対象設定がプリセットの正規内容と一致する場合だけプリセットを返します。
      *
      * 詳細フィルター等で正規内容から外れた場合はnullを返し、選択済み表示にしません。
+     * 「詳細設定」として編集した指定（detailed）は値が一致しても
+     * プリセットへ一致させません。
      */
     fun matchTargetPreset(spec: TargetSpec?): TargetPreset? {
-        if (spec == null) return null
+        if (spec == null || spec.detailed) return null
         return when (spec.kind) {
             TargetKind.NEARBY_PLAYERS -> TargetPreset.NEARBY_PLAYERS.takeIf { isNearbyPresetShape(spec) }
             TargetKind.ALL_PLAYERS -> TargetPreset.MYWORLD_PLAYERS.takeIf { isBareShape(spec) }
@@ -77,56 +79,65 @@ object SettingPresets {
      * 並び順の変更も詳細設定のため、既定の最寄り順以外は一致させません。
      * 最大距離だけはプリセットの既定値として持ち、変更後も再クリックで
      * 距離編集へ戻すため形状に含めます。
-     * 詳細設定入室時の変換で指定した距離下限0は、来歴付きの場合だけ許容し、
-     * 手入力の等価値はプリセット扱いにしません。
      */
     private fun isNearbyPresetShape(spec: TargetSpec): Boolean =
-        spec.entityType == null && (spec.minimumDistance == null ||
-            (spec.minimumDistance == 0.0 && spec.convertedFromPreset)) &&
+        spec.entityType == null && spec.minimumDistance == null &&
             spec.limit == null && spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
-            spec.searchOrigin == null && spec.tempName == null &&
-            spec.region?.hasAnySetting() != true
+            spec.tempName == null
 
     /**
      * 絞り込みなしの形状です。何らかの条件があれば正規内容から外れます。
      *
      * 並び順の変更も詳細設定のため、既定の最寄り順以外は一致させません。
-     * 詳細設定入室時の変換で指定した上限数1・距離下限0は、来歴付きの
-     * 場合だけ許容し、手入力の等価値はプリセット扱いにしません。
      */
     private fun isBareShape(spec: TargetSpec): Boolean =
-        spec.entityType == null && (spec.minimumDistance == null ||
-            (spec.minimumDistance == 0.0 && spec.convertedFromPreset)) &&
-            spec.maximumDistance == null &&
-            (spec.limit == null || (spec.limit == 1 && spec.convertedFromPreset)) &&
+        spec.entityType == null && spec.minimumDistance == null &&
+            spec.maximumDistance == null && spec.limit == null &&
             spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
-            spec.searchOrigin == null && spec.tempName == null &&
-            spec.region?.hasAnySetting() != true
+            spec.tempName == null
+
+    /** 「詳細設定」として扱う種別です。 */
+    private val PLAYER_TARGET_KINDS = setOf(
+        TargetKind.NEAREST_PLAYER,
+        TargetKind.NEARBY_PLAYERS,
+        TargetKind.ALL_PLAYERS,
+        TargetKind.RANDOM_PLAYER,
+    )
+    private val SINGLE_TARGET_KINDS = setOf(
+        TargetKind.NEAREST_PLAYER,
+        TargetKind.RANDOM_PLAYER,
+        TargetKind.NEAREST_ENTITY,
+    )
+
+    /** バニラの @e[type=player] へ写すための実体種別IDです。 */
+    const val PLAYER_ENTITY_TYPE = "minecraft:player"
 
     /**
-     * プリセット相当の明示値を詳細初期値として指定します。
+     * 「詳細設定」の出発点となる対象指定です。
      *
-     * 新規の詳細設定入室では引き継ぎを行いません。既存の変換済みデータの
-     * 表示互換のために残し、無変更の間はプリセット選択表示を維持します。
-     * 等価性（セレクタ既定補完・件数判定・実行照合）は保たれるため、
-     * 実行・出力の意味は変わりません。対象外の指定はそのまま返します。
-     * 冪等であり、変換済みへの再適用で値は変化しません。
+     * 詳細設定は @e（全実体）からの絞り込みとして表現します。既存指定は同じ
+     * 意味のまま NEARBY_ENTITIES へ正規化し、プレイヤー系の種別は
+     * type=player と単一体の既定（limit=1）へ分解します。一時変数参照・
+     * 未設定は条件なしの @e から開始します。値がプリセットへ一致しても
+     * 詳細指定の表示を維持するため detailed を立てます。
      */
-    fun expandPresetToDetail(spec: TargetSpec): TargetSpec = when (matchTargetPreset(spec)) {
-        TargetPreset.NEAREST_PLAYER ->
-            spec.copy(limit = 1, minimumDistance = 0.0, convertedFromPreset = true)
-        TargetPreset.NEARBY_PLAYERS, TargetPreset.MYWORLD_PLAYERS, TargetPreset.NEARBY_ENTITIES ->
-            spec.copy(minimumDistance = 0.0, convertedFromPreset = true)
-        null -> spec
+    fun toDetailedSpec(spec: TargetSpec?): TargetSpec {
+        if (spec == null || spec.kind == TargetKind.TEMPORARY) {
+            return TargetSpec(TargetKind.NEARBY_ENTITIES, detailed = true)
+        }
+        return spec.copy(
+            kind = TargetKind.NEARBY_ENTITIES,
+            entityType = spec.entityType ?: PLAYER_ENTITY_TYPE.takeIf { spec.kind in PLAYER_TARGET_KINDS },
+            limit = spec.limit ?: 1.takeIf { spec.kind in SINGLE_TARGET_KINDS },
+            sort = if (spec.kind == TargetKind.RANDOM_PLAYER) TargetSort.RANDOM else spec.sort,
+            tempName = null,
+            detailed = true,
+        )
     }
-
-    /** 詳細画面の保存で来歴を消し、手入力の等価値をプリセット扱いにしません。 */
-    fun withoutPresetConversion(spec: TargetSpec): TargetSpec =
-        spec.copy(convertedFromPreset = false)
 
     /** 位置プリセットの正規仕様を返します。初回選択時は実用的な既定値です。 */
     fun positionSpecFor(preset: PositionPreset): PositionSpec = when (preset) {

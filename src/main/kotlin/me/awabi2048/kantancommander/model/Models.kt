@@ -404,13 +404,6 @@ enum class TargetKind {
 
 enum class TargetSort { NEAREST, FURTHEST, RANDOM }
 
-data class SearchOriginSpec(
-    val positionTemp: String? = null,
-    val position: PositionSpec? = null,
-) {
-    fun hasAnySetting(): Boolean = positionTemp != null || position != null
-}
-
 data class TargetSpec(
     val kind: TargetKind,
     val entityType: String? = null,
@@ -421,32 +414,28 @@ data class TargetSpec(
     val gameMode: String? = null,
     val tag: String? = null,
     val name: String? = null,
-    /** セレクターのdx/dy/dzに対応する非負の範囲です。基準は実行位置です。 */
+    /**
+     * バニラセレクターのdx/dy/dzに対応する直方体範囲です。基準は実行位置で、
+     * 実体のヒットボックスとの交差で判定します。負の値は反対方向の領域を
+     * 意味し、null の軸は判定しません。
+     */
     val dx: Double? = null,
     val dy: Double? = null,
     val dz: Double? = null,
-    /**
-     * issue #4 の明示領域による絞り込みです。未設定時は従来の dx/dy/dz と
-     * 距離指定だけを使います。設定時は基準（anchor）・範囲・距離を
-     * [RegionMath] と共通 resolver で解決し、Target・Condition・出力で
-     * 同じ判定を使います。旧保存には存在しないため欠落時は null です。
-     */
-    val region: RegionSpec? = null,
     // issue #35-3: 旧FIXED_ENTITYの個体識別欄は撤去しました。旧保存データは
     // 読込時の型検証で隔離します。新規保存はこの欄を書きません。
-    /** 対象探索の基準位置です。未設定時は制御ブロック位置を用います。 */
-    val searchOrigin: SearchOriginSpec? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
     /**
-     * プリセットから詳細設定へ変換した来歴です。
+     * 「詳細設定」として編集した指定です。
      *
-     * 詳細設定入室時にプリセット相当の明示値（上限数1・距離下限0等）を
-     * 指定した場合だけ真にします。利用者が手入力で等価値にしても真に
-     * しないことで、プリセット選択表示への誤判定を防ぎます。
-     * 検証・実行・出力はこの値を無視し、Gson永続の既定値は偽です。
+     * 詳細設定は @e（全実体）からの絞り込みとして表現するため、kind は
+     * NEARBY_ENTITIES でこの項目だけを真にします。親画面のプリセット選択
+     * 表示は値一致ではなくこの項目へ従い、詳細指定がプリセットへ誤判定
+     * されないようにします。検証・実行・出力はこの値を無視し、
+     * Gson永続の既定値は偽です。
      */
-    val convertedFromPreset: Boolean = false,
+    val detailed: Boolean = false,
 ) {
     /**
      * issue #29: 静的に0..1件と確定する指定かを返します。
@@ -618,69 +607,6 @@ data class SpatialVector(
         SpatialVector(x - other.x, y - other.y, z - other.z)
 
     fun lengthSquared(): Double = x * x + y * y + z * z
-}
-
-/**
- * issue #4 の領域形状です。設定方法は直方体＋距離を継続するため、
- * 初回は CUBOID のみ実行対象とし、SPHERE／CYLINDER は予約に留めます。
- */
-enum class RegionKind {
-    CUBOID,
-    SPHERE,
-    CYLINDER,
-}
-
-/**
- * issue #4 の領域基準です。スレッド指示により4系統を骨組みに含めます。
- * FIXEDは明示座標、CONTROL_BLOCKは制御ブロック位置、TARGET_ENTITYは対象実体位置、
- * TEMPORARYはLOCATION型一時変数を指します。
- */
-enum class RegionAnchorKind {
-    FIXED,
-    CONTROL_BLOCK,
-    TARGET_ENTITY,
-    TEMPORARY,
-}
-
-/**
- * 領域基準の指定です。Target絞り込み・Condition判定・出力の共通 resolver で
- * 解決します。FIXEDは明示座標、CONTROL_BLOCKは制御ブロック位置、
- * TARGET_ENTITYは対象実体位置、TEMPORARYはLOCATION型一時変数を指します。
- */
-data class RegionAnchorSpec(
-    val kind: RegionAnchorKind = RegionAnchorKind.CONTROL_BLOCK,
-    /** FIXED のときの基準位置です。他基準では未使用です。 */
-    val position: PositionSpec? = null,
-    /** TEMPORARY のときの一時変数名です。他基準では未使用です。 */
-    val tempName: String? = null,
-    /** TARGET_ENTITY のときの対象指定です。他基準では未使用です。 */
-    val target: TargetSpec? = null,
-) {
-    fun hasAnySetting(): Boolean =
-        kind != RegionAnchorKind.CONTROL_BLOCK || position != null || tempName != null || target != null
-}
-
-/**
- * issue #4 の明示領域です。直方体（dx/dy/dz相当）と距離指定を持ち、
- * Target絞り込み・Condition判定・出力で同じ resolver を使います。
- * yaw/pitchは持ちません。SPHERE／CYLINDER は予約のため検証で拒否します。
- */
-data class RegionSpec(
-    val kind: RegionKind = RegionKind.CUBOID,
-    val anchor: RegionAnchorSpec = RegionAnchorSpec(),
-    /** 直方体の範囲です。vanillaのdx/dy/dz相当で、非負の有限値を要求します。 */
-    val dx: Double? = null,
-    val dy: Double? = null,
-    val dz: Double? = null,
-    /** 球・円筒予約を含む距離条件です。0以上の有限値を要求します。 */
-    val minimumDistance: Double? = null,
-    val maximumDistance: Double? = null,
-) {
-    /** 未指定はその条件で制限しない扱いです。UI都合の値を暗黙保存しません。 */
-    fun hasAnySetting(): Boolean =
-        dx != null || dy != null || dz != null ||
-            minimumDistance != null || maximumDistance != null ||
-            anchor.hasAnySetting() || kind != RegionKind.CUBOID
 }
 
 enum class FacingKind {

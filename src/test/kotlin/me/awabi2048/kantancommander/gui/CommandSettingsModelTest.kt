@@ -15,9 +15,6 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
-import me.awabi2048.kantancommander.model.RegionAnchorKind
-import me.awabi2048.kantancommander.model.RegionAnchorSpec
-import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
 import org.junit.jupiter.api.Test
@@ -622,23 +619,24 @@ class CommandSettingsModelTest {
             CommandSettingsModel.descriptor(giveItem, "target").editor,
         )
 
-        assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEARBY_ENTITIES))
-        assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEAREST_PLAYER))
-        // issue #34-4: 一時変数参照は詳細条件を使いません。
-        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
-        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.TEMPORARY))
-        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(null))
+        // 詳細設定は @e（全実体）からの絞り込みとして扱うため、
+        // 対象種別にかかわらずバニラセレクター相当の全項目を提示します。
         assertEquals(
-            listOf(
-                TargetKind.NEAREST_PLAYER,
-                TargetKind.NEARBY_PLAYERS,
-                TargetKind.ALL_PLAYERS,
-                TargetKind.RANDOM_PLAYER,
-            ),
-            CommandSettingsModel.targetKinds(TargetCategory.PLAYER),
+            listOf("entityType", "distance", "range", "limit", "sort", "gameMode", "tag", "name"),
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_ENTITIES),
         )
-        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.NEAREST_PLAYER, "kind"))
-        assertFalse(CommandSettingsModel.targetFilterApplies(null, "kind"))
+        assertEquals(
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER),
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_ENTITIES),
+        )
+        // issue #34-4: 一時変数参照は詳細条件を使いません。
+        assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(TargetKind.TEMPORARY))
+        assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(null))
+        // 単一参照へ正規化される役割では上限数を提示しません。
+        assertFalse(
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_ENTITIES, singleOnly = true)
+                .contains("limit"),
+        )
     }
 
     @Test
@@ -740,44 +738,6 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "distance"))
         assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "range"))
         assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "sort"))
-    }
-
-    @Test
-    fun `region filter state follows the explicit region`() {
-        val node = CommandType.GIVE_ITEM.newNode().apply {
-            targetSpec = TargetSpec(
-                TargetKind.NEAREST_ENTITY,
-                region = RegionSpec(
-                    anchor = RegionAnchorSpec(RegionAnchorKind.CONTROL_BLOCK),
-                    dx = 2.0,
-                ),
-            )
-        }
-
-        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region"))
-        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-anchor:CONTROL_BLOCK"))
-        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-anchor:FIXED"))
-        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-range"))
-        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-distance"))
-        // プリセット形状から外れるため、プリセット表示へ戻りません。
-        assertNull(SettingPresets.matchTargetPreset(node.targetSpec))
-
-        // 要約文は基準名と範囲を含みます。
-        val summary = CommandSettingsModel.formatRegionSummary(node.targetSpec?.region) { key ->
-            when (key) {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_CONTROL_BLOCK -> "制御ブロック基準"
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX -> "dx"
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY -> "dy"
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ -> "dz"
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET -> "未設定"
-                else -> key.toString()
-            }
-        }
-        assertTrue(summary?.contains("制御ブロック基準") == true, summary)
-        assertTrue(summary?.contains("dx=2") == true, summary)
-        // 未設定の領域は要約しません。
-        assertNull(CommandSettingsModel.formatRegionSummary(null) { key -> key.toString() })
-        assertNull(CommandSettingsModel.formatRegionSummary(RegionSpec()) { key -> key.toString() })
     }
 
     @Test
@@ -952,19 +912,12 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `nearby kinds expose only distance filters`() {
-        // 周囲系の詳細設定項目は最大距離だけとします。
-        assertEquals(
-            listOf("distance"),
-            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_PLAYERS),
-        )
-        assertEquals(
-            listOf("distance"),
-            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_ENTITIES),
-        )
-        // 非周囲系は従来どおり種別適用に従います。
-        val nearest = CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER)
-        assertTrue(nearest.containsAll(listOf("distance", "sort", "tag", "name")))
+    fun `detailed filters expose the full selector vocabulary regardless of kind`() {
+        // 詳細設定は @e からの絞り込みのため、種別によらず全項目を提示します。
+        val all = listOf("entityType", "distance", "range", "limit", "sort", "gameMode", "tag", "name")
+        assertEquals(all, CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_PLAYERS))
+        assertEquals(all, CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_ENTITIES))
+        assertEquals(all, CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER))
         // 単一参照では上限数を除外します。
         assertFalse(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = true).contains("limit"))
         assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = false).contains("limit"))
@@ -1226,11 +1179,7 @@ class CommandSettingsModelTest {
         // 実行側が適用しない条件をGUIで提示しないことを固定します。
         // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
         assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(TargetKind.TEMPORARY))
-        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "tag"))
-        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "distance"))
-        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "kind"))
         // 通常検索の契約は変えません。
-        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.NEAREST_ENTITY, "tag"))
         assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_ENTITY).contains("tag"))
     }
 

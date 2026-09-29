@@ -120,33 +120,60 @@ class SettingPresetsTest {
     }
 
     @Test
-    fun `detail conversion materializes explicit equivalents with provenance`() {
-        val nearest = SettingPresets.expandPresetToDetail(TargetSpec(TargetKind.NEAREST_PLAYER))
-        assertTrue(nearest.limit == 1)
-        assertTrue(nearest.minimumDistance == 0.0)
-        assertTrue(nearest.convertedFromPreset)
-        // 無変更の間はプリセット選択表示が残ります。
-        assertEquals(SettingPresets.TargetPreset.NEAREST_PLAYER, SettingPresets.matchTargetPreset(nearest))
+    fun `detail spec starts from every entity and decomposes player kinds`() {
+        // 未設定は条件なしの @e から開始します。
+        val empty = SettingPresets.toDetailedSpec(null)
+        assertEquals(TargetKind.NEARBY_ENTITIES, empty.kind)
+        assertTrue(empty.detailed)
+        assertNull(empty.entityType)
+        assertNull(empty.limit)
 
-        val nearby = SettingPresets.expandPresetToDetail(
-            TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0),
+        // 単一プレイヤーは @e[type=player, limit=1] へ分解します。
+        val nearest = SettingPresets.toDetailedSpec(TargetSpec(TargetKind.NEAREST_PLAYER))
+        assertEquals(TargetKind.NEARBY_ENTITIES, nearest.kind)
+        assertEquals(SettingPresets.PLAYER_ENTITY_TYPE, nearest.entityType)
+        assertEquals(1, nearest.limit)
+        assertTrue(nearest.detailed)
+
+        // ランダムな1人は sort=random へ写し替えます。
+        val random = SettingPresets.toDetailedSpec(TargetSpec(TargetKind.RANDOM_PLAYER))
+        assertEquals(TargetSort.RANDOM, random.sort)
+        assertEquals(SettingPresets.PLAYER_ENTITY_TYPE, random.entityType)
+        assertEquals(1, random.limit)
+
+        // 全プレイヤーは type=player のみを付け、上限は付けません。
+        val all = SettingPresets.toDetailedSpec(TargetSpec(TargetKind.ALL_PLAYERS))
+        assertEquals(SettingPresets.PLAYER_ENTITY_TYPE, all.entityType)
+        assertNull(all.limit)
+
+        // 一時変数参照は変数参照を残さず @e から開始します。
+        val temporary = SettingPresets.toDetailedSpec(TargetSpec(TargetKind.TEMPORARY, tempName = "x"))
+        assertEquals(TargetKind.NEARBY_ENTITIES, temporary.kind)
+        assertNull(temporary.tempName)
+        assertTrue(temporary.detailed)
+    }
+
+    @Test
+    fun `detailed spec preserves filters and never matches presets`() {
+        // 絞り込み値は詳細指定へ引き継ぎます。
+        val detailed = SettingPresets.toDetailedSpec(
+            TargetSpec(TargetKind.NEARBY_ENTITIES, maximumDistance = 12.0, tag = "vip"),
         )
-        assertNull(nearby.limit)
-        assertTrue(nearby.minimumDistance == 0.0)
-        assertTrue(nearby.convertedFromPreset)
-        assertEquals(SettingPresets.TargetPreset.NEARBY_PLAYERS, SettingPresets.matchTargetPreset(nearby))
-
-        // 非プリセットは変換しません。
-        val detailed = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 12.0, tag = "vip")
-        assertEquals(detailed, SettingPresets.expandPresetToDetail(detailed))
-
-        // 冪等であり、変換済みへの再適用で値は変化しません。
-        assertEquals(nearest, SettingPresets.expandPresetToDetail(nearest))
+        assertEquals(12.0, detailed.maximumDistance)
+        assertEquals("vip", detailed.tag)
+        assertTrue(detailed.detailed)
+        // 詳細指定は値がプリセットと一致しても詳細として表示し続けます。
+        assertNull(SettingPresets.matchTargetPreset(detailed))
+        assertNull(
+            SettingPresets.matchTargetPreset(
+                SettingPresets.toDetailedSpec(TargetSpec(TargetKind.NEAREST_PLAYER)),
+            ),
+        )
     }
 
     @Test
     fun `hand entered equivalents do not match presets`() {
-        // 来歴なしの明示既定値はプリセット扱いにしません。
+        // 正規内容から外れた指定はプリセット扱いにしません。
         assertNull(SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER, limit = 1)))
         assertNull(SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER, minimumDistance = 0.0)))
         assertNull(
@@ -154,9 +181,6 @@ class SettingPresetsTest {
                 TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0, minimumDistance = 0.0),
             ),
         )
-        // 詳細保存で来歴は消え、等価値でもプリセット扱いに戻りません。
-        val converted = SettingPresets.expandPresetToDetail(TargetSpec(TargetKind.NEAREST_PLAYER))
-        assertNull(SettingPresets.matchTargetPreset(SettingPresets.withoutPresetConversion(converted)))
     }
 
     @Test

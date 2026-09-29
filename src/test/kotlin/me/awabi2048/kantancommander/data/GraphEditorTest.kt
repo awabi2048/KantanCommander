@@ -7,7 +7,6 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
-import me.awabi2048.kantancommander.model.SearchOriginSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import java.util.UUID
@@ -1242,10 +1241,6 @@ class GraphEditorTest {
                 dx = 1.0,
                 dy = 2.0,
                 dz = 3.0,
-                searchOrigin = SearchOriginSpec(
-                    positionTemp = "origin",
-                    position = PositionSpec(PositionKind.COORDINATES, 4.0, 5.0, 6.0),
-                ),
             )
             node.secondaryTargetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             node.destinationSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "destination")

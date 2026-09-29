@@ -35,9 +35,6 @@ import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
-import me.awabi2048.kantancommander.model.RegionAnchorKind
-import me.awabi2048.kantancommander.model.RegionKind
-import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
@@ -1667,13 +1664,10 @@ object ExecutableScriptValidator {
             // issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
             // 残存条件の形式検査を行いません。保存時の除去・GUIの非提示・
             // 実行の非適用と合わせ、同じ禁止規則を検証にも適用します。
-            // 探索基準位置だけは構造検査の対象に残します。
-            spec.searchOrigin?.let { validateSearchOrigin(it, path, node, errors, temporaryDefinitions) }
             return
         }
         // 対象は各コマンドのTargetSpecだけで解決し、未設定の対象を
         // 前段ノードから暗黙に継承する経路は検証しません。
-        spec.searchOrigin?.let { validateSearchOrigin(it, path, node, errors, temporaryDefinitions) }
         spec.entityType?.takeIf(String::isNotBlank)?.let {
             if (!CommandValueRules.isEntityTypeId(it)) errors += nodeError(node, path, emptySet(), "エンティティの種類が不正です")
         }
@@ -1698,17 +1692,14 @@ object ExecutableScriptValidator {
         if (spec.minimumDistance != null && spec.maximumDistance != null && spec.minimumDistance > spec.maximumDistance) {
             errors += nodeError(node, path, emptySet(), "最小距離が最大距離を超えています")
         }
+        // 直方体範囲はバニラセレクターと同じく負の値を許し、反対方向の領域を
+        // 意味します。null軸はその軸の判定をしません。
         listOf("dx" to spec.dx, "dy" to spec.dy, "dz" to spec.dz).forEach { (field, value) ->
-            if (value != null && (!value.isFinite() || value < 0.0)) {
-                errors += nodeError(node, path, setOf(field), "$field は有限な0以上の数値で指定してください")
+            if (value != null && !value.isFinite()) {
+                errors += nodeError(node, path, setOf(field), "$field は有限な数値で指定してください")
             }
         }
         if (spec.limit?.let { it < 1 } == true) errors += nodeError(node, path, emptySet(), "対象数は1以上で指定してください")
-        // issue #4: 明示領域があれば共通の領域検証へ通します。未設定時は
-        // 従来の dx/dy/dz と距離指定だけを使い、保存互換を維持します。
-        spec.region?.takeIf { it.hasAnySetting() }?.let { region ->
-            validateRegionSpec(region, "$path/region", node, errors, temporaryDefinitions)
-        }
     }
 
     private fun validatePosition(
@@ -1869,64 +1860,6 @@ object ExecutableScriptValidator {
         }
         if (!value.isFinite()) {
             errors += nodeError(node, path, emptySet(), "ベクトルは有限値で指定してください")
-        }
-    }
-
-    /**
-     * issue #4 の明示領域の検証です。設定方法は直方体＋距離を継続し、
-     * SPHERE／CYLINDERは予約のため現行実行では拒否します。
-     */
-    fun validateRegionSpec(
-        spec: RegionSpec?,
-        path: String,
-        node: CommandNode,
-        errors: MutableList<ScriptValidationError>,
-        temporaryDefinitions: Map<String, ValueType>? = null,
-    ) {
-        if (spec == null) {
-            errors += nodeError(node, path, emptySet(), "領域が未設定です")
-            return
-        }
-        if (spec.kind != RegionKind.CUBOID) {
-            errors += nodeError(node, path, setOf("kind"), "未対応の領域形状です")
-            return
-        }
-        listOf("dx" to spec.dx, "dy" to spec.dy, "dz" to spec.dz).forEach { (field, value) ->
-            if (value != null && (!value.isFinite() || value < 0.0)) {
-                errors += nodeError(node, path, setOf(field), "$field は有限な0以上の数値で指定してください")
-            }
-        }
-        if (spec.minimumDistance != null && (!spec.minimumDistance.isFinite() || spec.minimumDistance < 0.0)) {
-            errors += nodeError(node, path, setOf("minimumDistance"), "最小距離は0以上の有限値で指定してください")
-        }
-        if (spec.maximumDistance != null && (!spec.maximumDistance.isFinite() || spec.maximumDistance < 0.0)) {
-            errors += nodeError(node, path, setOf("maximumDistance"), "最大距離は0以上の有限値で指定してください")
-        }
-        if (spec.minimumDistance != null && spec.maximumDistance != null &&
-            spec.minimumDistance > spec.maximumDistance
-        ) {
-            errors += nodeError(node, path, setOf("minimumDistance"), "最小距離が最大距離を超えています")
-        }
-        when (spec.anchor.kind) {
-            RegionAnchorKind.CONTROL_BLOCK -> Unit
-            RegionAnchorKind.FIXED -> {
-                val position = spec.anchor.position
-                if (position == null) {
-                    errors += nodeError(node, path, setOf("anchor"), "固定基準の位置が未設定です")
-                } else {
-                    validatePosition(position, "$path/anchor", node, errors, temporaryDefinitions)
-                }
-            }
-            RegionAnchorKind.TEMPORARY -> {
-                if (spec.anchor.tempName.isNullOrBlank()) {
-                    errors += nodeError(node, path, setOf("anchor"), "一時変数基準の変数名が未設定です")
-                }
-            }
-            RegionAnchorKind.TARGET_ENTITY -> {
-                if (spec.anchor.target == null) {
-                    errors += nodeError(node, path, setOf("anchor"), "対象基準の対象が未設定です")
-                }
-            }
         }
     }
 
@@ -2628,20 +2561,6 @@ object ExecutableScriptValidator {
         } else if (actual != expected) {
             errors += nodeError(node, path, fields, "一時変数の型が一致しません: $name")
         }
-    }
-
-    /** 「探索の基準」設定を検証します。 */
-    private fun validateSearchOrigin(
-        search: me.awabi2048.kantancommander.model.SearchOriginSpec,
-        path: String,
-        node: CommandNode,
-        errors: MutableList<ScriptValidationError>,
-        temporaryDefinitions: Map<String, ValueType>?,
-    ) {
-        search.positionTemp?.takeIf(String::isNotBlank)?.let {
-            checkTemporaryDefinition(it, ValueType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
-        }
-        search.position?.let { validatePosition(it, path, node, errors, temporaryDefinitions) }
     }
 
     /**

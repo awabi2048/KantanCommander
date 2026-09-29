@@ -204,19 +204,17 @@ private fun normalizeTriggerTarget(spec: TargetSpec, playerOnly: Boolean): Targe
     dx = null,
     dy = null,
     dz = null,
-    region = null,
-    searchOrigin = null,
     tempName = null,
-    convertedFromPreset = false,
+    detailed = false,
 )
 }
 
 /** 正規化で除去される探索文脈を持つかを返します。警告文の特定に使います。 */
 private fun TargetSpec.hasTriggerIneffectiveSetting(): Boolean =
-    tempName != null || searchOrigin != null || region != null ||
+    tempName != null ||
         minimumDistance != null || maximumDistance != null ||
         dx != null || dy != null || dz != null || limit != null ||
-        sort != TargetSort.NEAREST || convertedFromPreset
+        sort != TargetSort.NEAREST || detailed
 
 /** 単体代表への寄せが必要な探索語彙かを返します。警告文の特定に使います。 */
 private fun TargetSpec.needsTriggerKindNormalization(): Boolean = kind != TargetKind.NEAREST_PLAYER &&

@@ -38,8 +38,6 @@ import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
-import me.awabi2048.kantancommander.model.RegionAnchorKind
-import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.TriggerKind
@@ -307,10 +305,6 @@ object CommandSettingsModel {
         TargetKind.ALL_PLAYERS,
         TargetKind.RANDOM_PLAYER,
     )
-    private val ENTITY_KINDS = setOf(
-        TargetKind.NEAREST_ENTITY,
-        TargetKind.NEARBY_ENTITIES,
-    )
 
     /** 実行時の細分類を、GUIで表示する対象大分類へ写像します。 */
     fun targetCategory(kind: TargetKind?): TargetCategory = when (kind) {
@@ -319,34 +313,6 @@ object CommandSettingsModel {
         in PLAYER_KINDS -> TargetCategory.PLAYER
         else -> TargetCategory.NON_PLAYER_ENTITY
     }
-
-    /** 大分類を初めて選んだときに採用する実行モデル上の既定種別です。 */
-    fun defaultTargetKind(category: TargetCategory): TargetKind = when (category) {
-        TargetCategory.UNSET -> TargetKind.NEAREST_PLAYER
-        TargetCategory.PLAYER -> TargetKind.NEAREST_PLAYER
-        TargetCategory.NON_PLAYER_ENTITY -> TargetKind.NEAREST_ENTITY
-        TargetCategory.TEMPORARY -> TargetKind.TEMPORARY
-    }
-
-    /** 大分類の詳細画面で選択できる実行モデル上の細分類を返します。 */
-    fun targetKinds(category: TargetCategory): List<TargetKind> = when (category) {
-        TargetCategory.UNSET -> emptyList()
-        TargetCategory.PLAYER -> listOf(
-            TargetKind.NEAREST_PLAYER,
-            TargetKind.NEARBY_PLAYERS,
-            TargetKind.ALL_PLAYERS,
-            TargetKind.RANDOM_PLAYER,
-        )
-        TargetCategory.NON_PLAYER_ENTITY -> listOf(
-            TargetKind.NEAREST_ENTITY,
-            TargetKind.NEARBY_ENTITIES,
-        )
-        TargetCategory.TEMPORARY -> listOf(TargetKind.TEMPORARY)
-    }
-
-    /** 既存の細分類を維持したまま大分類だけを表示するための所属判定です。 */
-    fun targetCategoryMatches(kind: TargetKind?, category: TargetCategory): Boolean =
-        targetCategory(kind) == category
 
     /**
      * 両GUIで同じ条件付きフィールド集合を表示します。
@@ -1579,8 +1545,6 @@ object CommandSettingsModel {
             dx = null,
             dy = null,
             dz = null,
-            region = null,
-            searchOrigin = null,
         )
     }
     /**
@@ -1937,7 +1901,6 @@ object CommandSettingsModel {
         } ?: return false
         val explicitlyConfigured = node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))
         return when (parameter) {
-            "kind" -> true
             "entityType" -> !spec.entityType.isNullOrBlank()
             "distance" -> spec.minimumDistance != null || spec.maximumDistance != null
             "range", "dx", "dy", "dz" -> when (parameter) {
@@ -1953,41 +1916,10 @@ object CommandSettingsModel {
             "gameMode" -> !spec.gameMode.isNullOrBlank()
             "tag" -> !spec.tag.isNullOrBlank()
             "name" -> !spec.name.isNullOrBlank()
-            // issue #4: 明示領域（`region` 本体を含む）とその子選択肢は、
-            // 親の領域設定から導出する共有判定へ寄せます。
-            else -> isRegionFilterConfigured(spec, parameter)
-        }
-    }
-
-    /**
-     * issue #4・#5: 領域とその子選択肢の設定状態です。
-     *
-     * 子選択肢ID（`region`／`region-anchor:` 等）は領域設定から導出し、
-     * 親同様に表示・検証・実行の正本だけを見ます。対象絞り込みと条件の
-     * 両系統で共有し、分岐を増やしません。
-     */
-    fun isRegionConfigured(region: RegionSpec?, parameter: String): Boolean {
-        val active = region?.takeIf { it.hasAnySetting() }
-        return when {
-            parameter == "region" -> active != null
-            parameter.startsWith("region-anchor:") ->
-                active?.anchor?.kind?.name == parameter.removePrefix("region-anchor:")
-            parameter == "region-range" ->
-                active?.let { it.dx != null || it.dy != null || it.dz != null } == true
-            parameter == "region-distance" ->
-                active?.minimumDistance != null || active?.maximumDistance != null
-            parameter == "region-position" -> active?.anchor?.position != null
-            parameter == "region-temp" -> !active?.anchor?.tempName.isNullOrBlank()
-            parameter.startsWith("region-target-preset:") ->
-                active?.anchor?.kind == RegionAnchorKind.TARGET_ENTITY &&
-                    SettingPresets.matchTargetPreset(active.anchor.target)?.name ==
-                    parameter.removePrefix("region-target-preset:")
             else -> false
         }
     }
 
-    private fun isRegionFilterConfigured(spec: TargetSpec, parameter: String): Boolean =
-        isRegionConfigured(spec.region, parameter)
 
     /**
      * 「判定条件」タブの設定済み判定です。対象・判定位置・変数名は独立タブへ
@@ -2054,99 +1986,33 @@ object CommandSettingsModel {
         VariableOperation.entries
 
     /**
-     * 対象種別に対して詳細条件が意味を持つかを判定します。
-     * 実行側の解決（matches）に合わせ、プレイヤー種別へentityType、
-     * エンティティの種類へgameModeを指定しても解決しないため、GUIでは提示しません。
+     * 上限数を編集する意味がある役割かを返します。
      *
-     * issue #34-4: 一時変数参照は詳細条件を使いません。実行側はこの取得元に
-     * 絞り込みを適用しないため、GUIでも提示しません。保存時には残存条件を
-     * 除去し、保持した条件を黙って無視しないようにします。
-     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+     * 注視・複写の参照先やTEMP_SET ENTITYの参照元は保存時に単一体へ
+     * 正規化するため、上限数の編集を提示しません。
      */
-    fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean {
-        if (kind == TargetKind.TEMPORARY) {
-            return parameter == "kind"
-        }
-        return when (parameter) {
-            "kind" -> kind != null
-            "entityType" -> kind in ENTITY_KINDS
-            "gameMode" -> kind in PLAYER_KINDS
-            else -> true
-        }
+    fun targetLimitEditable(role: CommandSettingRole?): Boolean = when (role) {
+        CommandSettingRole.TEMPORARY_ENTITY,
+        CommandSettingRole.DESTINATION_FACING,
+        CommandSettingRole.TEMPORARY_LOCATION_FACING,
+        -> false
+        else -> true
     }
-
-    /**
-     * 周囲系（付近プレイヤー／付近エンティティ）かを返します。
-     *
-     * 周囲系の詳細設定項目は最大距離だけとし、他の絞り込みは提示しません。
-     */
-    fun isNearbyKind(kind: TargetKind?): Boolean =
-        kind == TargetKind.NEARBY_PLAYERS || kind == TargetKind.NEARBY_ENTITIES
 
     /**
      * 詳細画面に並べる絞り込み項目IDを返します。
      *
-     * 周囲系は最大距離だけ、単一参照では上限数を除外し、それ以外は
-     * 対象種別ごとの適用可否に従います。表示順序は固定です。
+     * 詳細設定は @e（全実体）からの絞り込みとして扱うため、対象種別に
+     * よらず全項目を提示します。単一参照へ正規化される役割では上限数を
+     * 除外します。表示順序は固定です。
      */
     fun visibleTargetFilterIds(kind: TargetKind?, singleOnly: Boolean = false): List<String> =
-        listOf("entityType", "distance", "range", "region", "limit", "sort", "gameMode", "tag", "name")
-            .filter { id -> !isNearbyKind(kind) || id == "distance" }
-            .filter { id -> !singleOnly || id != "limit" }
-            .filter { id -> targetFilterApplies(kind, id) }
-
-    /**
-     * 対象種別と詳細条件の境界を共有します。
-     * 親画面の種別選択後に詳細子画面へ進めるかを、描画側と入力状態遷移側で
-     * 別々に持つと、表示された「詳細設定」が開けない対象が生まれるためです。
-     *
-     * issue #34-4: 一時変数参照は詳細条件を持たないため、詳細子画面へ進めません。
-     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
-     */
-    fun targetSupportsDetailedFilters(kind: TargetKind?): Boolean =
-        kind != null && kind != TargetKind.TEMPORARY &&
-            kind in FILTERABLE_TARGET_KINDS
-
-    /**
-     * issue #4 の領域基準の表示名キーです。
-     *
-     * Gesture・Inventoryの両系統で同じ名称を使い、基準名の分岐を増やしません。
-     * Name は固定ラベルの識別に使い、現在値・状態はLore側へ分離します。
-     */
-    fun regionAnchorNameKey(kind: RegionAnchorKind): LocalizationKey<String> = when (kind) {
-        RegionAnchorKind.CONTROL_BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_CONTROL_BLOCK
-        RegionAnchorKind.FIXED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_FIXED
-        RegionAnchorKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_TEMPORARY
-        RegionAnchorKind.TARGET_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_TARGET_ENTITY
-    }
-
-    /**
-     * issue #4 の明示領域の要約文です。
-     *
-     * 基準名・範囲・距離を一つの表示へまとめ、Gesture・Inventoryの両系統で
-     * 同じ文面を使います。未設定時はnullを返し、空行を残しません。
-     */
-    fun formatRegionSummary(
-        region: RegionSpec?,
-        text: (LocalizationKey<String>) -> String,
-    ): String? {
-        val active = region?.takeIf { it.hasAnySetting() } ?: return null
-        fun format(value: Double?): String = value?.let {
-            if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
-        }.orEmpty()
-        val unset = text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-        val parts = mutableListOf(text(regionAnchorNameKey(active.anchor.kind)))
-        val extents = listOf(
-            "${text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX)}=${format(active.dx).ifBlank { unset }}",
-            "${text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY)}=${format(active.dy).ifBlank { unset }}",
-            "${text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)}=${format(active.dz).ifBlank { unset }}",
-        ).joinToString(" / ")
-        parts += extents
-        if (active.minimumDistance != null || active.maximumDistance != null) {
-            parts += "${format(active.minimumDistance)}..${format(active.maximumDistance)}"
+        if (kind == null || kind == TargetKind.TEMPORARY) {
+            emptyList()
+        } else {
+            listOf("entityType", "distance", "range", "limit", "sort", "gameMode", "tag", "name")
+                .filter { id -> !singleOnly || id != "limit" }
         }
-        return parts.joinToString(" / ")
-    }
 
     /**
      * プログラム全体の編集を共通保存境界へ通します。
@@ -2402,5 +2268,4 @@ object CommandSettingsModel {
         }
     }
 
-    private val FILTERABLE_TARGET_KINDS = PLAYER_KINDS + ENTITY_KINDS
 }

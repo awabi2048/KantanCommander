@@ -3,40 +3,10 @@ package me.awabi2048.kantancommander.model
 import org.bukkit.Location
 
 /**
- * issue #4 の領域解決の結果です。
+ * 領域の純粋計算です。
  *
- * 正常な不一致（範囲外）と以下を区別します。world を跨ぐ比較は呼び出し側で
- * 明示的に失敗させ、黙って不一致にしません。Target絞り込み・Condition判定・
- * 出力・将来の Structure／Group で同じ型を使い、領域判定の分岐を増やしません。
- */
-sealed interface RegionResolution {
-    /** 解決済みの領域です。原点のワールド名と範囲を持ちます。 */
-    data class Resolved(
-        val worldName: String,
-        val origin: SpatialVector,
-        val dx: Double?,
-        val dy: Double?,
-        val dz: Double?,
-        val minimumDistance: Double?,
-        val maximumDistance: Double?,
-    ) : RegionResolution
-
-    /** 基準（anchor）が未解決です。固定位置・変数・対象のいずれかが確定しません。 */
-    data object UnresolvedAnchor : RegionResolution
-
-    /** 基準と実行ワールドが異なります。比較せず明示失敗にします。 */
-    data object WorldMismatch : RegionResolution
-
-    /** 形状・範囲・距離の指定が不正です。検証層で事前に検出します。 */
-    data object InvalidSpec : RegionResolution
-}
-
-/**
- * issue #4 の領域判定の純粋計算です。
- *
- * Bukkit実体を持たず、Target絞り込み・Condition判定・出力・単体試験で
- * 同じ containment を使います。直方体はバニラセレクターと同じ基準ブロックを
- * 含む判定であり、従来の dx/dy/dz と同じ結果になります。
+ * Bukkit実体を持たず、対象絞り込みの直方体判定・操作ツールの範囲選択・
+ * 単体試験で同じ幾何を使います。
  */
 object RegionMath {
     /**
@@ -63,6 +33,44 @@ object RegionMath {
         containsAxis(point.x, origin.x, dx) &&
             containsAxis(point.y, origin.y, dy) &&
             containsAxis(point.z, origin.z, dz)
+
+    /**
+     * バニラセレクターの直方体における1軸の下端・上端を返します。
+     *
+     * `extent` が負のときは反対方向へ伸び、正方向の末端は常に `+1.0`
+     * だけ広がります（extent=0 でも幅1ブロック）。基準位置は床処理しません。
+     */
+    fun selectorAxisRange(origin: Double, extent: Double): Pair<Double, Double> =
+        if (extent < 0.0) (origin + extent) to (origin + 1.0) else origin to (origin + extent + 1.0)
+
+    /**
+     * 実体のヒットボックス1軸がバニラセレクター直方体と交差するかを判定します。
+     *
+     * `extent` が null の軸は判定しません。辺が接するだけでは交差しません。
+     */
+    fun overlapsSelectorAxis(
+        origin: Double,
+        extent: Double?,
+        boxMinimum: Double,
+        boxMaximum: Double,
+    ): Boolean {
+        if (extent == null) return true
+        val (minimum, maximum) = selectorAxisRange(origin, extent)
+        return boxMaximum > minimum && boxMinimum < maximum
+    }
+
+    /** 実体のヒットボックスがバニラセレクター直方体と3軸とも交差するかを判定します。 */
+    fun overlapsSelectorCuboid(
+        origin: SpatialVector,
+        dx: Double?,
+        dy: Double?,
+        dz: Double?,
+        boxMinimum: SpatialVector,
+        boxMaximum: SpatialVector,
+    ): Boolean =
+        overlapsSelectorAxis(origin.x, dx, boxMinimum.x, boxMaximum.x) &&
+            overlapsSelectorAxis(origin.y, dy, boxMinimum.y, boxMaximum.y) &&
+            overlapsSelectorAxis(origin.z, dz, boxMinimum.z, boxMaximum.z)
 
     /** 2点指定の正規化結果です。基準（各軸の最小値）と範囲を持ちます。 */
     data class CuboidBounds(
@@ -99,52 +107,6 @@ object RegionMath {
             dz = extent(minimum.z, maximum.z),
         )
     }
-
-    /**
-     * 解決の妥当性とワールド一致を判定します。
-     *
-     * anchor解決（実体参照）は呼び出し側（実行層）が行い、ここでは幾何と
-     * ワールドの契約だけを判定します。SPHERE／CYLINDER は予約のため不正とします。
-     */
-    fun resolve(
-        kind: RegionKind,
-        anchorWorldName: String?,
-        queryWorldName: String,
-        origin: SpatialVector?,
-        dx: Double?,
-        dy: Double?,
-        dz: Double?,
-        minimumDistance: Double?,
-        maximumDistance: Double?,
-    ): RegionResolution {
-        if (kind != RegionKind.CUBOID) return RegionResolution.InvalidSpec
-        if (origin == null || anchorWorldName == null) return RegionResolution.UnresolvedAnchor
-        if (anchorWorldName != queryWorldName) return RegionResolution.WorldMismatch
-        if (!isValidExtent(dx) || !isValidExtent(dy) || !isValidExtent(dz)) {
-            return RegionResolution.InvalidSpec
-        }
-        if (!isValidDistance(minimumDistance) || !isValidDistance(maximumDistance)) {
-            return RegionResolution.InvalidSpec
-        }
-        if (minimumDistance != null && maximumDistance != null && minimumDistance > maximumDistance) {
-            return RegionResolution.InvalidSpec
-        }
-        return RegionResolution.Resolved(
-            worldName = anchorWorldName,
-            origin = origin,
-            dx = dx,
-            dy = dy,
-            dz = dz,
-            minimumDistance = minimumDistance,
-            maximumDistance = maximumDistance,
-        )
-    }
-
-    private fun isValidExtent(value: Double?): Boolean =
-        value == null || (value.isFinite() && value >= 0.0)
-
-    private fun isValidDistance(value: Double?): Boolean =
-        value == null || (value.isFinite() && value >= 0.0)
 }
 
 /** Bukkit位置を純粋計算のベクトルへ写します。ワールドは呼び出し側で扱います。 */

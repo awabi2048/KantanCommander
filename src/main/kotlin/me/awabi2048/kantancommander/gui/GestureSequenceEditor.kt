@@ -89,9 +89,6 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.MyworldSpawnKind
-import me.awabi2048.kantancommander.model.RegionAnchorKind
-import me.awabi2048.kantancommander.model.RegionAnchorSpec
-import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -6381,36 +6378,6 @@ class GestureSequenceEditor(
     }
 
     /**
-     * issue #4・#5: 領域基準の一時変数名入力です。
-     *
-     * 対象絞り込みと条件の両系統で同じ入力仕様（ラベル・検証）を使い、
-     * 保存先だけを呼び出し側の書き込みに委ねます。基準種別は呼び出し前に
-     * 確定しているため、ここでは変数名の入力だけを扱います。
-     */
-    private fun openRegionTempNameDialog(
-        player: Player,
-        settingContext: CommandSettingContext,
-        currentName: String?,
-        writeTempName: (me.awabi2048.kantancommander.model.CommandNode, String) -> Unit,
-    ) {
-        beginSettingInput(
-            player,
-            CommandDialogSpecs.variableName,
-            currentName.orEmpty(),
-        ) { raw ->
-            val name = raw.trim()
-            if (!updateSettingNode(player, settingContext) {
-                    writeTempName(it, name)
-                }) {
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-            } else {
-                refreshSettingScreen(player)
-                null
-            }
-        }
-    }
-
-    /**
      * issue #29: プリセットが表す位置種別です。
      *
      * 選択可否の既存判定（制御ブロック上書き等）へ渡します。
@@ -6508,10 +6475,7 @@ class GestureSequenceEditor(
                             it,
                             latest.copy(
                                 kind = FacingKind.TARGET,
-                                // 距離の手入力で来歴を消し、等価値のプリセット誤判定を防ぎます。
-                                target = SettingPresets.withoutPresetConversion(
-                                    target.copy(minimumDistance = minimum, maximumDistance = maximum),
-                                ),
+                                target = target.copy(minimumDistance = minimum, maximumDistance = maximum),
                             ),
                             requireNotNull(facingRole),
                         )
@@ -6525,10 +6489,7 @@ class GestureSequenceEditor(
                             settingContext.role,
                             latest.copy(
                                 kind = PositionKind.TARGET,
-                                // 距離の手入力で来歴を消し、等価値のプリセット誤判定を防ぎます。
-                                target = SettingPresets.withoutPresetConversion(
-                                    target.copy(minimumDistance = minimum, maximumDistance = maximum),
-                                ),
+                                target = target.copy(minimumDistance = minimum, maximumDistance = maximum),
                             ),
                         )
                     }
@@ -6738,11 +6699,10 @@ class GestureSequenceEditor(
                     CommandSettingsModel.targetSpec(target, settingContext.role)
                 }
                 fun writeBranchTarget(target: CommandNode, spec: TargetSpec) {
-                    val cleared = SettingPresets.withoutPresetConversion(spec)
                     if (embeddedTarget) {
-                        CommandSettingsModel.setEmbeddedTargetSpec(target, settingContext.role, cleared)
+                        CommandSettingsModel.setEmbeddedTargetSpec(target, settingContext.role, spec)
                     } else {
-                        CommandSettingsModel.setTargetSpec(target, settingContext.role, cleared)
+                        CommandSettingsModel.setTargetSpec(target, settingContext.role, spec)
                     }
                 }
                 if (group == "target-preset") {
@@ -6789,20 +6749,17 @@ class GestureSequenceEditor(
                     }
                     return
                 }
-                // 詳細設定は初回クリックで選択のみ行い、選択済みの再クリックで
-                // 現行の絞込子画面へ進みます。未設定時は保存せず留まります。
-                // プリセットからの引き継ぎは行わず、現在の保存値をそのまま
-                // 初期表示します。絞込画面の保存で来歴は消えます。
+                // 「詳細設定」はプリセットに付随しない独立した選択肢です。
+                // 初回クリックでは @e（全実体）ベースの詳細指定へ正規化して選択し、
+                // 選択済みの再クリックで絞込子画面へ進みます。
                 if (group == "target-detail") {
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val current = readBranchTarget(node)
                     rememberSettingNode(encoded)
                     if (!wasSelected) {
-                        showSettingScreen()
-                        return
-                    }
-                    if (current == null) {
-                        showSettingScreen()
+                        if (updateSettingNode(player, settingContext) {
+                                writeBranchTarget(it, SettingPresets.toDetailedSpec(current))
+                            }) showSettingScreen()
                         return
                     }
                     pushSettingFrame(
@@ -6827,190 +6784,17 @@ class GestureSequenceEditor(
                     CommandSettingsModel.targetSpec(target, role)
                 }
                 fun writeFilterTarget(target: CommandNode, spec: TargetSpec) {
-                    // 詳細画面の保存で来歴を消し、手入力の等価値をプリセット扱いにしません。
-                    // 変換保存だけが来歴を立てる入口です。
-                    val cleared = SettingPresets.withoutPresetConversion(spec)
+                    // 絞り込み画面での保存はすべて詳細指定です。
+                    val marked = spec.copy(detailed = true)
                     if (embedded) {
-                        CommandSettingsModel.setEmbeddedTargetSpec(target, role, cleared)
+                        CommandSettingsModel.setEmbeddedTargetSpec(target, role, marked)
                     } else {
-                        CommandSettingsModel.setTargetSpec(target, role, cleared)
+                        CommandSettingsModel.setTargetSpec(target, role, marked)
                     }
                 }
-                val current = readFilterTarget(node) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
-                if (group == "kind") {
-                    val category = CommandSettingsModel.targetCategory(current.kind)
-                    val selectedKind = CommandSettingsModel.targetKinds(category)
-                        .firstOrNull { it.name == value }
-                        ?: return
-                    // issue #35-3: 固定実体（旧FIXED_ENTITY）は撤去しました。
-                    // 視線取得の保存導線も持ちません。特定個体の参照は
-                    // 一時変数（TEMPORARY）で行います。
-                    if (updateSettingNode(player, settingContext) {
-                            writeFilterTarget(
-                                it,
-                                current.copy(
-                                    kind = selectedKind,
-                                    entityType = if (selectedKind in setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)) current.entityType else null,
-                                ),
-                            )
-                        }) showSettingScreen()
-                    return
-                }
+                val current = readFilterTarget(node)
+                    ?: TargetSpec(TargetKind.NEARBY_ENTITIES, detailed = true)
                 if (group != "filter") return
-                // issue #4: 明示領域の編集です。基準・範囲・距離・基準別参数・解除を
-                // `filter:region-` 派生IDで受け、既存の絞り込み保存経路へ載せます。
-                // 空になった領域は保持せず null へ戻します。
-                if (value == "region" || value.startsWith("region-")) {
-                    // 行自体のクリックは子選択肢へ委ね、保存しません。
-                    if (value == "region") {
-                        showSettingScreen()
-                        return
-                    }
-                    fun currentRegion(): RegionSpec =
-                        readFilterTarget(node)?.region?.takeIf { it.hasAnySetting() } ?: RegionSpec()
-                    fun writeRegion(target: CommandNode, region: RegionSpec?) {
-                        val latest = readFilterTarget(target) ?: TargetSpec(current.kind)
-                        writeFilterTarget(target, latest.copy(region = region?.takeIf { it.hasAnySetting() }))
-                    }
-                    if (value.startsWith("region-anchor:")) {
-                        val kind = runCatching {
-                            RegionAnchorKind.valueOf(value.removePrefix("region-anchor:"))
-                        }.getOrNull() ?: return
-                        if (updateSettingNode(player, settingContext) {
-                                val base = readFilterTarget(it)
-                                    ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                                // 基準切替えでは範囲・距離を引き継ぎ、基準固有参数だけを初期化します。
-                                // 空になった領域は保持しません。
-                                writeRegion(it, base.copy(anchor = RegionAnchorSpec(kind)))
-                            }) showSettingScreen()
-                        return
-                    }
-                    if (value == "region-range") {
-                        val base = currentRegion()
-                        beginSettingRangeInput(player, base.dx, base.dy, base.dz) { dx, dy, dz ->
-                            if (!updateSettingNode(player, settingContext) {
-                                    val latestRegion = readFilterTarget(it)
-                                        ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
-                                    writeFilterTarget(it, latest.copy(region = latestRegion.copy(dx = dx, dy = dy, dz = dz)))
-                                }) {
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                            } else null
-                        }
-                        return
-                    }
-                    if (value == "region-distance") {
-                        val base = currentRegion()
-                        beginSettingDistanceInput(
-                            player,
-                            base.minimumDistance,
-                            base.maximumDistance,
-                            maximumOnly = false,
-                        ) { minimum, maximum ->
-                            if (!updateSettingNode(player, settingContext) {
-                                    val latestRegion = readFilterTarget(it)
-                                        ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
-                                    writeFilterTarget(
-                                        it,
-                                        latest.copy(
-                                            region = latestRegion.copy(
-                                                minimumDistance = minimum,
-                                                maximumDistance = maximum,
-                                            ),
-                                        ),
-                                    )
-                                }) {
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                            } else null
-                        }
-                        return
-                    }
-                    if (value == "region-position") {
-                        val position = currentRegion().anchor.position
-                        showCoordinateSettingDialog(
-                            player,
-                            position?.x ?: player.location.x,
-                            position?.y ?: player.location.y,
-                            position?.z ?: player.location.z,
-                            semanticsX = position?.semanticsX ?: CoordinateSemantics.ABSOLUTE,
-                            semanticsY = position?.semanticsY ?: CoordinateSemantics.ABSOLUTE,
-                            semanticsZ = position?.semanticsZ ?: CoordinateSemantics.ABSOLUTE,
-                        ) { sx, x, sy, y, sz, z ->
-                            if (!updateSettingNode(player, settingContext) {
-                                    val latestRegion = readFilterTarget(it)
-                                        ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
-                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
-                                    writeFilterTarget(
-                                        it,
-                                        latest.copy(
-                                            region = latestRegion.copy(
-                                                anchor = latestRegion.anchor.copy(
-                                                    kind = RegionAnchorKind.FIXED,
-                                                    position = PositionSpec(
-                                                        PositionKind.COORDINATES,
-                                                        x, y, z,
-                                                        semanticsX = sx, semanticsY = sy, semanticsZ = sz,
-                                                    ),
-                                                ),
-                                            ),
-                                        ),
-                                    )
-                                }) {
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                            } else null
-                        }
-                        return
-                    }
-                    if (value == "region-temp") {
-                        openRegionTempNameDialog(player, settingContext, currentRegion().anchor.tempName) { target, name ->
-                            val latest = readFilterTarget(target) ?: TargetSpec(current.kind)
-                            val base = latest.region?.takeIf { region -> region.hasAnySetting() }
-                                ?: RegionSpec()
-                            writeFilterTarget(
-                                target,
-                                latest.copy(
-                                    region = base.copy(
-                                        anchor = base.anchor.copy(
-                                            kind = RegionAnchorKind.TEMPORARY,
-                                            tempName = name,
-                                        ),
-                                    ),
-                                ),
-                            )
-                        }
-                        return
-                    }
-                    if (value.startsWith("region-target-preset:")) {
-                        val preset = runCatching {
-                            SettingPresets.TargetPreset.valueOf(value.removePrefix("region-target-preset:"))
-                        }.getOrNull() ?: return
-                        if (updateSettingNode(player, settingContext) {
-                                val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
-                                val base = latest.region?.takeIf { region -> region.hasAnySetting() }
-                                    ?: RegionSpec()
-                                writeFilterTarget(
-                                    it,
-                                    latest.copy(
-                                        region = base.copy(
-                                            anchor = base.anchor.copy(
-                                                kind = RegionAnchorKind.TARGET_ENTITY,
-                                                target = SettingPresets.targetSpecFor(preset),
-                                            ),
-                                        ),
-                                    ),
-                                )
-                            }) showSettingScreen()
-                        return
-                    }
-                    if (value == "region-clear") {
-                        if (updateSettingNode(player, settingContext) {
-                                writeRegion(it, null)
-                            }) showSettingScreen()
-                        return
-                    }
-                    return
-                }
                 when (value) {
                     "sort" -> updateSettingNode(player, settingContext) {
                         val next = TargetSort.entries[(current.sort.ordinal + 1) % TargetSort.entries.size]
@@ -7027,8 +6811,6 @@ class GestureSequenceEditor(
                                 player,
                                 current.minimumDistance,
                                 current.maximumDistance,
-                                // 周囲系の詳細設定項目は最大距離だけとします。
-                                maximumOnly = CommandSettingsModel.isNearbyKind(current.kind),
                             ) { minimum, maximum ->
                                 if (!updateSettingNode(player, settingContext) {
                                         val latest = readFilterTarget(it)
@@ -7172,9 +6954,7 @@ class GestureSequenceEditor(
                                         CommandSettingsModel.setTargetSpec(
                                             it,
                                             settingContext.role,
-                                            SettingPresets.withoutPresetConversion(
-                                                latest.copy(minimumDistance = minimum, maximumDistance = maximum),
-                                            ),
+                                            latest.copy(minimumDistance = minimum, maximumDistance = maximum),
                                         )
                                     }) {
                                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
@@ -7573,6 +7353,42 @@ class GestureSequenceEditor(
                                 )
                             }) return
                     }
+                    showSettingScreen()
+                    return
+                }
+                // 内包対象の「詳細設定」行です。初回クリックで @e（全実体）ベースの
+                // 詳細指定へ正規化して選択し、選択済みの再クリックで絞込子画面へ
+                // 進みます。注視・複写の種別は保持します。
+                if (group == "facing-entity-detail" || group == "facing-copy-detail") {
+                    val facingRole = settingContext.role ?: return
+                    val facingKind = if (group == "facing-copy-detail") FacingKind.COPY_ORIENTATION else FacingKind.TARGET
+                    val current = CommandSettingsModel.facingSpec(node, facingRole)
+                        ?.takeIf { it.kind == facingKind }
+                    val detailed = current?.target != null &&
+                        SettingPresets.matchTargetPreset(current.target) == null
+                    rememberSettingNode(encoded)
+                    if (detailed) {
+                        pushSettingFrame(
+                            player,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
+                            encoded,
+                        )
+                        return
+                    }
+                    if (!updateSettingNode(player, settingContext) {
+                            val base = CommandSettingsModel.facingSpec(it, facingRole)
+                                ?.takeIf { base -> base.kind == facingKind }
+                                ?: FacingSpec(facingKind)
+                            CommandSettingsModel.setFacingSpec(
+                                it,
+                                base.copy(
+                                    kind = facingKind,
+                                    // 内包対象は単一体参照のため、詳細化でも上限1を維持します。
+                                    target = SettingPresets.toDetailedSpec(base.target).copy(limit = 1),
+                                ),
+                                facingRole,
+                            )
+                        }) return
                     showSettingScreen()
                     return
                 }

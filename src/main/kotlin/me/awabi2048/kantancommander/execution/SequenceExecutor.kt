@@ -48,11 +48,7 @@ import me.awabi2048.kantancommander.model.clampMinecraftPitch
 import me.awabi2048.kantancommander.model.wrapMinecraftYaw
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
-import me.awabi2048.kantancommander.model.RegionAnchorKind
-import me.awabi2048.kantancommander.model.RegionKind
 import me.awabi2048.kantancommander.model.RegionMath
-import me.awabi2048.kantancommander.model.RegionResolution
-import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.toSpatialVector
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -3265,9 +3261,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 成功（対象あり）・正常な0件・未解決・不正を区別し、#6の共通エラー体系へ
      * 接続します。呼び出し側は空一覧へ潰さず、コード・原因・対象設定を
      * ログとセッションへ保持します。正常な不一致を異常にせず、異常を
-     * 正常な0件へ変換しません。Target絞り込みの領域判定は Condition判定と
-     * 同じ [RegionResolution] の意味付け（基準未解決→未解決、world不一致・
-     * 不正指定→不正）を使います。
+     * 正常な0件へ変換しません。
      */
     private sealed interface TargetResolution {
         /** 解決成功です。条件に合う対象がない正常な0件を含みます。 */
@@ -3282,7 +3276,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * issue #34-4: 対象の取得と絞り込み適用の契約です。
      *
      * 通常検索（プレイヤー系・付近系）は matches で種類・名・タグ・距離・
-     * 領域等を検査します。一方、一時変数参照は変数値だけで解決し、
+     * 直方体等を検査します。一方、一時変数参照は変数値だけで解決し、
      * 詳細条件は適用しません。これは仕様であり、GUI（非提示）・保存（除去）・
      * 実行（非適用）で一致させた契約です。既存保存データの残存条件も適用しません。
      * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
@@ -3330,7 +3324,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             TargetKind.TEMPORARY -> resolveTemporaryTarget(resolvedSpec, session)
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS,
             TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES,
-            -> resolveMatchingTargets(resolvedSpec, session, context, selectionOrigin)
+            -> resolveMatchingTargets(resolvedSpec, session, selectionOrigin)
         }
     }
 
@@ -3371,46 +3365,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /**
      * issue #34-5: 通常検索の解決です。
      *
-     * 領域指定時は基準解決を先に分類し、基準未解決・world不一致・不正指定を
-     * 条件判定と同じ意味付け（未解決・不正）で返します。探索基準が必要な
-     * 絞り込み（距離・範囲）を持つ場合も、基準未解決を分類します。
+     * 距離・直方体の基準位置は実行位置（選択原点）で固定します。
      * 条件に合う対象がない場合は正常な0件として解決成功にします。
      */
     private fun resolveMatchingTargets(
         spec: TargetSpec,
         session: ExecutionSession,
-        context: ExecutionContextSpec?,
         selectionOrigin: Location,
     ): TargetResolution {
-        if (spec.region?.hasAnySetting() == true) {
-            // issue #34-5: 基準解決の分類は Condition判定と同じ意味付けを使います。
-            val region = resolveRegionResult(spec.region, session, context)
-            val failure = TargetFailureClassification.regionFailure(region, spec.region.anchor.kind)
-            if (failure != null) {
-                val detail = when (region) {
-                    is RegionResolution.Resolved -> error("領域解決の成功は分類対象外です")
-                    RegionResolution.UnresolvedAnchor -> "領域の基準を解決できません"
-                    RegionResolution.WorldMismatch -> "領域の基準が実行ワールドと異なります"
-                    RegionResolution.InvalidSpec -> "領域の指定が不正です"
-                }
-                return if (failure.unresolved) {
-                    TargetResolution.Unresolved(failure.code, detail)
-                } else {
-                    TargetResolution.Invalid(failure.code, detail)
-                }
-            }
-        }
-        // issue #34-5: 明示の探索基準が解決できない場合は、絞り込みの有無に
-        // かかわらず未解決とします。基準なしでは距離判定自体ができないため、
-        // 条件不一致の0件へ変換しません。未指定時は選択原点へ退行します。
-        if (spec.searchOrigin?.hasAnySetting() == true && searchOriginFor(spec, context, session) == null) {
-            return classifySearchOriginFailure(spec)
-        }
         val candidates: List<Entity> = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER ->
-                session.origin.world.players.filter { matches(it, spec, session, context) }
+                session.origin.world.players.filter { matches(it, spec, selectionOrigin) }
             else ->
-                session.origin.world.entities.filter { matches(it, spec, session, context) }
+                session.origin.world.entities.filter { matches(it, spec, selectionOrigin) }
         }
         // 対象種別・固定UUID・一時変数の全経路をここで同じように検閲します。
         // 個別の操作実装で除外すると、新しいコマンド種別の追加時に抜け道になります。
@@ -3429,22 +3396,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             else -> Int.MAX_VALUE
         }
         return TargetResolution.Resolved(sorted.take((spec.limit ?: defaultLimit).coerceAtLeast(1)))
-    }
-
-    /** issue #34-5: 絞り込み用探索基準の解決失敗を原因別に分類します。 */
-    private fun classifySearchOriginFailure(spec: TargetSpec): TargetResolution {
-        val failure = TargetFailureClassification.searchOriginFailure(spec.searchOrigin)
-        val temp = spec.searchOrigin?.positionTemp?.takeIf(String::isNotBlank)
-        val detail = if (temp != null) {
-            "探索基準の一時変数位置を解決できません: $temp"
-        } else {
-            "探索基準位置を解決できません"
-        }
-        return if (failure.unresolved) {
-            TargetResolution.Unresolved(failure.code, detail)
-        } else {
-            TargetResolution.Invalid(failure.code, detail)
-        }
     }
 
     /**
@@ -3468,71 +3419,42 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return spec.copy(tag = tag, name = name)
     }
 
+    /**
+     * 絞り込み条件の実体ごとの判定です。
+     *
+     * 距離は実体の中心位置と基準位置の距離で、直方体（dx/dy/dz）は
+     * 実体のヒットボックスとの交差で、それぞれバニラセレクターと同じ
+     * 意味で判定します。基準位置は実行位置（選択原点）で固定し、
+     * worldが異なる実体は不一致とします。
+     */
     private fun matches(
         entity: Entity,
         spec: TargetSpec,
-        session: ExecutionSession,
-        context: ExecutionContextSpec?,
+        origin: Location,
     ): Boolean {
         if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
         if (spec.name != null && entity.name != spec.name) return false
         if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
-        // issue #4: 明示領域があれば共通 resolver で判定します。未設定時は
-        // 従来の dx/dy/dz と距離指定だけを使い、保存互換を維持します。
-        spec.region?.takeIf { it.hasAnySetting() }?.let { region ->
-            return matchesRegion(entity, spec, region, session, context)
+        val constrainsPosition =
+            spec.minimumDistance != null || spec.maximumDistance != null ||
+                spec.dx != null || spec.dy != null || spec.dz != null
+        if (constrainsPosition && entity.world != origin.world) return false
+        if (spec.minimumDistance != null || spec.maximumDistance != null) {
+            val distance = entity.boundingBox.center.distance(origin.toVector())
+            if (spec.minimumDistance != null && distance < spec.minimumDistance) return false
+            if (spec.maximumDistance != null && distance > spec.maximumDistance) return false
         }
-        val origin = searchOriginFor(spec, context, session) ?: return false
-        val distance = entity.location.distance(origin)
-        if (spec.minimumDistance != null && distance < spec.minimumDistance) return false
-        if (spec.maximumDistance != null && distance > spec.maximumDistance) return false
-        // 従来の範囲判定も共通の領域計算へ寄せ、独自の分岐を残しません。
-        if (!RegionMath.contains(entity.location.toSpatialVector(), origin.toSpatialVector(), spec.dx, spec.dy, spec.dz)) {
-            return false
+        if (spec.dx != null || spec.dy != null || spec.dz != null) {
+            val box = entity.boundingBox
+            val overlaps = RegionMath.overlapsSelectorCuboid(
+                origin.toSpatialVector(),
+                spec.dx, spec.dy, spec.dz,
+                SpatialVector(box.minX, box.minY, box.minZ),
+                SpatialVector(box.maxX, box.maxY, box.maxZ),
+            )
+            if (!overlaps) return false
         }
         return spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
-    }
-
-    /**
-     * issue #4 の明示領域による絞り込みです。
-     *
-     * 正常な不一致と解決失敗を区別します。基準未解決は不一致、world不一致・
-     * 不正指定は不一致とします（Target絞り込みは真偽しか返せないため）。
-     * issue #34-5: 原因の分類と通知は解決単位で [resolveTargetSpecsResult] が
-     * 行うため、ここでは実体ごとのログを出しません。Condition判定では #5 の
-     * INVALID／UNRESOLVED へ接続し、同じ原因に矛盾した意味付けをしません。
-     * 領域側の距離とTarget側の距離は独立に適用します（AND）。
-     */
-    private fun matchesRegion(
-        entity: Entity,
-        spec: TargetSpec,
-        region: RegionSpec,
-        session: ExecutionSession,
-        context: ExecutionContextSpec?,
-    ): Boolean = when (val resolution = resolveRegionResult(region, session, context)) {
-        is RegionResolution.Resolved -> {
-            val world = session.origin.world ?: return false
-            if (entity.location.world != world) return false
-            val origin = Location(world, resolution.origin.x, resolution.origin.y, resolution.origin.z)
-            val distance = entity.location.distance(origin)
-            if (resolution.minimumDistance != null && distance < resolution.minimumDistance) return false
-            if (resolution.maximumDistance != null && distance > resolution.maximumDistance) return false
-            if (spec.minimumDistance != null || spec.maximumDistance != null) {
-                val searchOrigin = searchOriginFor(spec, context, session) ?: return false
-                if (entity.location.world != searchOrigin.world) return false
-                val searchDistance = entity.location.distance(searchOrigin)
-                if (spec.minimumDistance != null && searchDistance < spec.minimumDistance) return false
-                if (spec.maximumDistance != null && searchDistance > spec.maximumDistance) return false
-            }
-            if (!RegionMath.contains(entity.location.toSpatialVector(), resolution.origin, resolution.dx, resolution.dy, resolution.dz)) {
-                return false
-            }
-            spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
-        }
-        RegionResolution.UnresolvedAnchor -> false
-        // issue #34-5: 実体ごとの警告は出しません。原因は解決単位で分類・通知します。
-        RegionResolution.WorldMismatch -> false
-        RegionResolution.InvalidSpec -> false
     }
 
     private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location? =
@@ -3546,24 +3468,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 PositionKind.TARGET -> null
             }
         }
-
-    /**
-     * 対象探索の基準位置です。「探索の基準」設定があれば最優先し、
-     * なければ従来の選択原点（コンテキスト位置または制御ブロック位置）を用います。
-     */
-    private fun searchOriginFor(spec: TargetSpec, context: ExecutionContextSpec?, session: ExecutionSession): Location? {
-        val search = spec.searchOrigin?.takeIf { it.hasAnySetting() }
-        if (search != null) {
-            search.positionTemp?.takeIf(String::isNotBlank)?.let { name ->
-                val temp = session.executionVariables.get(TemporaryTemplate.normalized(name))
-                    ?.takeIf { it.type == ValueType.LOCATION }
-                    ?.location ?: return null
-                return Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
-            }
-            search.position?.let { return resolvePosition(it, session, context) }
-        }
-        return selectionOrigin(context, session)
-    }
 
     /** GUI設定ではなく、実行エンジンが現在保持している内部状態だけを返します。 */
     private fun effectiveContext(session: ExecutionSession): ExecutionContextSpec? = session.context
@@ -3823,61 +3727,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    /**
-     * 領域基準を解決します。FIXEDは明示位置、CONTROL_BLOCKは制御ブロック位置、
-     * TEMPORARYはLOCATION型一時変数、TARGET_ENTITYは対象実体位置です。
-     * 未解決はnullで返し、呼び出し側で [RegionResolution] へ変換します。
-     */
-    private fun resolveRegionAnchor(
-        spec: RegionSpec,
-        session: ExecutionSession,
-        context: ExecutionContextSpec? = session.context,
-    ): Location? = when (spec.anchor.kind) {
-        RegionAnchorKind.CONTROL_BLOCK -> session.origin.clone()
-        RegionAnchorKind.FIXED -> {
-            val position = spec.anchor.position ?: return null
-            resolvePosition(position, session, context)
-        }
-        RegionAnchorKind.TEMPORARY -> {
-            val temp = spec.anchor.tempName
-                ?.takeIf(String::isNotBlank)
-                ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
-                ?.takeIf { it.type == ValueType.LOCATION }
-                ?.location ?: return null
-            Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
-        }
-        RegionAnchorKind.TARGET_ENTITY -> {
-            val target = spec.anchor.target ?: context?.target ?: return null
-            resolveTargetSpec(target, session, context)?.location
-        }
-    }
-
-    /**
-     * issue #4 の領域解決です。Target絞り込み・Condition判定・出力で共有します。
-     *
-     * 正常な不一致と解決失敗を [RegionResolution] で区別します。world不一致・
-     * 不正指定は null へ潰さず明示理由で返し、呼び出し側で失敗として扱います。
-     */
-    private fun resolveRegionResult(
-        spec: RegionSpec,
-        session: ExecutionSession,
-        context: ExecutionContextSpec? = session.context,
-    ): RegionResolution {
-        if (spec.kind != RegionKind.CUBOID) return RegionResolution.InvalidSpec
-        val anchor = resolveRegionAnchor(spec, session, context) ?: return RegionResolution.UnresolvedAnchor
-        return RegionMath.resolve(
-            kind = spec.kind,
-            anchorWorldName = anchor.world?.name,
-            queryWorldName = session.origin.world?.name ?: return RegionResolution.UnresolvedAnchor,
-            origin = anchor.toSpatialVector(),
-            dx = spec.dx,
-            dy = spec.dy,
-            dz = spec.dz,
-            minimumDistance = spec.minimumDistance,
-            maximumDistance = spec.maximumDistance,
-        )
-    }
-
     private fun applyFacing(
         destination: Location,
         facing: me.awabi2048.kantancommander.model.FacingSpec,
@@ -4060,15 +3909,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             node.destinationFacingSpec,
             effective?.facing,
         ).any(::facingUnavailable) || listOfNotNull(
-            node.targetSpec?.searchOrigin,
-            node.secondaryTargetSpec?.searchOrigin,
-            node.destinationTargetSpec?.searchOrigin,
-            effective?.target?.searchOrigin,
-            effective?.executor?.searchOrigin,
-        ).any { search ->
-            search.positionTemp?.let { !positionAvailable(it) } == true ||
-                positionUnavailable(search.position)
-        } || listOfNotNull(
             node.itemTempRef to ValueType.ITEM,
             node.blockTempRef to ValueType.BLOCK,
         ).any { (name, expected) ->
