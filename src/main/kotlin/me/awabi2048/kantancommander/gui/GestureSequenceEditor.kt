@@ -884,13 +884,31 @@ class GestureSequenceEditor(
             // 下部画面の再描画は保存処理の成功条件ではありません。保存済みデータの
             // 破損でここが失敗しても、入力を「形式不正」と誤判定しないよう、GUI境界で
             // 失敗をBooleanへ閉じ込めます。再描画の失敗自体は操作者への通知へ
-            // 一本化します。連続操作で重複通知にならないよう成功まで抑制し、
-            // コンソールへ出しません。
+            // 一本化します。連続操作で重複通知にならないよう成功まで抑制します。
             if (!lowerRefreshNoticeSent) {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+                notifyReopenHint(player, "下部画面の再描画", it)
                 lowerRefreshNoticeSent = true
             }
             false
+        }
+    }
+
+    /**
+     * 操作者への再オープン案内と、管理者向けの原因記録をまとめて出します。
+     *
+     * 画面構築・子画面オープンの内部例外を案内だけで終わらせると、
+     * 再現時に原因を追跡できません（未定義の警告キーで設定パネル全体が
+     * 失敗した障害）。プレイヤーへの案内は従来どおり一本化し、
+     * 例外はコンソールへ記録します。
+     */
+    private fun notifyReopenHint(player: Player, operation: String, failure: Throwable? = null) {
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+        if (failure != null) {
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "KantanCommander GUIの${operation}に失敗しました",
+                failure,
+            )
         }
     }
 
@@ -1332,8 +1350,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -1737,8 +1756,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -1826,8 +1846,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -3711,8 +3732,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -3757,8 +3779,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -3806,8 +3829,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -4486,8 +4510,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -4524,8 +4549,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -5059,8 +5085,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -5459,8 +5486,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -5634,8 +5662,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -5769,8 +5798,9 @@ class GestureSequenceEditor(
                 ),
             )
         }.getOrElse {
-            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            // 子画面のオープン失敗は操作者への通知へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            notifyReopenHint(player, "子画面のオープン", it)
             false
         }
         if (!opened) {
@@ -6759,7 +6789,12 @@ class GestureSequenceEditor(
                     if (!wasSelected) {
                         if (updateSettingNode(player, settingContext) {
                                 writeBranchTarget(it, SettingPresets.toDetailedSpec(current))
-                            }) showSettingScreen()
+                            }) {
+                            // 詳細を選んだ事実は操作層の入室記録で保持し、
+                            // 値がプリセットと一致しても詳細側の選択表示を維持します。
+                            markDetailVisited(fieldKey, settingContext.role)
+                            showSettingScreen()
+                        }
                         return
                     }
                     pushSettingFrame(
@@ -6784,20 +6819,20 @@ class GestureSequenceEditor(
                     CommandSettingsModel.targetSpec(target, role)
                 }
                 fun writeFilterTarget(target: CommandNode, spec: TargetSpec) {
-                    // 絞り込み画面での保存はすべて詳細指定です。
-                    val marked = spec.copy(detailed = true)
                     if (embedded) {
-                        CommandSettingsModel.setEmbeddedTargetSpec(target, role, marked)
+                        CommandSettingsModel.setEmbeddedTargetSpec(target, role, spec)
                     } else {
-                        CommandSettingsModel.setTargetSpec(target, role, marked)
+                        CommandSettingsModel.setTargetSpec(target, role, spec)
                     }
                 }
                 val current = readFilterTarget(node)
-                    ?: TargetSpec(TargetKind.NEARBY_ENTITIES, detailed = true)
+                    ?: TargetSpec(TargetKind.NEARBY_ENTITIES)
                 if (group != "filter") return
                 when (value) {
                     "sort" -> updateSettingNode(player, settingContext) {
-                        val next = TargetSort.entries[(current.sort.ordinal + 1) % TargetSort.entries.size]
+                        // 巡回の末尾は未指定（バニラの sort 引数なし）です。
+                        val sorts: List<TargetSort?> = TargetSort.entries + null
+                        val next = sorts[(sorts.indexOf(current.sort) + 1) % sorts.size]
                         writeFilterTarget(it, current.copy(sort = next))
                     }
                     "gameMode" -> updateSettingNode(player, settingContext) {
@@ -7364,10 +7399,14 @@ class GestureSequenceEditor(
                     val facingKind = if (group == "facing-copy-detail") FacingKind.COPY_ORIENTATION else FacingKind.TARGET
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
                         ?.takeIf { it.kind == facingKind }
-                    val detailed = current?.target != null &&
-                        SettingPresets.matchTargetPreset(current.target) == null
+                    // 詳細選択の事実は保存値ではなく入室記録で判定します。
+                    val detailChosen = current?.target != null &&
+                        (SettingPresets.matchTargetPreset(current.target) == null ||
+                            state.detailVisitedKeys.contains(
+                                PresetSelectionDisplay.detailVisitKey(fieldKey, facingRole),
+                            ))
                     rememberSettingNode(encoded)
-                    if (detailed) {
+                    if (detailChosen) {
                         pushSettingFrame(
                             player,
                             GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
@@ -7389,6 +7428,7 @@ class GestureSequenceEditor(
                                 facingRole,
                             )
                         }) return
+                    markDetailVisited(fieldKey, facingRole)
                     showSettingScreen()
                     return
                 }

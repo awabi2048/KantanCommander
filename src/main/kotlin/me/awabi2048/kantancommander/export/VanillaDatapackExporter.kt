@@ -30,6 +30,7 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -2769,10 +2770,13 @@ class VanillaDatapackExporter(
                 else -> null
             }
             limit?.let { add("limit=$it") }
+            // 単一体取得の種別（@r・最寄り）は種別側の並び順を優先し、
+            // 明示値はそのまま sort 引数へ出します。未指定は引数を出しません。
             val sort = when {
                 spec.kind == TargetKind.RANDOM_PLAYER -> "random"
-                spec.sort.name == "FURTHEST" -> "furthest"
-                spec.sort.name == "RANDOM" -> "random"
+                spec.sort == TargetSort.FURTHEST -> "furthest"
+                spec.sort == TargetSort.RANDOM -> "random"
+                spec.sort == TargetSort.NEAREST -> "nearest"
                 spec.kind in setOf(TargetKind.NEAREST_PLAYER, TargetKind.NEAREST_ENTITY) -> "nearest"
                 else -> null
             }

@@ -374,7 +374,16 @@ class GestureLowerPanel(
                 childScreenId = childScreenId,
             )
         }
-        val fieldLabel = KcI18n.text(player, field.label)
+        // 対象の詳細設定子画面では、親項目名（付与対象等）ではなく
+        // 絞り込み対象の意味（条件を満たすエンティティ）を見出しにします。
+        val fieldLabel = KcI18n.text(
+            player,
+            if (screen == GestureSettingScreen.TARGET_FILTERS) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MATCHING_ENTITIES
+            } else {
+                field.label
+            },
+        )
         val fieldValue = if (CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)) {
             displayValueComponent(player, field.value(node))
         } else {
@@ -5290,7 +5299,8 @@ class GestureLowerPanel(
                     label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
                     selected = PresetSelectionDisplay.isDetailSelected(
                         configured,
-                        current == null || SettingPresets.matchTargetPreset(current) == null,
+                        current != null && current.kind != TargetKind.TEMPORARY &&
+                            SettingPresets.matchTargetPreset(current) == null,
                         detailVisited,
                     ),
                     children = targetFilterChoices(node, context, player),
@@ -5323,10 +5333,12 @@ class GestureLowerPanel(
         current: TargetSpec?,
         player: Player,
         id: String,
+        detailVisited: Boolean = false,
     ): SettingChoice = SettingChoice(
         id = id,
         label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
-        selected = current != null && SettingPresets.matchTargetPreset(current) == null,
+        selected = current != null && current.kind != TargetKind.TEMPORARY &&
+            (SettingPresets.matchTargetPreset(current) == null || detailVisited),
         interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
     )
 
@@ -5347,12 +5359,13 @@ class GestureLowerPanel(
             CommandSettingsModel.embeddedTargetSpec(node, context.role)
         } else {
             CommandSettingsModel.targetSpec(node, context.role)
-        }) ?: me.awabi2048.kantancommander.model.TargetSpec(TargetKind.NEARBY_ENTITIES, detailed = true)
+        }) ?: me.awabi2048.kantancommander.model.TargetSpec(TargetKind.NEARBY_ENTITIES)
         fun value(parameter: String): String? = when (parameter) {
             "sort" -> KcI18n.text(player, when (spec.sort) {
                 TargetSort.NEAREST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_NEAREST
                 TargetSort.FURTHEST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_FURTHEST
                 TargetSort.RANDOM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_RANDOM
+                null -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET
             })
             else -> spec.let {
                 when (parameter) {
@@ -5368,7 +5381,7 @@ class GestureLowerPanel(
         }
         return listOf(
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
-            "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
+            "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET_DISTANCE,
             "range" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
             "limit" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             "sort" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT,
@@ -5598,7 +5611,7 @@ class GestureLowerPanel(
                     "facing-entity-preset",
                     context.role,
                     interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
-                ) + embeddedTargetDetailChoice(current?.target, player, "facing-entity-detail"),
+                ) + embeddedTargetDetailChoice(current?.target, player, "facing-entity-detail", detailVisited),
                 bottomAligned = true,
             ),
         )
@@ -5613,7 +5626,7 @@ class GestureLowerPanel(
                     "facing-copy-preset",
                     context.role,
                     interactionMode = GestureSettingInteractionMode.SELECT_AND_DETAILS,
-                ) + embeddedTargetDetailChoice(current?.target, player, "facing-copy-detail"),
+                ) + embeddedTargetDetailChoice(current?.target, player, "facing-copy-detail", detailVisited),
                 bottomAligned = true,
             ),
         ) + listOf(

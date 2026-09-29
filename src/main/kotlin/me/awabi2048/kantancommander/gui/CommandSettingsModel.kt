@@ -918,6 +918,12 @@ object CommandSettingsModel {
             CommandType.CONDITION -> when (fieldKey) {
                 "inverted" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_INVERTED
                 "kind" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION_KIND
+                // subject別の絞り込みフィールドです。visibleFields で表示される
+                // 全項目を網羅しないと undefinedWarningKey が例外を投げ、
+                // 設定パネル全体の構築が失敗します。
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION_POSITION
+                "variable" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "condition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
@@ -1910,9 +1916,9 @@ object CommandSettingsModel {
                 else -> spec.dx != null || spec.dy != null || spec.dz != null
             }
             "limit" -> spec.limit != null
-            // sortだけは入力欄ではなく択一操作です。既定値を明示選択した履歴も
-            // 保持しますが、文字列・数値入力項目では空値を完了扱いにしません。
-            "sort" -> spec.sort != TargetSort.NEAREST || explicitlyConfigured
+            // sortだけは入力欄ではなく択一操作です。未指定（null）は空値として
+            // 未設定扱いにし、明示選択した履歴は保持します。
+            "sort" -> spec.sort != null || explicitlyConfigured
             "gameMode" -> !spec.gameMode.isNullOrBlank()
             "tag" -> !spec.tag.isNullOrBlank()
             "name" -> !spec.name.isNullOrBlank()

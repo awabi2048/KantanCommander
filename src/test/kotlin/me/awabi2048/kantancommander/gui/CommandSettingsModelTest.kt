@@ -1174,6 +1174,56 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `condition warning keys cover every subject visible field`() {
+        // 条件分岐の未完了警告で未定義キーの error が下部パネル全体を
+        // 落としていた障害の回帰固定です。subject別に表示される全フィールドが
+        // 警告キーへ解決できることを固定します。
+        val subjects = listOf(
+            null,
+            ConditionSubject.PLAYER,
+            ConditionSubject.OTHER_ENTITY,
+            ConditionSubject.BLOCK,
+            ConditionSubject.VARIABLE,
+            ConditionSubject.CONTROL_BLOCK,
+        )
+        for (subject in subjects) {
+            val condition = CommandType.CONDITION.newNode().apply {
+                if (subject != null) setConditionSubject(subject)
+            }
+            val folded = CommandType.FOLDED_IF.newNode().apply {
+                if (subject != null) setConditionSubject(subject)
+            }
+            for (node in listOf(condition, folded)) {
+                for (field in CommandSettingsModel.gestureVisibleFields(node)) {
+                    CommandSettingsModel.incompleteWarningKey(node, field.key)
+                }
+            }
+        }
+        // subject別フィールドは専用の警告キーへ解決します。
+        val entity = CommandType.CONDITION.newNode().apply {
+            setConditionSubject(ConditionSubject.OTHER_ENTITY)
+        }
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.target",
+            CommandSettingsModel.incompleteWarningKey(entity, "target").id,
+        )
+        val block = CommandType.CONDITION.newNode().apply {
+            setConditionSubject(ConditionSubject.BLOCK)
+        }
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.condition_position",
+            CommandSettingsModel.incompleteWarningKey(block, "position").id,
+        )
+        val variable = CommandType.CONDITION.newNode().apply {
+            setConditionSubject(ConditionSubject.VARIABLE)
+        }
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.variable",
+            CommandSettingsModel.incompleteWarningKey(variable, "variable").id,
+        )
+    }
+
+    @Test
     fun `temporary references expose no detail filters`() {
         // issue #34-4: 一時変数参照は詳細条件を使いません。
         // 実行側が適用しない条件をGUIで提示しないことを固定します。

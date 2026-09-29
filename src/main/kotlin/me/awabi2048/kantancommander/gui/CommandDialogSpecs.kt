@@ -864,7 +864,7 @@ internal object CommandDialogSpecs {
             format = InputFormat.RESOURCE_ID,
         )
         "distance" -> Spec(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET_DISTANCE,
             64,
             { raw ->
                 val value = CommandValueRules.parseFiniteDouble(raw)

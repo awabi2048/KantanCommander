@@ -236,7 +236,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)), emptyList())
         val origin = origin(route)
         val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse {
-            // 描画失敗はGUI内のエラー表示へ一本化し、コンソールへ出しません。
+            // 描画失敗はGUI内のエラー表示へ一本化します。
+            // 内部例外は原因追跡のためコンソールへ記録します。
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "KantanCommander 簡易エディタのグラフ描画に失敗しました",
+                it,
+            )
             return InventoryMenuView(
                 45,
                 KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)),

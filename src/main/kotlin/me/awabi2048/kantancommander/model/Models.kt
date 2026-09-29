@@ -410,7 +410,12 @@ data class TargetSpec(
     val minimumDistance: Double? = null,
     val maximumDistance: Double? = null,
     val limit: Int? = null,
-    val sort: TargetSort = TargetSort.NEAREST,
+    /**
+     * 並び順です。null は未指定（バニラの sort 引数なし）を意味し、実行時は
+     * 種別の既定順（最寄り系は距離昇順、その他は取得順）に従います。
+     * 「詳細設定」の並び順項目では未指定が選択肢に含まれます。
+     */
+    val sort: TargetSort? = null,
     val gameMode: String? = null,
     val tag: String? = null,
     val name: String? = null,
@@ -426,16 +431,6 @@ data class TargetSpec(
     // 読込時の型検証で隔離します。新規保存はこの欄を書きません。
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
-    /**
-     * 「詳細設定」として編集した指定です。
-     *
-     * 詳細設定は @e（全実体）からの絞り込みとして表現するため、kind は
-     * NEARBY_ENTITIES でこの項目だけを真にします。親画面のプリセット選択
-     * 表示は値一致ではなくこの項目へ従い、詳細指定がプリセットへ誤判定
-     * されないようにします。検証・実行・出力はこの値を無視し、
-     * Gson永続の既定値は偽です。
-     */
-    val detailed: Boolean = false,
 ) {
     /**
      * issue #29: 静的に0..1件と確定する指定かを返します。

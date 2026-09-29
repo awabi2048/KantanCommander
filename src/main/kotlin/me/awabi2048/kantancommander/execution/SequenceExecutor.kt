@@ -37,6 +37,7 @@ import me.awabi2048.kantancommander.model.VariableStore
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
@@ -3384,12 +3385,22 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val inMyWorld = candidates
             .filter { it.world == session.origin.world }
             .filterNot(systemEntityRegistry::isSystemEntity)
-        val sorted = when {
-            spec.kind == TargetKind.RANDOM_PLAYER || spec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
+        // 並び順が未指定のときは種別の既定順を使います。最寄り・ランダムの
+        // 種別は単一体の取得方法そのものなので種別側を優先し、その他は
+        // バニラの sort 引数なしと同じく取得順のままにします。
+        val effectiveSort = spec.sort ?: when (spec.kind) {
+            TargetKind.RANDOM_PLAYER -> TargetSort.RANDOM
+            TargetKind.NEAREST_PLAYER, TargetKind.NEAREST_ENTITY -> TargetSort.NEAREST
+            else -> null
+        }
+        val sorted = when (effectiveSort) {
+            TargetSort.RANDOM ->
                 inMyWorld.shuffled()
-            spec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
+            TargetSort.FURTHEST ->
                 inMyWorld.sortedByDescending { it.location.distanceSquared(selectionOrigin) }
-            else -> inMyWorld.sortedBy { it.location.distanceSquared(selectionOrigin) }
+            TargetSort.NEAREST ->
+                inMyWorld.sortedBy { it.location.distanceSquared(selectionOrigin) }
+            null -> inMyWorld
         }
         val defaultLimit = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY -> 1

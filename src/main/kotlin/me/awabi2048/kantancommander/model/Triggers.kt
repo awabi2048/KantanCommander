@@ -197,7 +197,7 @@ private fun normalizeTriggerTarget(spec: TargetSpec, playerOnly: Boolean): Targe
     minimumDistance = null,
     maximumDistance = null,
     limit = null,
-    sort = TargetSort.NEAREST,
+    sort = null,
     gameMode = spec.gameMode,
     tag = spec.tag,
     name = spec.name,
@@ -205,7 +205,6 @@ private fun normalizeTriggerTarget(spec: TargetSpec, playerOnly: Boolean): Targe
     dy = null,
     dz = null,
     tempName = null,
-    detailed = false,
 )
 }
 
@@ -214,7 +213,7 @@ private fun TargetSpec.hasTriggerIneffectiveSetting(): Boolean =
     tempName != null ||
         minimumDistance != null || maximumDistance != null ||
         dx != null || dy != null || dz != null || limit != null ||
-        sort != TargetSort.NEAREST || detailed
+        sort != null
 
 /** 単体代表への寄せが必要な探索語彙かを返します。警告文の特定に使います。 */
 private fun TargetSpec.needsTriggerKindNormalization(): Boolean = kind != TargetKind.NEAREST_PLAYER &&

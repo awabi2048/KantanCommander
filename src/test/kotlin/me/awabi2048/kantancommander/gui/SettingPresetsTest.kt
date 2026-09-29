@@ -102,19 +102,27 @@ class SettingPresetsTest {
     @Test
     fun `changed sort orders leave template matching`() {
         // 並び順の変更は詳細設定のため、テンプレート一致から外れます。
+        // 未指定（null）もプリセットの正規内容ではありません。
         val furthest = TargetSpec(TargetKind.NEAREST_PLAYER, sort = TargetSort.FURTHEST)
         assertNull(SettingPresets.matchTargetPreset(furthest))
         val random = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0, sort = TargetSort.RANDOM)
         assertNull(SettingPresets.matchTargetPreset(random))
+        assertNull(SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER)))
         // 既定の最寄り順は引き続き一致します。
         assertEquals(
             SettingPresets.TargetPreset.NEAREST_PLAYER,
-            SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER)),
+            SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER, sort = TargetSort.NEAREST)),
         )
         assertEquals(
             SettingPresets.TargetPreset.NEARBY_PLAYERS,
             SettingPresets.matchTargetPreset(
-                TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0),
+                TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0, sort = TargetSort.NEAREST),
+            ),
+        )
+        // 距離なしの無制限指定は「付近」の意味を持たないため一致させません。
+        assertNull(
+            SettingPresets.matchTargetPreset(
+                TargetSpec(TargetKind.NEARBY_ENTITIES, sort = TargetSort.NEAREST),
             ),
         )
     }
@@ -124,16 +132,17 @@ class SettingPresetsTest {
         // 未設定は条件なしの @e から開始します。
         val empty = SettingPresets.toDetailedSpec(null)
         assertEquals(TargetKind.NEARBY_ENTITIES, empty.kind)
-        assertTrue(empty.detailed)
         assertNull(empty.entityType)
         assertNull(empty.limit)
+        assertNull(empty.sort)
 
-        // 単一プレイヤーは @e[type=player, limit=1] へ分解します。
+        // 単一プレイヤーは @e[type=player, limit=1, sort=nearest] へ分解します。
+        // 種別固有の並び順は NEARBY_ENTITIES 化で失われるため明示値へ移します。
         val nearest = SettingPresets.toDetailedSpec(TargetSpec(TargetKind.NEAREST_PLAYER))
         assertEquals(TargetKind.NEARBY_ENTITIES, nearest.kind)
         assertEquals(SettingPresets.PLAYER_ENTITY_TYPE, nearest.entityType)
         assertEquals(1, nearest.limit)
-        assertTrue(nearest.detailed)
+        assertEquals(TargetSort.NEAREST, nearest.sort)
 
         // ランダムな1人は sort=random へ写し替えます。
         val random = SettingPresets.toDetailedSpec(TargetSpec(TargetKind.RANDOM_PLAYER))
@@ -150,19 +159,19 @@ class SettingPresetsTest {
         val temporary = SettingPresets.toDetailedSpec(TargetSpec(TargetKind.TEMPORARY, tempName = "x"))
         assertEquals(TargetKind.NEARBY_ENTITIES, temporary.kind)
         assertNull(temporary.tempName)
-        assertTrue(temporary.detailed)
     }
 
     @Test
-    fun `detailed spec preserves filters and never matches presets`() {
+    fun `detailed spec preserves filters and matching stays value based`() {
         // 絞り込み値は詳細指定へ引き継ぎます。
         val detailed = SettingPresets.toDetailedSpec(
             TargetSpec(TargetKind.NEARBY_ENTITIES, maximumDistance = 12.0, tag = "vip"),
         )
         assertEquals(12.0, detailed.maximumDistance)
         assertEquals("vip", detailed.tag)
-        assertTrue(detailed.detailed)
-        // 詳細指定は値がプリセットと一致しても詳細として表示し続けます。
+        // プリセット一致は値の形状だけで判定します。正規内容を外れた
+        // 詳細指定は一致せず、詳細側を選んだ事実の表示維持は操作層の
+        // 入室記録（detailVisited）が担います。
         assertNull(SettingPresets.matchTargetPreset(detailed))
         assertNull(
             SettingPresets.matchTargetPreset(
@@ -286,12 +295,15 @@ class SettingPresetsTest {
         // 最寄り・付近は対象指定へ照合し、それ以外は位置指定へ委ねます。
         assertEquals(
             SettingPresets.PositionPreset.NEAREST_PLAYER,
-            SettingPresets.matchDestinationPreset(TargetSpec(TargetKind.NEAREST_PLAYER), null),
+            SettingPresets.matchDestinationPreset(
+                TargetSpec(TargetKind.NEAREST_PLAYER, sort = TargetSort.NEAREST),
+                null,
+            ),
         )
         assertEquals(
             SettingPresets.PositionPreset.NEARBY_PLAYERS,
             SettingPresets.matchDestinationPreset(
-                TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0),
+                TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0, sort = TargetSort.NEAREST),
                 null,
             ),
         )

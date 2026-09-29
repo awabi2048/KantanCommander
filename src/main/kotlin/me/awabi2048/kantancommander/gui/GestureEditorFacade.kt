@@ -153,8 +153,14 @@ class GestureEditorFacade(
             // PlayerInteractEventから呼ばれる編集入口で例外を再送すると、ブロック操作
             // イベント全体がサーバーERRORになり、次のクリックまで同じ競合を繰り返します。
             // 入力claim競合はCC-System側で所有者を保護したうえで失敗するため、開けなかった
-            // 事実は操作者への通知へ一本化し、コンソールへ出さずイベントへ例外を漏らしません。
+            // 事実は操作者への通知へ一本化し、イベントへ例外を漏らしません。
+            // 原因追跡のため内部例外だけはコンソールへ記録します。
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "KantanCommander GUIのオープンに失敗しました",
+                it,
+            )
             false
         }
         if (opened) sessions[player.uniqueId] = editor

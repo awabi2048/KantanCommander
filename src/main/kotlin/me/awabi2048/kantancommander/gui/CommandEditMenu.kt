@@ -261,9 +261,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val parameter = context.payload["parameter"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!updateEffectiveTargetSpec(context.player, context.route, expectedRevision = script(context.route)?.revision) { latest ->
                                 when (parameter) {
-                                    "sort" -> latest.copy(
-                                        sort = TargetSort.entries[(latest.sort.ordinal + 1) % TargetSort.entries.size],
-                                    )
+                                    "sort" -> {
+                                        // 巡回の末尾は未指定（バニラの sort 引数なし）です。
+                                        val sorts: List<TargetSort?> = TargetSort.entries + null
+                                        latest.copy(
+                                            sort = sorts[(sorts.indexOf(latest.sort) + 1).coerceAtLeast(0) % sorts.size],
+                                        )
+                                    }
                                     "gameMode" -> {
                                         val modes = listOf(null, "SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")
                                         latest.copy(
@@ -1773,7 +1777,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
             actionId = "detail",
             dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
-            dataValue = if (matched == null && current != null) {
+            dataValue = if (matched == null && current != null && current.kind != TargetKind.TEMPORARY) {
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
             } else null,
         )
@@ -1783,9 +1787,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 player = player,
                 slot = layout.itemSlots[options.size + 1],
                 material = Material.RECOVERY_COMPASS,
-                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET_DISTANCE),
                 actionId = "distance",
-                dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
+                dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET_DISTANCE),
                 dataValue = displayDistance(current?.minimumDistance, current?.maximumDistance),
             )
         }
@@ -1803,7 +1807,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
      */
     private fun renderTargetDetail(player: Player, route: MenuRoute): InventoryMenuView {
         val spec = effectiveTargetSpec(route)
-            ?: TargetSpec(TargetKind.NEARBY_ENTITIES, detailed = true)
+            ?: TargetSpec(TargetKind.NEARBY_ENTITIES)
         val role = CommandSettingRole.fromRoute(route.payload[ROLE])
         // 内包位置は単一限定のときだけ上限を隠し、内包役割は上限非編集の
         // 既存契約（targetLimitEditable）へ従います。
@@ -1820,6 +1824,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 TargetSort.NEAREST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_NEAREST
                 TargetSort.FURTHEST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_FURTHEST
                 TargetSort.RANDOM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_RANDOM
+                null -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET
             })
             "gameMode" -> spec.gameMode
             "tag" -> spec.tag
@@ -1827,7 +1832,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
         val rows = listOf(
             "entityType" to Triple(Material.SPAWNER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, "edit"),
-            "distance" to Triple(Material.RECOVERY_COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, "edit"),
+            "distance" to Triple(Material.RECOVERY_COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET_DISTANCE, "edit"),
             "range" to Triple(Material.COMPARATOR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, "edit"),
             "limit" to Triple(Material.BUNDLE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT, "edit"),
             "sort" to Triple(Material.HOPPER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT, "cycle"),

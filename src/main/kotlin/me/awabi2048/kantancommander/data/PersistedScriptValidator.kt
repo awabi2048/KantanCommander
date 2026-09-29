@@ -140,7 +140,8 @@ object PersistedScriptValidator {
 
     private fun validateTarget(spec: JsonObject, path: String, errors: MutableList<String>) {
         requireEnum(spec, "kind", path, enumNames<TargetKind>(), errors)
-        requireEnum(spec, "sort", path, enumNames<TargetSort>(), errors)
+        // sort は未指定（省略・null）を許容します。未指定は種別の既定順です。
+        optionalEnum(spec, "sort", path, enumNames<TargetSort>(), errors)
         listOf(
             "entityType", "gameMode", "tag", "name", "tempName",
         ).forEach { optionalString(spec, it, path, errors) }
@@ -148,11 +149,11 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalInteger(spec, "limit", path, errors)
-        optionalBoolean(spec, "detailed", path, errors)
         // issue #35-3: 旧FIXED_ENTITYの個体識別欄は撤去しました。
         // 旧保存データの kind 検証で隔離するため、欄自体の検証は不要です。
-        // 領域・探索基準は撤去しました。旧保存データは互換読み込みせず破損として隔離します。
-        listOf("region", "searchOrigin").forEach { field ->
+        // 領域・探索基準・詳細表示フラグは撤去しました。旧保存データは互換読み込みせず
+        // 破損として隔離します。detailed は操作層の状態として保存値へ残しません。
+        listOf("region", "searchOrigin", "detailed").forEach { field ->
             if (spec.has(field) && !spec[field].isJsonNull) {
                 errors += "$path/$field: 廃止された項目です"
             }

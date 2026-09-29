@@ -48,22 +48,22 @@ object SettingPresets {
     /** 対象プリセットの正規仕様を返します。付近系は初回距離5で設定します。 */
     fun targetSpecFor(preset: TargetPreset): TargetSpec = when (preset) {
         TargetPreset.NEARBY_PLAYERS ->
-            TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = NEARBY_DISTANCE_DEFAULT)
-        TargetPreset.MYWORLD_PLAYERS -> TargetSpec(TargetKind.ALL_PLAYERS)
-        TargetPreset.NEAREST_PLAYER -> TargetSpec(TargetKind.NEAREST_PLAYER)
+            TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = NEARBY_DISTANCE_DEFAULT, sort = TargetSort.NEAREST)
+        TargetPreset.MYWORLD_PLAYERS -> TargetSpec(TargetKind.ALL_PLAYERS, sort = TargetSort.NEAREST)
+        TargetPreset.NEAREST_PLAYER -> TargetSpec(TargetKind.NEAREST_PLAYER, sort = TargetSort.NEAREST)
         TargetPreset.NEARBY_ENTITIES ->
-            TargetSpec(TargetKind.NEARBY_ENTITIES, maximumDistance = NEARBY_DISTANCE_DEFAULT)
+            TargetSpec(TargetKind.NEARBY_ENTITIES, maximumDistance = NEARBY_DISTANCE_DEFAULT, sort = TargetSort.NEAREST)
     }
 
     /**
      * 対象設定がプリセットの正規内容と一致する場合だけプリセットを返します。
      *
      * 詳細フィルター等で正規内容から外れた場合はnullを返し、選択済み表示にしません。
-     * 「詳細設定」として編集した指定（detailed）は値が一致しても
-     * プリセットへ一致させません。
+     * 「詳細設定」を選んだかどうかは保存値ではなく操作層の入室記録で判定するため、
+     * この関数は値の形状だけを見ます。
      */
     fun matchTargetPreset(spec: TargetSpec?): TargetPreset? {
-        if (spec == null || spec.detailed) return null
+        if (spec == null) return null
         return when (spec.kind) {
             TargetKind.NEARBY_PLAYERS -> TargetPreset.NEARBY_PLAYERS.takeIf { isNearbyPresetShape(spec) }
             TargetKind.ALL_PLAYERS -> TargetPreset.MYWORLD_PLAYERS.takeIf { isBareShape(spec) }
@@ -77,11 +77,12 @@ object SettingPresets {
      * 付近系プリセットの形状です。距離以外の絞り込みがあれば正規内容から外れます。
      *
      * 並び順の変更も詳細設定のため、既定の最寄り順以外は一致させません。
-     * 最大距離だけはプリセットの既定値として持ち、変更後も再クリックで
-     * 距離編集へ戻すため形状に含めます。
+     * 最大距離はプリセットの既定値として必須です。距離なしの無制限指定は
+     * 「付近」の意味を持たないため、詳細側の指定として扱います。
      */
     private fun isNearbyPresetShape(spec: TargetSpec): Boolean =
-        spec.entityType == null && spec.minimumDistance == null &&
+        spec.maximumDistance != null &&
+            spec.entityType == null && spec.minimumDistance == null &&
             spec.limit == null && spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
@@ -122,20 +123,25 @@ object SettingPresets {
      * 詳細設定は @e（全実体）からの絞り込みとして表現します。既存指定は同じ
      * 意味のまま NEARBY_ENTITIES へ正規化し、プレイヤー系の種別は
      * type=player と単一体の既定（limit=1）へ分解します。一時変数参照・
-     * 未設定は条件なしの @e から開始します。値がプリセットへ一致しても
-     * 詳細指定の表示を維持するため detailed を立てます。
+     * 未設定は条件なしの @e から開始します。
+     * 詳細側を選んだ事実の表示維持は保存値ではなく操作層の入室記録が担います。
      */
     fun toDetailedSpec(spec: TargetSpec?): TargetSpec {
         if (spec == null || spec.kind == TargetKind.TEMPORARY) {
-            return TargetSpec(TargetKind.NEARBY_ENTITIES, detailed = true)
+            return TargetSpec(TargetKind.NEARBY_ENTITIES)
         }
         return spec.copy(
             kind = TargetKind.NEARBY_ENTITIES,
             entityType = spec.entityType ?: PLAYER_ENTITY_TYPE.takeIf { spec.kind in PLAYER_TARGET_KINDS },
             limit = spec.limit ?: 1.takeIf { spec.kind in SINGLE_TARGET_KINDS },
-            sort = if (spec.kind == TargetKind.RANDOM_PLAYER) TargetSort.RANDOM else spec.sort,
+            // 種別固有の並び順（@p=最寄り、@r=ランダム）は NEARBY_ENTITIES 化で
+            // 失われるため、未指定のときだけ既定値を明示して意味を保ちます。
+            sort = spec.sort ?: when (spec.kind) {
+                TargetKind.RANDOM_PLAYER -> TargetSort.RANDOM
+                TargetKind.NEAREST_PLAYER, TargetKind.NEAREST_ENTITY -> TargetSort.NEAREST
+                else -> null
+            },
             tempName = null,
-            detailed = true,
         )
     }
 
@@ -144,11 +150,11 @@ object SettingPresets {
         PositionPreset.CONTROL_BLOCK -> PositionSpec(PositionKind.DISK)
         PositionPreset.NEAREST_PLAYER -> PositionSpec(
             PositionKind.TARGET,
-            target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            target = TargetSpec(TargetKind.NEAREST_PLAYER, sort = TargetSort.NEAREST),
         )
         PositionPreset.NEARBY_PLAYERS -> PositionSpec(
             PositionKind.TARGET,
-            target = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = NEARBY_DISTANCE_DEFAULT),
+            target = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = NEARBY_DISTANCE_DEFAULT, sort = TargetSort.NEAREST),
         )
         // 初回選択時はメンバー用スポーンを設定します。
         PositionPreset.MYWORLD_SPAWN ->
@@ -185,7 +191,7 @@ object SettingPresets {
     fun facingSpecFor(preset: FacingPreset): FacingSpec = when (preset) {
         FacingPreset.NEAREST_PLAYER -> FacingSpec(
             FacingKind.TARGET,
-            target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            target = TargetSpec(TargetKind.NEAREST_PLAYER, sort = TargetSort.NEAREST),
         )
         FacingPreset.COORDINATES -> FacingSpec(FacingKind.COORDINATES)
         FacingPreset.NUMERIC -> FacingSpec(FacingKind.ROTATION)

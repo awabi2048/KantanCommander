@@ -106,9 +106,21 @@ class TargetRangeValidationTest {
     }
 
     @Test
-    fun `persisted negative extents and detailed flag are accepted`() {
+    fun `persisted detailed flag is rejected`() {
+        // detailed は操作層だけの状態です。保存値へ残った旧データは破損として隔離します。
         val root = persistedRoot(
-            """{"kind": "NEARBY_ENTITIES", "sort": "NEAREST", "dx": -2.0, "dz": 0.5, "detailed": true}""",
+            """{"kind": "NEARBY_ENTITIES", "sort": "NEAREST", "detailed": true}""",
+        )
+        assertTrue(
+            PersistedScriptValidator.validate(root)
+                .any { it.contains("/detailed") },
+        )
+    }
+
+    @Test
+    fun `persisted negative extents are accepted`() {
+        val root = persistedRoot(
+            """{"kind": "NEARBY_ENTITIES", "dx": -2.0, "dz": 0.5}""",
         )
         assertTrue(PersistedScriptValidator.validate(root).isEmpty())
     }
