@@ -4329,7 +4329,7 @@ sealed interface DisplayValue {
         val staySeconds: String,
         val fadeOutSeconds: String,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> = listOf(
+        fun valueRows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
                 fadeInSeconds,
@@ -4353,7 +4353,7 @@ sealed interface DisplayValue {
     data class Duration(
         val seconds: String,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> = listOf(
+        fun valueRows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ACTIONBAR_DURATION),
                 seconds,
@@ -4371,7 +4371,7 @@ sealed interface DisplayValue {
     ) : DisplayValue {
         // 5値を5行へ分けると行ピッチが半減して縦に重なるため、3軸は範囲1行へ
         // まとめます。表示時間タブと同一形状になり、既存の複数行配置に収まります。
-        override fun rows(player: Player): List<TimingRow> = listOf(
+        fun valueRows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_SPREAD),
                 listOf(deltaX, deltaY, deltaZ).joinToString(" / "),
@@ -4386,7 +4386,7 @@ sealed interface DisplayValue {
         val position: DisplayValue?,
         val facing: DisplayValue?,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> = buildList {
+        fun valueRows(player: Player): List<TimingRow> = buildList {
             position?.let {
                 add(TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION), it.render(player)))
             }
@@ -4404,7 +4404,7 @@ sealed interface DisplayValue {
         val property: DisplayValue,
         val value: DisplayValue,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> = listOf(
+        fun valueRows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA),
                 property.render(player),
@@ -4421,7 +4421,7 @@ sealed interface DisplayValue {
         val mode: DisplayValue,
         val range: DisplayValue,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> = listOf(
+        fun valueRows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION),
                 mode.render(player),
@@ -4439,7 +4439,7 @@ sealed interface DisplayValue {
         val positionKind: PositionKind?,
         val operation: SoundOperation,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> = buildList {
+        fun valueRows(player: Player): List<TimingRow> = buildList {
             add(TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 targetKind?.let { displayTarget(it).render(player) }
@@ -4463,7 +4463,7 @@ sealed interface DisplayValue {
         val pitch: String,
         val category: String,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> {
+        fun valueRows(player: Player): List<TimingRow> {
             return when (operation) {
                 SoundOperation.PLAY -> listOf(
                     TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND), sound.ifBlank {
@@ -4496,7 +4496,7 @@ sealed interface DisplayValue {
     data class ParticleDisplay(
         val targetKind: TargetKind?,
     ) : DisplayValue {
-        override fun rows(player: Player): List<TimingRow> = listOf(
+        fun valueRows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 targetKind?.let { displayTarget(it).render(player) }
@@ -4529,20 +4529,23 @@ sealed interface DisplayValue {
      * 意味ごとの行へ分けて表示できる値を返します。
      *
      * Inventory GUIは行ごとをLoreのデータ行へ分け、Gesture GUIは複数行
-     * レイアウトへ通します。単一行で十分な値はnullを返します。
+     * レイアウトへ通します。複合行を持つ値はこの関数だけが出口であり、
+     * 空行はnullへ正規化します。行ビルダーの名前をvalueRowsへ分離したのは、
+     * 同名overrideだと各値の実装へ直接dispatchされてこの正規化を素通りするためです。
+     * 単一行で十分な値はnullを返します。
      */
     fun rows(player: Player): List<TimingRow>? = when (this) {
-        is Timing -> rows(player)
-        is Duration -> rows(player)
-        is ParticleParameters -> rows(player)
-        is EntityPropertySetting -> rows(player)
-        is VariableRandomRange -> rows(player)
-        is Location -> rows(player).takeIf { it.isNotEmpty() }
-        is SoundTargetPosition -> rows(player)
-        is SoundSetting -> rows(player)
-        is ParticleDisplay -> rows(player)
+        is Timing -> valueRows(player)
+        is Duration -> valueRows(player)
+        is ParticleParameters -> valueRows(player)
+        is EntityPropertySetting -> valueRows(player)
+        is VariableRandomRange -> valueRows(player)
+        is Location -> valueRows(player)
+        is SoundTargetPosition -> valueRows(player)
+        is SoundSetting -> valueRows(player)
+        is ParticleDisplay -> valueRows(player)
         else -> null
-    }
+    }.takeIf { !it.isNullOrEmpty() }
 }
 
 data class EditorField(
