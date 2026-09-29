@@ -703,10 +703,12 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `entity scope exposes the target tab only for entity variables`() {
-        // #22: 対象は ENTITY scope でのみ表示します。
+    fun `entity scope embeds the target row inside the scope screen`() {
+        // #22: 対象は ENTITY scope でのみ意味を持ち、独立タブではなく
+        // scope画面内の「対象」行から編集します（タブ列の上限を超えないため）。
         val entity = CommandType.VARIABLE.newNode().apply { params["scope"] = VariableScope.ENTITY.name }
-        assertTrue(CommandSettingsModel.visibleFields(entity).map { it.key }.contains("target"))
+        assertTrue(CommandSettingsModel.visibleFields(entity).map { it.key }.none { it == "target" })
+        assertEquals("scope", CommandSettingsModel.visibleAttentionFieldKey(entity, "target"))
         assertEquals(
             CommandSettingEditor.TARGET,
             CommandSettingsModel.descriptor(entity, "target").editor,

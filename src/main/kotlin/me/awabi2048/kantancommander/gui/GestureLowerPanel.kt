@@ -365,7 +365,8 @@ class GestureLowerPanel(
                 childScreenId = childScreenId,
             )
         }
-        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
+        val attentionByTab = attention.fieldKeysByNode[node.id].orEmpty()
+        val attentionFields = attentionByTab.keys
         val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
         if (field == null) {
             return finishSettingChoicesChildHtml(
@@ -428,7 +429,7 @@ class GestureLowerPanel(
         val selectedDetail = (pageChoices + bottomChoices).firstOrNull {
             it.selected && it.effectiveInteractionMode == GestureSettingInteractionMode.SELECT_AND_DETAILS
         }
-        val warning = attentionWarning(player, node, fieldKey, attentionFields)
+        val warning = attentionWarning(player, node, fieldKey, attentionByTab[fieldKey])
         val detailHint = selectedDetail
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
         val detail = when {
@@ -754,7 +755,8 @@ class GestureLowerPanel(
             DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, GestureChoicePane.PARENT.backX, GestureChoicePane.PARENT.backWidth)
             return finishSettingChoicesParent(nodes)
         }
-        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
+        val attentionByTab = attention.fieldKeysByNode[node.id].orEmpty()
+        val attentionFields = attentionByTab.keys
         val canDuplicate = script?.let {
             GraphEditor.canDuplicate(it.graph, node.id, plugin.graphLimits().maximumNodeCount)
         } == true
@@ -777,7 +779,7 @@ class GestureLowerPanel(
                         if (tabTextColor == null) it else it.color(tabTextColor)
                     },
                     selected = tabSelected,
-                    attentionHover = if (fieldAttention) attentionWarningHover(player, node, field.key) else null,
+                    attentionHover = if (fieldAttention) attentionWarningHover(player, node, field.key, attentionByTab[field.key]) else null,
                     background = Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(tabSelected)),
                 )
             },
@@ -844,7 +846,7 @@ class GestureLowerPanel(
             }
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_RECLICK_APPLY) }
         } else null
-        val warning = attentionWarning(player, node, fieldKey, attentionFields)
+        val warning = attentionWarning(player, node, fieldKey, attentionByTab[fieldKey])
         val detailHint = selectedDetail
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
         DeclarativeSettings.descriptionSection(
@@ -2056,15 +2058,12 @@ class GestureLowerPanel(
             )
             return finishSettings(nodes)
         }
-        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
+        val attentionByTab = attention.fieldKeysByNode[node.id].orEmpty()
+        val attentionFields = attentionByTab.keys
         val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
             ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
-        // 実行位置タブはタブ列から抽出して固定行へ置くため、上限検査の対象外にします。
-        // 通常タブ列だけが6枠の物理配置を共有します。
-        val columnTabCount = fields.count { it.key != EXECUTION_POSITION_FIELD_KEY }
-        check(columnTabCount <= SETTINGS_TAB_MAX) {
-            "設定タブは${SETTINGS_TAB_MAX}個以内で定義してください: ${node.type}=$columnTabCount"
-        }
+        // タブ列の枠数上限はSettingTabSetの生成で保証されるため、ここでは検査しません。
+        // 実行位置タブだけはタブ列から抽出して固定行へ配置します。
         DeclarativeSettings.tabsSection(
             nodes,
             frame,
@@ -2078,7 +2077,7 @@ class GestureLowerPanel(
                         if (tabTextColor == null) it else it.color(tabTextColor)
                     },
                     selected = tabSelected,
-                    attentionHover = if (fieldAttention) attentionWarningHover(player, node, field.key) else null,
+                    attentionHover = if (fieldAttention) attentionWarningHover(player, node, field.key, attentionByTab[field.key]) else null,
                     background = Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(tabSelected)),
                 )
             },
@@ -2179,7 +2178,7 @@ class GestureLowerPanel(
             }
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_RECLICK_APPLY) }
         } else null
-        val warning = attentionWarning(player, node, field.key, attentionFields)
+        val warning = attentionWarning(player, node, field.key, attentionByTab[field.key])
         val detailHint = selectedDetail
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
         DeclarativeSettings.descriptionSection(
@@ -3622,13 +3621,19 @@ class GestureLowerPanel(
      * 統一します。キーの選択はCommandSettingsModelへ集約し、表示側でコマンド型の
      * 分岐や入力値の解析を行わないようにします。
      */
+    /**
+     * 要確認タブの警告文を、検証が指したフィールドキーから解決します。
+     *
+     * 内包項目（ENTITYスコープの対象→scopeタブ等）はタブキーと検証キーが
+     * 異なるため、警告文言はタブではなく検証キー側で決めます。
+     */
     internal fun attentionWarning(
         player: Player,
         node: CommandNode,
         fieldKey: String,
-        attentionFields: Set<String>,
-    ): String? = if (fieldKey in attentionFields) {
-        KcI18n.text(player, CommandSettingsModel.incompleteWarningKey(node, fieldKey))
+        validationFieldKeys: Set<String>?,
+    ): String? = if (!validationFieldKeys.isNullOrEmpty()) {
+        KcI18n.text(player, CommandSettingsModel.attentionWarningKey(node, fieldKey, validationFieldKeys))
     } else {
         null
     }
@@ -3638,9 +3643,10 @@ class GestureLowerPanel(
         player: Player,
         node: CommandNode,
         fieldKey: String,
+        validationFieldKeys: Set<String>?,
     ): GestureGuiHoverText =
         singleLineHover(
-            KcI18n.text(player, CommandSettingsModel.incompleteWarningKey(node, fieldKey)),
+            KcI18n.text(player, CommandSettingsModel.attentionWarningKey(node, fieldKey, validationFieldKeys.orEmpty())),
             x = HOVER_SLOT_X,
             y = HOVER_SLOT_Y,
         )
@@ -4142,12 +4148,14 @@ class GestureLowerPanel(
             "location:position" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION)
             "location:facing" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING)
             "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
+            "scope:target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
             else -> context
         }
         val effectiveContext = when {
             parentId == "location:position" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION)
             parentId == "location:facing" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING)
             parentId == "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
+            parentId == "scope:target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
             else -> childContext
         }
         val configured = settingChoiceConfigured(node, effectiveContext, fieldKey, choice)
@@ -4321,6 +4329,9 @@ class GestureLowerPanel(
                 CommandSettingsModel.isFieldConfigured(node, "facing", context.role)
             id == "location:position" -> node.temporaryLocationPositionSpec != null
             id == "location:facing" -> node.temporaryLocationFacingSpec != null
+            // ENTITYスコープ変数の対象編集入口です。選択状態は持たず、
+            // 対象指定の有無が設定済み枠として現れます。
+            id == "scope:target" -> CommandSettingsModel.isFieldConfigured(node, "target", context.role)
             // 再生対象・再生位置は編集入口のため選択状態を持ちません。
             // 設定済みの空色枠だけが状態を表します。
             id == "sound-target" -> CommandSettingsModel.isFieldConfigured(
@@ -4761,25 +4772,54 @@ class GestureLowerPanel(
                 explicitSelected(node, fieldKey, context.role, ValueType.parse(node.string(key, ValueType.NUMBER.name)) == type),
             )
         }
-        GestureSettingScreen.VARIABLE_SCOPE -> listOf(
-            SettingChoice(
-                "variableScope:${VariableScope.EXECUTION.name}",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION),
-                explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.EXECUTION.name),
-            ),
-            SettingChoice(
-                "variableScope:${VariableScope.WORLD.name}",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD),
-                explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.WORLD.name),
-            ),
+        GestureSettingScreen.VARIABLE_SCOPE -> buildList {
+            add(
+                SettingChoice(
+                    "variableScope:${VariableScope.EXECUTION.name}",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION),
+                    explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.EXECUTION.name),
+                ),
+            )
+            add(
+                SettingChoice(
+                    "variableScope:${VariableScope.WORLD.name}",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD),
+                    explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.WORLD.name),
+                ),
+            )
             // #22: ENTITY scope は事前DEFINEなしで対象直結のため、選択肢に出します。
             // 通常の対象形式と文字列の変数名で操作します。
-            SettingChoice(
-                "variableScope:${VariableScope.ENTITY.name}",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_ENTITY),
-                explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.ENTITY.name),
-            ),
-        )
+            add(
+                SettingChoice(
+                    "variableScope:${VariableScope.ENTITY.name}",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_ENTITY),
+                    explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.ENTITY.name),
+                ),
+            )
+            // ENTITYスコープの対象はタブ上限を超えないよう、独立タブではなく
+            // この画面の編集入口から開きます。location:position等と同じく、
+            // 子は通常の対象選択木をそのまま再利用します。
+            if (node.variableScope() == VariableScope.ENTITY) {
+                add(
+                    SettingChoice(
+                        "scope:target",
+                        labeled(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                            node.targetSpec?.kind?.let { targetKindLabel(player, it) },
+                        ),
+                        selected = false,
+                        interactionMode = GestureSettingInteractionMode.DETAILS_ONLY,
+                        children = targetChoices(
+                            node,
+                            context.copy(role = CommandSettingRole.NODE_TARGET),
+                            player,
+                            detailVisited = detailVisited,
+                        ),
+                    ),
+                )
+            }
+        }
         GestureSettingScreen.VARIABLE_OPERATION -> {
             val type = runCatching { ValueType.valueOf(node.string("type", ValueType.NUMBER.name)) }
                 .getOrDefault(ValueType.NUMBER)
@@ -6206,9 +6246,7 @@ class GestureLowerPanel(
         const val SETTING_DETAIL_INPUT_GAP = 0.02
         // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
         // タブの高さ0.10に対してピッチ0.11を確保し、意図された0.01の余白を維持します。
-        // 上限は通常タブ列だけに適用し、固定行へ抽出する実行位置タブは数えません。
-        const val SETTINGS_TAB_MAX = 6
-        /** 固定行へ抽出する実行位置タブのフィールドキーです。上限検査から除外します。 */
+        /** 固定行へ抽出する実行位置タブのフィールドキーです。枠数の対象外です。 */
         const val EXECUTION_POSITION_FIELD_KEY = "executionPosition"
         const val SETTINGS_TAB_CENTER_X = -0.7975
         const val SETTINGS_TAB_WIDTH = 0.47

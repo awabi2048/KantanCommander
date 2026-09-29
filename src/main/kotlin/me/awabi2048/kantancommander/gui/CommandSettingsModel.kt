@@ -186,6 +186,35 @@ data class CommandSettingDescriptor(
 )
 
 /**
+ * ジェスチャー設定のタブ列です。
+ *
+ * タブ列は6枠の物理配置しか持たず、超過タブを受け取った描画側は例外でしか
+ * 扱えませんでした。上限をこの型の生成で保証することで、描画APIは上限違反の
+ * 集合を型として受け取れない（到達不能な実行時検査を持たない）設計にします。
+ * 超過はパラメータ組合せの追加でしか起き得ず、全組合せの網羅テストが
+ * 違反を実行時より先に検出します。
+ */
+class SettingTabSet private constructor(
+    fields: List<EditorField>,
+) : List<EditorField> by fields {
+    companion object {
+        /** タブ列が共有する物理配置の枠数です。 */
+        const val TAB_MAX = 6
+
+        /** タブ列から切り離して固定行へ配置するため、枠数の対象外とする項目です。 */
+        const val UNCAPPED_FIELD_KEY = "executionPosition"
+
+        fun of(node: CommandNode, fields: List<EditorField>): SettingTabSet {
+            val cappedCount = fields.count { it.key != UNCAPPED_FIELD_KEY }
+            require(cappedCount <= TAB_MAX) {
+                "設定タブは${TAB_MAX}個以内で定義してください: type=${node.type} count=$cappedCount fields=${fields.map { it.key }}"
+            }
+            return SettingTabSet(fields)
+        }
+    }
+}
+
+/**
  * コマンド型とフィールド名から、両GUIが共有する編集経路を解決します。
  * ここへ新しい設定項目を追加すれば、表示側が「専用選択で編集」を描画でき、
  * インベントリGUIのルートとジェスチャーGUIの選択画面が同じ役割を受け取ります。
@@ -612,8 +641,10 @@ object CommandSettingsModel {
      */
     fun isVariableFieldVisible(node: CommandNode, fieldKey: String): Boolean {
         if (fieldKey in setOf("scope", "operation", "name")) return true
-        // #22: 対象は ENTITY scope でのみ表示します。
-        if (fieldKey == "target") return node.variableScope() == VariableScope.ENTITY
+        // #22: ENTITYスコープの対象はタブ上限（6枠）を超えないよう、独立タブではなく
+        // scope画面内の「対象」行から編集します。descriptor・保存・検証の "target"
+        // キーはそのまま維持し、タブ列としては出しません。
+        if (fieldKey == "target") return false
         val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
             .getOrDefault(VariableOperation.DEFINE)
         if (fieldKey == "source") return operation == VariableOperation.COPY
@@ -683,8 +714,8 @@ object CommandSettingsModel {
      * タブを増やさず、選択中のタブの現在値欄へ3項目をまとめて表示します。値の結合は
      * 表示専用の意味型へ閉じ込め、各画面が独自の文字列フォーマットを持たないようにします。
      */
-    fun gestureVisibleFields(node: CommandNode): List<EditorField> =
-        visibleFields(node).filter { field ->
+    fun gestureVisibleFields(node: CommandNode): SettingTabSet =
+        SettingTabSet.of(node, visibleFields(node).filter { field ->
             // エンティティ操作の詳細（タグ一覧・attribute値・設定値）は
             // 子画面で編集するため、タブ列には出しません。タブ列が選択で
             // 増減すると表示と経路がずれるため、対象・項目・実行位置に固定します。
@@ -771,18 +802,48 @@ object CommandSettingsModel {
             } else {
                 field
             }
+        })
+
+    /**
+     * 設定項目の未完了警告文言キーを返します。
+     *
+     * 警告キーの網羅はテストで担保しますが、網羅漏れが実行時に設定画面全体の
+     * 構築失敗へ直結しないよう、未定義の項目は汎用警告へ退避して原因だけを
+     * ログへ残します。エラー文で画面を閉じさせるのではなく、要確認表示だけを
+     * 出せる設計にします。
+     */
+    fun incompleteWarningKey(node: CommandNode, fieldKey: String): LocalizationKey<String> =
+        warningKeyForField(node, fieldKey) ?: run {
+            java.util.logging.Logger.getLogger("KantanCommander").warning(
+                "未定義の設定警告キーです: type=${node.type}, field=$fieldKey",
+            )
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_FIELD
         }
 
     /**
-     * 下部画面の設定タブへ表示する、未完了警告の固定キーを返します。
+     * 要確認タブの警告文言を、検証が指したフィールドキーから解決します。
      *
-     * 検証エラーの文言や保存値から表示文字列を組み立てると、同じタブでも
-     * エラーの種類によって表示が揺れ、ローカライズ契約も画面側へ漏れます。
-     * そのため、画面で編集できる設定項目ごとに、コマンド型とfieldKeyの
-     * 組み合わせをこの表で固定します。実際の文言はCC-Systemの型付きキーから
-     * 解決し、タブ単位で常に同じ警告を表示します。
+     * タブへ内包される項目（ENTITYスコープの対象→scopeタブ等）は検証キー側が
+     * 固有の警告を持つため先に解決し、タブの警告キーへは解決できなかった
+     * 検証キー（sneaking等の内訳キー）だけが流れます。どちらでも解決
+     * できない場合はincompleteWarningKeyの汎用退避へ委ねます。
      */
-    fun incompleteWarningKey(node: CommandNode, fieldKey: String): LocalizationKey<String> {
+    fun attentionWarningKey(
+        node: CommandNode,
+        tabFieldKey: String,
+        validationFieldKeys: Set<String>,
+    ): LocalizationKey<String> =
+        validationFieldKeys.sorted().firstNotNullOfOrNull { warningKeyForField(node, it) }
+            ?: incompleteWarningKey(node, tabFieldKey)
+
+    /**
+     * 項目ごとの警告文言キーの全射表です。
+     *
+     * 検証が返すフィールドキーと表示タブのどちらでも解決を試みられるよう、
+     * 未対応キーは例外ではなく null を返します。呼び出し側は検証キー→タブキー→
+     * 汎用警告の順で退避先を選びます。
+     */
+    internal fun warningKeyForField(node: CommandNode, fieldKey: String): LocalizationKey<String>? {
         // issue #26: 実行位置タブの注意表示です。専用警告キーを使います。
         if (fieldKey == "executionPosition") {
             return KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EXECUTION_POSITION
@@ -792,13 +853,13 @@ object CommandSettingsModel {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "destination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DESTINATION
                 "destinationFacing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DESTINATION_FACING
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.GIVE_ITEM -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GIVE_TARGET
                 "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GIVE_ITEM
                 "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_COUNT
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.ENTITY_ACTION -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
@@ -807,12 +868,12 @@ object CommandSettingsModel {
                 "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
                 "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
                 "motionX", "motionY", "motionZ" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MOTION
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.ENTITY_OPERATION -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 EntityDataPath.PARAM_PATH -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY_DATA
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.PLACE_ITEM -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
@@ -822,7 +883,7 @@ object CommandSettingsModel {
                 "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_COUNT
                 "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
                 "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.DISPLAY_TEXT -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISPLAY_TARGET
@@ -830,31 +891,33 @@ object CommandSettingsModel {
                 "text", "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TEXT
                 "fadeInSeconds", "staySeconds", "fadeOutSeconds" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DURATION
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.WAIT -> when (fieldKey) {
                 "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_WAIT
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.SUMMON_ENTITY -> when (fieldKey) {
                 "summonEntity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY
                 "summonData" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY_DATA
                 "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAGS
                 "summonPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SUMMON_POSITION
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.PLAY_SOUND -> when (fieldKey) {
                 "soundOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
                 "soundTargetPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_TARGET_POSITION
                 "soundSetting" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_SETTING
                 "soundScope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_SCOPE
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.PARTICLE -> when (fieldKey) {
                 "particleDisplay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DISPLAY
                 "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
                 "particleParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
-                else -> undefinedWarningKey(node, fieldKey)
+                // 対象由来の表示位置は検証が "position" で報告します。
+                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                else -> null
             }
             CommandType.PARTICLE_GEOMETRY -> when (fieldKey) {
                 "particleDisplay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DISPLAY
@@ -862,27 +925,28 @@ object CommandSettingsModel {
                 "geometrySettings" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GEOMETRY_SETTINGS
                 "particleDensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
                 "geometryEnd" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GEOMETRY_SETTINGS
-                else -> undefinedWarningKey(node, fieldKey)
+                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                else -> null
             }
             CommandType.FIREWORK_LAUNCH -> when (fieldKey) {
                 "fireworkPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SUMMON_POSITION
                 "fireworkContents" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_FIREWORK_CONTENTS
                 "burstHeight" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BURST_HEIGHT
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.APPLY_EFFECT -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EFFECT
                 "level" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_LEVEL
                 "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SECONDS
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.CAMERA_SHAKE -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "intensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_INTENSITY
                 "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SECONDS
                 "shakeType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SHAKE_TYPE
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.BLOCK_OPERATION -> when (fieldKey) {
                 "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_OPERATION
@@ -890,7 +954,7 @@ object CommandSettingsModel {
                 "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
                 "from" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_FROM
                 "to" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_TO
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             // 建造物読み込みは名前・回転・反転・位置の警告を示します。
             // 位置系はブロック操作と同じ警告キーを再利用します。
@@ -898,7 +962,7 @@ object CommandSettingsModel {
                 "structure" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK
                 "rotation", "mirror" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_OPERATION
                 "structurePlace" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             // issue #24: 群操作の警告を示します。群名・操作・軸入力は汎用警告を
             // 再利用し、対象・pivot は既存の位置系警告を使います。
@@ -909,35 +973,34 @@ object CommandSettingsModel {
                 "pivot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
                 "moveX", "moveY", "moveZ", "rotateX", "rotateY", "rotateZ" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.ENTITY_DELETE -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.CONDITION -> when (fieldKey) {
                 "inverted" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_INVERTED
                 "kind" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION_KIND
                 // subject別の絞り込みフィールドです。visibleFields で表示される
-                // 全項目を網羅しないと undefinedWarningKey が例外を投げ、
-                // 設定パネル全体の構築が失敗します。
+                // 全項目の網羅はテストで担保します。
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION_POSITION
                 "variable" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "condition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.DISK_CALL -> when (fieldKey) {
                 "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
                 // 呼び出し設定の未完了も、ディスク指定と同じ警告面で示します。
                 "diskCallSettings" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             // issue #8: 「値を返す」は変数由来またはリテラル値のどちらかを返します。
             CommandType.RETURN_VALUE -> when (fieldKey) {
                 "sourceScope", "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.VARIABLE -> when (fieldKey) {
                 "operation", "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
@@ -952,7 +1015,7 @@ object CommandSettingsModel {
                 "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
                 "entityId", "sound", "soundParameters", "volume", "effect", "level", "seconds" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.TEMP_SET -> when (fieldKey) {
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
@@ -963,20 +1026,20 @@ object CommandSettingsModel {
                 "range", "value", "location", "x", "y", "z", "yaw", "item", "block", "entity",
                 "entityId" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             CommandType.FOR_START -> when (fieldKey) {
                 "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_REPEAT_COUNT
-                else -> undefinedWarningKey(node, fieldKey)
+                else -> null
             }
             // 折り畳みノードの警告文言は折り畳み前の種別と共用します。
-            CommandType.FOLDED_FOR -> incompleteWarningKey(node.copy(type = CommandType.FOR_START), fieldKey)
-            CommandType.FOLDED_IF -> incompleteWarningKey(node.copy(type = CommandType.CONDITION), fieldKey)
+            CommandType.FOLDED_FOR -> warningKeyForField(node.copy(type = CommandType.FOR_START), fieldKey)
+            CommandType.FOLDED_IF -> warningKeyForField(node.copy(type = CommandType.CONDITION), fieldKey)
             CommandType.MERGE,
             CommandType.FOR_END,
             CommandType.BREAK,
             CommandType.CONTINUE,
-            -> undefinedWarningKey(node, fieldKey)
+            -> null
         }
     }
 
@@ -1042,6 +1105,11 @@ object CommandSettingsModel {
                 "entityId", "entity" -> "entity"
                 else -> validationFieldKey
             }
+            CommandType.VARIABLE -> when (validationFieldKey) {
+                // ENTITYスコープの対象はscopeタブへ内包するため、検証結果も同じタブへ投影します。
+                "target" -> "scope"
+                else -> validationFieldKey
+            }
             // 詳細タブを持たないため、検証結果は設定対象タブへ投影します。
             CommandType.ENTITY_OPERATION -> when (validationFieldKey) {
                 EntityDataPath.PARAM_PATH,
@@ -1055,9 +1123,6 @@ object CommandSettingsModel {
         }
         return gestureVisibleFields(node).firstOrNull { it.key == visibleKey }?.key
     }
-
-    private fun undefinedWarningKey(node: CommandNode, fieldKey: String): Nothing =
-        error("未定義の設定警告キーです: type=${node.type}, field=$fieldKey")
 
     fun descriptor(node: CommandNode, fieldKey: String): CommandSettingDescriptor {
         // issue #26: 実行位置はコマンド横断の共通設定項目です。表示可否は
@@ -1295,6 +1360,14 @@ object CommandSettingsModel {
             node.clearConfigured(key)
         } else {
             node.markConfigured(key)
+        }
+        // ENTITYスコープを離れるときは、編集入口がなくなる対象指定を残しません。
+        // 対象はscope画面内の「対象」行から編集するため、スコープ変更時にここで除去します。
+        if (node.type == CommandType.VARIABLE && key == "scope" &&
+            value != VariableScope.ENTITY.name
+        ) {
+            node.targetSpec = null
+            node.clearConfigured("target")
         }
         if ((node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) &&
             key == ParticleSettings.PARAM_PARTICLE
@@ -1884,6 +1957,17 @@ object CommandSettingsModel {
             "block", "sound", "effect" -> typedValueConfigured(node, fieldKey)
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
             "condition" -> conditionDetailConfigured(node)
+            // ENTITYスコープの変数は対象指定が必須のため、対象まで含めて設定済みとします。
+            // 対象自体はscope画面内の「対象」行から編集します。scope値が既定値の
+            // まま（未操作）の場合は他項目と同じく未設定です。
+            "scope" -> {
+                val value = node.params["scope"]
+                value != null && value.isNotBlank() &&
+                    (value != node.type.defaults["scope"] ||
+                        node.isExplicitlyConfigured(configuredFieldKey("scope", effectiveRole))) &&
+                    (node.variableScope() != VariableScope.ENTITY ||
+                        isTargetSpecConfigured(node.targetSpec))
+            }
             else -> {
                 val value = node.params[fieldKey] ?: return false
                 value.isNotBlank() &&

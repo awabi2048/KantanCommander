@@ -212,20 +212,12 @@ internal object CommandSettingsSlotPolicy {
     private val extendedFieldSlots = listOf(
         10, 11, 12, 19, 20, 21, 28, 29, 30, 31, 32, 33, 34, 37, 38, 39, 40, 41, 42,
     )
-    private val variableSlots = mapOf(
-        "operation" to 19,
-        "name" to 20,
-        "type" to 21,
-        "changeMode" to 28,
-        "value" to 29,
-    )
     private val forSlots = mapOf(
         "count" to 20,
     )
 
     fun slots(type: CommandType, fieldKeys: List<String>): List<Int> {
         val dedicated = when (type) {
-            CommandType.VARIABLE -> variableSlots
             CommandType.FOR_START -> forSlots
             else -> null
         }

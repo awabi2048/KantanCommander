@@ -340,8 +340,15 @@ internal object GestureSharedOperationPolicy {
  * 解析して意味を推測しないよう、この集約が唯一の受け渡し経路になります。
  */
 data class GestureAttentionState(
-    /** ノードID → そのノードで要確認となっている表示上の設定タブ（fieldKey）の集合。 */
-    val fieldKeysByNode: Map<UUID, Set<String>> = emptyMap(),
+    /**
+     * ノードID → そのノードで要確認となっている表示上の設定タブ（fieldKey）ごとの
+     * 検証フィールドキー集合です。
+     *
+     * 内包項目（ENTITYスコープの対象→scopeタブ等）ではタブキーと検証キーが
+     * 一致しないため、警告文言の解決にはタブキーではなく検証キーを保持します。
+     * タブの強調にはキー集合、警告文には各タブの検証キーを使います。
+     */
+    val fieldKeysByNode: Map<UUID, Map<String, Set<String>>> = emptyMap(),
     /** プログラムタイマー（スクリプト全体設定）が要確認か。旧保存の従来欄用に維持します。 */
     val timer: Boolean = false,
     /** issue #7 の起動方法（スクリプト全体設定）が要確認か。 */
@@ -909,6 +916,9 @@ class GestureSequenceEditor(
                 "KantanCommander GUIの${operation}に失敗しました",
                 failure,
             )
+        } else {
+            // 例外でない画面状態の不整合も、発生条件を追跡できるよう操作名を記録します。
+            plugin.logger.warning("KantanCommander GUIの${operation}で画面状態の不整合を検出しました")
         }
     }
 
@@ -1112,9 +1122,11 @@ class GestureSequenceEditor(
                     .flatMap { error ->
                         error.fieldKeys.mapNotNull { fieldKey ->
                             CommandSettingsModel.visibleAttentionFieldKey(node, fieldKey)
+                                ?.let { it to fieldKey }
                         }
                     }
-                    .toSet()
+                    .groupBy({ it.first }, { it.second })
+                    .mapValues { it.value.toSet() }
             }
         return GestureAttentionState(
             fieldKeysByNode = fieldKeysByNode,
@@ -1815,7 +1827,7 @@ class GestureSequenceEditor(
         }
         if (childDepth > 1 && parentScreenId !in existingChildIds) {
             // 祖先子画面が先に閉じられた場合、その先だけは積めません。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            notifyReopenHint(player, "子画面の階層復元（祖先画面が閉じています）")
             resetSettingChildFailure(player, ownerId)
             return
         }
@@ -1830,7 +1842,7 @@ class GestureSequenceEditor(
             )
         } else {
             // 深い画面の親ビューはpushSettingFrameで遷移前に構築して渡します。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+            notifyReopenHint(player, "子画面の階層復元（深さ2以降の親ビューがありません）")
             resetSettingChildFailure(player, ownerId)
             return
         }
@@ -8370,6 +8382,20 @@ class GestureSequenceEditor(
             // #22: ENTITY scope は事前DEFINEなしの別契約ですが、選択肢に出します。
             // 通常の対象形式と文字列の変数名で操作できるようにします。
             GestureSettingScreen.VARIABLE_SCOPE -> {
+                // ENTITYスコープの対象は独立タブを持たず、この画面の「対象」行から
+                // 通常の対象選択画面へ進みます。保存先は従来どおりNODE_TARGETです。
+                if (encoded == "scope:target") {
+                    pushSettingFrame(
+                        player,
+                        GestureSettingFrame(
+                            settingContext.copy(role = CommandSettingRole.NODE_TARGET),
+                            fieldKey,
+                            GestureSettingScreen.TARGET,
+                        ),
+                        encoded,
+                    )
+                    return
+                }
                 if (group != "variableScope") return
                 val scope = runCatching { VariableScope.valueOf(value) }.getOrNull() ?: return
                 if (updateSettingNode(player, settingContext) {
