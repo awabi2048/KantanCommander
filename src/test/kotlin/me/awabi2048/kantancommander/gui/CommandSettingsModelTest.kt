@@ -576,6 +576,9 @@ class CommandSettingsModelTest {
             // issue #10: 召喚時個別設定は summonData_<propertyId> の複数キーへ
             // 分散保存される複合項目のため、単一params値の探査は対象外です。
             "summonData",
+            // ブロック状態も blockState_<propertyId> の複数キーへ分散保存される
+            // 複合項目のため、単一params値の探査は対象外です。
+            "blockState",
         )
         for (type in CommandType.entries) {
             val keys = CommandSettingsModel.visibleFields(type.newNode()).map { it.key }.toSet()

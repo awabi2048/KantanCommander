@@ -5,6 +5,7 @@ import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.BlockDataSchema
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -257,6 +258,8 @@ object CommandSettingsModel {
             node.params.remove(key)
             node.clearConfigured(key)
         }
+        // 一時変数参照ではブロック状態を適用できないため、参照選択時に除去します。
+        if (binding.referenceKey == "blockTempRef") BlockDataSchema.clear(node)
         setTemporaryReference(node, binding.referenceKey, null)
         node.markConfigured(binding.referenceKey)
     }
@@ -279,6 +282,7 @@ object CommandSettingsModel {
             node.params.remove(key)
             node.clearConfigured(key)
         }
+        if (binding.referenceKey == "blockTempRef") BlockDataSchema.clear(node)
         setTemporaryReference(node, binding.referenceKey, name.trim())
         node.markConfigured(binding.referenceKey)
     }
@@ -726,7 +730,11 @@ object CommandSettingsModel {
                 )
             val randomRange = node.type in setOf(CommandType.VARIABLE, CommandType.TEMP_SET) &&
                 field.key == "range"
-            !entityDetail && !randomRange
+            // ブロック状態はジェスチャーGUIでは設置ブロックタブのカードから
+            // 子画面へ入るため、タブ列には出しません。Inventory GUIの
+            // 直接編集行はvisibleFields側に残します。
+            val blockState = node.type == CommandType.BLOCK_OPERATION && field.key == "blockState"
+            !entityDetail && !randomRange && !blockState
         }.map { field ->
             val randomNumberMode = field.key == "changeMode" &&
                 node.type in setOf(CommandType.VARIABLE, CommandType.TEMP_SET) &&
@@ -1303,6 +1311,13 @@ object CommandSettingsModel {
             setTemporaryReference(node, binding.referenceKey, null)
             node.clearConfigured(binding.referenceKey)
         }
+        // 設置ブロックの種類変更時は、新しいブロックへ適用できない古い
+        // ブロック状態を残しません。同じ値の再保存では保持します。
+        if (node.type == CommandType.BLOCK_OPERATION && key == "block" &&
+            node.params[key] != value
+        ) {
+            BlockDataSchema.clear(node)
+        }
         node.params[key] = value
         if (value.isBlank()) {
             node.clearConfigured(key)
@@ -1817,6 +1832,10 @@ object CommandSettingsModel {
             // 表示フィールド名 "summonData" の汎用分岐では判定できません。
             // 1件でも有効な個別値があれば設定済みとします。
             "summonData" -> EntityDataSchema.summonDataEntries(node.params).isNotEmpty()
+            // ブロック状態は blockState_<propertyId> の形式で保存されるため、
+            // 表示フィールド名 "blockState" の汎用分岐では判定できません。
+            // 1件でも有効な値があれば設定済みとします。
+            "blockState" -> BlockDataSchema.entries(node.params).isNotEmpty()
             "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
             "executionPosition" -> isPositionSpecConfigured(node.executionPositionSpec)
             // issue #11: 建造物名・回転・反転・設置位置の明示設定です。

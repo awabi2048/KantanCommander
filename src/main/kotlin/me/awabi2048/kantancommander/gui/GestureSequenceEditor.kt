@@ -49,6 +49,8 @@ import me.awabi2048.kantancommander.gui.declarative.SettingsActionCard
 import me.awabi2048.kantancommander.gui.declarative.UpperViewportRect
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
+import me.awabi2048.kantancommander.model.BlockDataSchema
+import me.awabi2048.kantancommander.model.BlockStateValueKind
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -403,6 +405,12 @@ enum class GestureSettingScreen {
     /** パーティクル詳細データの編集子画面です。詳細入力欄を行として出します。 */
     PARTICLE_DETAIL,
     BLOCK_OPERATION,
+    /** 設置ブロックタブの経路起点です。候補一覧を持たず、ブロック状態子画面の親フレームとして使います。 */
+    BLOCK,
+    /** ブロック状態（properties）の一覧子画面です。 */
+    BLOCK_STATE_ROOT,
+    /** ブロック状態の有限候補子画面です。対象propertyは経路記憶で保持します。 */
+    BLOCK_STATE_VALUE,
     /** issue #11: 建造物名・回転・反転の選択画面です。 */
     STRUCTURE_NAME,
     STRUCTURE_ROTATION,
@@ -4113,6 +4121,40 @@ class GestureSequenceEditor(
             player,
             GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.PARTICLE_DETAIL),
             "particle-detail",
+        )
+        return true
+    }
+
+    /**
+     * 「ブロック状態の設定」カードから一覧子画面を開きます。
+     *
+     * block項目はテキスト入力タブのため通常の設定経路を持ちません。
+     * openParticleDetailChildと同型で、項目の親フレーム（BLOCK）を立てて
+     * から一覧フレーム（BLOCK_STATE_ROOT）を積み、戻る操作で項目タブへ
+     * 戻れる構造にします。
+     * 一時変数参照・ブロック未設定・適用可能なpropertyが無い場合は開きません。
+     */
+    private fun openBlockStateChild(player: Player): Boolean {
+        val settingContext = state.settingContext ?: return false
+        val script = plugin.scripts.load(settingContext.scriptId) ?: return false
+        observedRevision = script.revision
+        val node = script.graph.nodes[settingContext.nodeId] ?: return false
+        if (node.type != CommandType.BLOCK_OPERATION) return false
+        if (!node.blockTempRef.isNullOrBlank()) return false
+        val material = CommandValueRules.placementMaterial(node.string("block")) ?: return false
+        val base = runCatching { material.createBlockData() }.getOrNull() ?: return false
+        if (BlockDataSchema.propertiesFor(base).isEmpty()) return false
+        val rootFrame = GestureSettingFrame(settingContext, "block", GestureSettingScreen.BLOCK)
+        if (state.settingRoute.firstOrNull()?.let {
+                it.fieldKey == "block" && it.screen == GestureSettingScreen.BLOCK
+            } != true
+        ) {
+            startSettingRoute(rootFrame)
+        }
+        pushSettingFrame(
+            player,
+            GestureSettingFrame(settingContext, "block", GestureSettingScreen.BLOCK_STATE_ROOT),
+            "block-state",
         )
         return true
     }
@@ -8158,6 +8200,140 @@ class GestureSequenceEditor(
                     return
                 }
             }
+            // 設置ブロックタブの経路起点は操作対象を持ちません。
+            // ブロック状態子画面からの戻り先としてのみ存在します。
+            GestureSettingScreen.BLOCK -> Unit
+            // ブロック状態の有限候補子画面です。選択肢ID自体にproperty IDを
+            // 含むため、経路記憶がずれていても保存先を誤りません。
+            GestureSettingScreen.BLOCK_STATE_VALUE -> {
+                if (group != "blockStateValue") return
+                val separator = value.indexOf(':')
+                if (separator <= 0) return
+                val propertyId = value.substring(0, separator)
+                val choice = value.substring(separator + 1)
+                val material = CommandValueRules.placementMaterial(node.string("block")) ?: return
+                val base = runCatching { material.createBlockData() }.getOrNull() ?: return
+                val property = BlockDataSchema.propertyFor(base, propertyId) ?: return
+                if (property.valueKind != BlockStateValueKind.ENUM) return
+                if (!BlockDataSchema.accepts(property, choice)) return
+                if (updateSettingNode(player, settingContext, configuredFields = setOf("blockState")) {
+                        CommandSettingsModel.setParameter(it, BlockDataSchema.stateKey(propertyId), choice)
+                    }) {
+                    showSettingScreen()
+                } else {
+                    notifySaveFailed()
+                }
+            }
+            // ブロック状態の一覧画面です。真偽値は選択経路を持たない
+            // 単純トグルのため1クリックで即時反転・保存します。整数は
+            // 行選択の記憶を経て連続クリックでDialog入力、有限候補は子画面の
+            // 選択肢で確定します（召喚時個別設定と同じ二段階契約）。
+            GestureSettingScreen.BLOCK_STATE_ROOT -> {
+                if (group == "blockState") {
+                    val material = CommandValueRules.placementMaterial(node.string("block"))
+                    val base = material?.let { runCatching { it.createBlockData() }.getOrNull() }
+                    val property = base?.let { BlockDataSchema.propertyFor(it, value) }
+                    if (property == null) {
+                        // ブロック種類の変更後に残った非対応項目は選択できません。
+                        plugin.logger.fine(
+                            "[KantanCommander] blockState選択を拒否しました: block=${node.string("block")} property=$value",
+                        )
+                        notifySaveFailed()
+                        return
+                    }
+                    // 真偽値はチェックボックスと同じく1クリックで反転・保存します。
+                    // 選択経路の記憶へは載せず、ON／OFFは背景色だけで表示します。
+                    if (property.valueKind == BlockStateValueKind.BOOLEAN) {
+                        val key = BlockDataSchema.stateKey(value)
+                        val toggled = BlockDataSchema.toggledBooleanValue(node.string(key))
+                        if (updateSettingNode(player, settingContext, configuredFields = setOf("blockState")) {
+                                CommandSettingsModel.setParameter(it, key, toggled)
+                            }) {
+                            showSettingScreen()
+                        } else {
+                            notifySaveFailed()
+                        }
+                        return
+                    }
+                    val consecutive = state.currentFrameSelectionId() == encoded
+                    if (!consecutive) {
+                        rememberSettingNode(encoded)
+                        showSettingScreen()
+                        return
+                    }
+                    rememberSettingNode(encoded)
+                    when (property.valueKind) {
+                        // 真偽値は上の即時反転で処理済みのため到達しません。
+                        BlockStateValueKind.BOOLEAN -> Unit
+                        BlockStateValueKind.INTEGER -> {
+                            val key = BlockDataSchema.stateKey(value)
+                            val fresh = plugin.scripts.load(settingContext.scriptId)
+                                ?.graph?.nodes?.get(settingContext.nodeId)
+                                ?: return
+                            val spec = CommandDialogSpecs.field(fresh, key)
+                                ?: return
+                            beginSettingInput(
+                                player,
+                                spec,
+                                fresh.string(key, ""),
+                            ) { raw ->
+                                val normalized = CommandDialogSpecs.normalize(key, raw)
+                                val current = plugin.scripts.load(settingContext.scriptId)
+                                    ?.graph?.nodes?.get(settingContext.nodeId)
+                                val latest = current?.let { CommandDialogSpecs.field(it, key) }
+                                    ?: return@beginSettingInput KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                                    )
+                                val validationError = latest.validateInput(normalized)
+                                if (validationError != null) {
+                                    KcI18n.text(player, validationError)
+                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf("blockState")) {
+                                        CommandSettingsModel.setParameter(it, key, normalized)
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else null
+                            }
+                        }
+                        // 有限候補は子画面の選択肢で確定し、行自体のクリックでは保存しません。
+                        // 対象propertyは経路末尾からの推測ではなくフレームへ明示します。
+                        BlockStateValueKind.ENUM -> {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext,
+                                    "block",
+                                    GestureSettingScreen.BLOCK_STATE_VALUE,
+                                    blockPropertyId = value,
+                                ),
+                                encoded,
+                            )
+                        }
+                    }
+                    return
+                }
+                // 一覧内でも有限候補の子選択肢IDが来た場合は一覧画面と同じ
+                // 保存経路で確定します（木の子要素へ直接触れた場合）。
+                if (group == "blockStateValue") {
+                    val separator = value.indexOf(':')
+                    if (separator <= 0) return
+                    val propertyId = value.substring(0, separator)
+                    val choice = value.substring(separator + 1)
+                    val material = CommandValueRules.placementMaterial(node.string("block")) ?: return
+                    val base = runCatching { material.createBlockData() }.getOrNull() ?: return
+                    val property = BlockDataSchema.propertyFor(base, propertyId) ?: return
+                    if (property.valueKind != BlockStateValueKind.ENUM) return
+                    if (!BlockDataSchema.accepts(property, choice)) return
+                    if (updateSettingNode(player, settingContext, configuredFields = setOf("blockState")) {
+                            CommandSettingsModel.setParameter(it, BlockDataSchema.stateKey(propertyId), choice)
+                        }) {
+                        showSettingScreen()
+                    } else {
+                        notifySaveFailed()
+                    }
+                    return
+                }
+            }
             // 配置先の切替えで要求対象が変わるため、スロットは既定値へ戻して
             // 不正な組合せを残しません。額縁は内容固定のためスロット欄を隠します。
             GestureSettingScreen.PLACE_DESTINATION -> {
@@ -9061,6 +9237,11 @@ class GestureSequenceEditor(
                 player.inventory.addItem(block.clone()).values.forEach { overflow ->
                     player.world.dropItemNaturally(player.location, overflow)
                 }
+            }
+            // 「ブロック状態の設定」カードです。項目タブへ親フレームを立ててから
+            // 一覧子画面へ進み、一時変数参照・ブロック未設定では開きません。
+            context.elementId == "lower-block-state" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                openBlockStateChild(player)
             }
             context.elementId == "lower-firework-preview" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return

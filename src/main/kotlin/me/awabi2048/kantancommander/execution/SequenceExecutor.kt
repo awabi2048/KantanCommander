@@ -7,6 +7,7 @@ import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.error.displayKey
+import me.awabi2048.kantancommander.model.BlockDataSchema
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -2246,6 +2247,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } else {
             CommandValueRules.placementMaterial(node.string("block"))
         } ?: return false
+        // 一時変数参照ではブロック状態を適用できません。直接値かつ状態の
+        // 指定がある場合だけ、保存されたpropertiesをBlockDataへ反映します。
+        val blockData = if (refTemp == null) {
+            val entries = BlockDataSchema.entries(node.params)
+            if (entries.isEmpty()) {
+                null
+            } else {
+                val base = runCatching { material.createBlockData() }.getOrNull() ?: return false
+                BlockDataSchema.apply(base, entries) ?: return false
+            }
+        } else null
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
                 // issue #26 の既定値（単一の実行起点）＋issue #29 の各位置へ実行します。
@@ -2260,7 +2272,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                             // 拡張コマンドブロックの位置は、setblockでも常に変更を拒否します。
                             error("placement is protected")
                         }
-                        location.block.setType(material, false)
+                        if (blockData != null) {
+                            location.block.setBlockData(blockData, false)
+                        } else {
+                            location.block.setType(material, false)
+                        }
                     }.isSuccess)
                 }
                 attempts.overall
@@ -2297,7 +2313,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 for (x in minX..maxX) {
                     for (y in minY..maxY) {
                         for (z in minZ..maxZ) {
-                            world.getBlockAt(x, y, z).setType(material, false)
+                            val target = world.getBlockAt(x, y, z)
+                            if (blockData != null) {
+                                target.setBlockData(blockData, false)
+                            } else {
+                                target.setType(material, false)
+                            }
                         }
                     }
                 }

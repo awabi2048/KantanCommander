@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.FoldedGraphs
 import me.awabi2048.kantancommander.data.GraphLimits
+import me.awabi2048.kantancommander.model.BlockDataSchema
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -2482,9 +2483,21 @@ class VanillaDatapackExporter(
 
     /** ブロック操作固有の位置指定を、座標または実行位置へ静的に展開します。 */
     private fun blockOperationCommand(node: CommandNode): String {
-        val block = node.blockTempRef?.takeIf(String::isNotBlank)
-            ?.let { temporaryMarker(it, "block") }
-            ?: node.string("block")
+        val tempBlock = node.blockTempRef?.takeIf(String::isNotBlank)
+        val block = if (tempBlock != null) {
+            temporaryMarker(tempBlock, "block")
+        } else {
+            // 直接値のときだけ、保存されたpropertiesを
+            // `id[key=value]` 形式でブロックIDへ連結します。
+            val entries = BlockDataSchema.entries(node.params)
+            if (entries.isEmpty()) {
+                node.string("block")
+            } else {
+                "${node.string("block")}[${
+                    entries.toSortedMap().entries.joinToString(",") { "${it.key}=${it.value}" }
+                }]"
+            }
+        }
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
                 val position = effectiveBlockPosition(node)

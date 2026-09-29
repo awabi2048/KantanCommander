@@ -313,6 +313,17 @@ fun GestureEditorState.currentSummonPropertyId(): String? =
         ?.summonPropertyId
 
 /**
+ * ブロック状態の有限候補子画面が対象とするproperty IDを現在フレームから返します。
+ *
+ * 設置ブロックには項目パス欄がないため、表示対象は保存値や経路末尾の候補IDから
+ * 推測できません。フレームへ明示的に保持したproperty IDだけを根拠にします。
+ */
+fun GestureEditorState.currentBlockPropertyId(): String? =
+    settingRoute.lastOrNull()
+        ?.takeIf { it.screen == GestureSettingScreen.BLOCK_STATE_VALUE }
+        ?.blockPropertyId
+
+/**
  * 設定木の直下項目を押した後の共通遷移です。
  *
  * 一回目のクリックは選択状態の更新だけを行い、子を持つ同じ項目を再クリック
@@ -395,6 +406,8 @@ data class GestureSettingFrame(
     val screen: GestureSettingScreen,
     /** 召喚時個別設定の有限候補子画面が対象とする項目IDです。 */
     val summonPropertyId: String? = null,
+    /** ブロック状態の有限候補子画面が対象とするproperty IDです。 */
+    val blockPropertyId: String? = null,
 )
 
 /** 構造化設定エディターとジェスチャー画面の意味画面を結ぶ共通変換です。 */

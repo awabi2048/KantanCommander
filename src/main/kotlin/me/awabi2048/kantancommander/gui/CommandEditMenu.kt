@@ -22,6 +22,8 @@ import com.awabi2048.ccsystem.api.gui.MenuSimpleFormRequest
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.model.BlockDataSchema
+import me.awabi2048.kantancommander.model.BlockStateValueKind
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.applyCalledDisk
@@ -364,6 +366,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (field == "summonData" && node.type == CommandType.SUMMON_ENTITY) {
                             return@MenuActionHandler MenuActionResult.Success(
                                 MenuUpdate.Navigate(choiceRoute(context.route, SUMMON_DATA_ROOT_ID)),
+                            )
+                        }
+                        // ブロック状態の一覧画面へ遷移します。一時変数参照では
+                        // 状態を適用できないため、無効項目のまま操作を受け付けません。
+                        if (field == "blockState" && node.type == CommandType.BLOCK_OPERATION) {
+                            if (!node.blockTempRef.isNullOrBlank()) {
+                                return@MenuActionHandler MenuActionResult.Ignored
+                            }
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, BLOCK_STATE_ROOT_ID)),
                             )
                         }
                         // 旧equipのスロット選択はPLACE_ITEMへ移行したため削除します。
@@ -975,6 +987,100 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         runtime.register(
             InventoryMenuDefinition(
                 SequenceEditorMenu.OWNER,
+                BLOCK_STATE_ROOT_ID,
+                renderer = { renderBlockStateRoot(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "page" to entityPageAction(),
+                    "select" to MenuActionHandler { context ->
+                        val propertyId = context.payload["property"]
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (current.type != CommandType.BLOCK_OPERATION ||
+                            !current.blockTempRef.isNullOrBlank()
+                        ) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        // ブロック種類の変更後に残った非対応項目は選択できません。
+                        // 検証層でも静的対象外として検出します。
+                        val base = blockStateBaseData(current)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val property = BlockDataSchema.propertyFor(base, propertyId)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val key = BlockDataSchema.stateKey(propertyId)
+                        when (property.valueKind) {
+                            // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
+                            BlockStateValueKind.BOOLEAN -> {
+                                if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
+                                        val toggled = BlockDataSchema.toggledBooleanValue(it.string(key))
+                                        CommandSettingsModel.setParameter(it, key, toggled)
+                                    }) {
+                                    return@MenuActionHandler MenuActionResult.Rejected(
+                                        KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                                    )
+                                }
+                                MenuActionResult.Success(MenuUpdate.Refresh)
+                            }
+                            BlockStateValueKind.ENUM -> MenuActionResult.Success(
+                                MenuUpdate.Navigate(
+                                    choiceRoute(context.route, BLOCK_STATE_VALUE_ID)
+                                        .copy(payload = context.route.payload + ("blockProperty" to propertyId)),
+                                ),
+                            )
+                            BlockStateValueKind.INTEGER -> {
+                                val fresh = node(context.route)
+                                    ?: return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
+                                showFieldForm(context.player, context.route, key, fresh)
+                                MenuActionResult.Success(MenuUpdate.None)
+                            }
+                        }
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                BLOCK_STATE_VALUE_ID,
+                renderer = { renderBlockStateValue(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val choice = context.payload["choice"]
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val propertyId = context.route.payload["blockProperty"]
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (current.type != CommandType.BLOCK_OPERATION ||
+                            !current.blockTempRef.isNullOrBlank()
+                        ) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        // 有限候補のみ選択適用します。真偽値・整数は別経路で編集します。
+                        val base = blockStateBaseData(current)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val property = BlockDataSchema.propertyFor(base, propertyId)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (property.valueKind != BlockStateValueKind.ENUM ||
+                            !BlockDataSchema.accepts(property, choice)
+                        ) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
+                                CommandSettingsModel.setParameter(it, BlockDataSchema.stateKey(propertyId), choice)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
                 PLACE_DESTINATION_ID,
                 renderer = { renderPlaceDestinations(it.player, it.route) },
                 actions = mapOf(
@@ -1502,19 +1608,22 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     display.render(player),
                 )
             })
+            // 一時変数参照ではブロック状態を適用できないため、項目自体は残しつつ
+            // 共通の無効ポリシーで薄灰色へ変更し、理由は説明文へ残します。
+            val enabled = field.key != "blockState" || node.blockTempRef.isNullOrBlank()
             KcGui.menuEntry(
                 player = player,
                 slot = slots[index],
-                material = field.material,
+                material = if (enabled) field.material else DisabledGuiVisualPolicy.material,
                 name = KcI18n.text(player, field.label),
-                style = GuiNameStyle.PRIMARY,
+                style = if (enabled) GuiNameStyle.PRIMARY else GuiNameStyle.MUTED,
                 description = KcI18n.list(player, field.descriptionKey),
                 data = data,
-                actions = listOf(GuiMenuActionIntent.AnyClick(
+                actions = if (enabled) listOf(GuiMenuActionIntent.AnyClick(
                     actionId = "field",
                     label = KcI18n.text(player, field.actionKey),
                     payload = mapOf("field" to field.key),
-                )),
+                )) else emptyList(),
             )
         }.toMutableList()
         // 6行レイアウトに合わせ、選択肢があるべき場所が空欄になっている箇所は白の板ガラスで埋めます。
@@ -2205,6 +2314,93 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE)),
             elements,
         )
+    }
+
+    /**
+     * ブロック状態の一覧です。
+     *
+     * 対象ブロックが確定できる場合のみ適用可能な項目を表示します。
+     * property名はsetblock文法と同じMinecraft識別子をそのまま表示し、
+     * 現在値は各行へ添え、値の編集は項目の型で振り分けます。
+     */
+    private fun renderBlockStateRoot(player: Player, route: MenuRoute): InventoryMenuView {
+        val currentNode = node(route)
+        val base = currentNode?.let { blockStateBaseData(it) }
+        val entries = currentNode?.let { BlockDataSchema.entries(it.params) }.orEmpty()
+        data class BlockStateRow(val selection: String, val material: Material, val label: String, val value: String?)
+        val options = base?.let { BlockDataSchema.propertiesFor(it) }.orEmpty().map { property ->
+            BlockStateRow(
+                property.id,
+                when (property.valueKind) {
+                    BlockStateValueKind.BOOLEAN -> Material.LIME_DYE
+                    BlockStateValueKind.ENUM -> Material.BOOK
+                    BlockStateValueKind.INTEGER -> Material.PAPER
+                },
+                property.id,
+                entries[property.id],
+            )
+        }
+        val pageSize = 8
+        val pageCount = ((options.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["blockStatePage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        val rows = options.drop(page * pageSize).take(pageSize)
+        val layout = ChoiceMenuLayoutPolicy.layout((rows.size + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
+        val elements = rows.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.material,
+                option.label,
+                "select",
+                mapOf("property" to option.selection),
+                dataLabel = option.label,
+                dataValue = option.value,
+            )
+        }.toMutableList()
+        appendEntityPager(player, layout, elements, rows.size, page, pageCount, "blockStatePage")
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_STATE)),
+            elements,
+        )
+    }
+
+    /**
+     * ブロック状態の有限候補の一覧です。
+     *
+     * 候補はsetblock文法と同じMinecraft識別子をそのまま表示し、
+     * 内部数値を直接入力させません。対象propertyは経路で受け取ります。
+     */
+    private fun renderBlockStateValue(player: Player, route: MenuRoute): InventoryMenuView {
+        val propertyId = route.payload["blockProperty"]
+        val options: List<String> = propertyId
+            ?.let { id -> node(route)?.let { blockStateBaseData(it) }?.let { base -> BlockDataSchema.propertyFor(base, id) } }
+            ?.takeIf { it.valueKind == BlockStateValueKind.ENUM }
+            ?.enumChoices.orEmpty()
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
+        val elements = options.mapIndexed { index, choice ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                Material.BOOK,
+                choice,
+                "select",
+                mapOf("choice" to choice),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE)),
+            elements,
+        )
+    }
+
+    /** 現在の設置ブロックの既定BlockDataを返します。未設定・解決不能時はnullです。 */
+    private fun blockStateBaseData(node: CommandNode): org.bukkit.block.data.BlockData? {
+        val material = CommandValueRules.placementMaterial(node.string("block")) ?: return null
+        return runCatching { material.createBlockData() }.getOrNull()
     }
 
     private fun settingsFields(node: CommandNode): List<EditorField> {
@@ -3763,6 +3959,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val ENTITY_PROPERTY_VALUE_ID = "entity_property_value"
         /** issue #10: 召喚時個別設定の一覧画面です。適用可能な項目だけを列挙します。 */
         private const val SUMMON_DATA_ROOT_ID = "summon_data_root"
+        private const val BLOCK_STATE_ROOT_ID = "block_state_root"
+        private const val BLOCK_STATE_VALUE_ID = "block_state_value"
         /** issue #10: 召喚時個別設定の有限候補の一覧画面です。対象項目は経路で受け取ります。 */
         private const val SUMMON_PROPERTY_VALUE_ID = "summon_property_value"
         private const val PLACE_DESTINATION_ID = "place_destination"
@@ -4535,6 +4733,15 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK,
             ) { displayTypedValue(it, "block") },
+            // ブロック状態（properties）の一覧画面への入口です。
+            // 一時変数参照時は設定できないため、設定画面では無効表示にします。
+            field(
+                "blockState",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_STATE,
+                Material.BOOK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_STATE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_STATE,
+            ) { displayBlockState(it) },
             field(
                 "position",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_POSITION,
@@ -5207,6 +5414,18 @@ private fun displayTagEntries(node: CommandNode): DisplayValue {
  */
 private fun displaySummonData(node: CommandNode): DisplayValue {
     val count = EntityDataSchema.summonDataEntries(node.params).size
+    if (count == 0) return displayUnset()
+    return displayLiteral(count.toString())
+}
+
+/**
+ * ブロック状態の表示です。
+ *
+ * 設定件数を値欄のリテラル表示に留め、Nameへ件数・内容を含めません。
+ * 項目ごとの値は一覧画面で編集します。
+ */
+private fun displayBlockState(node: CommandNode): DisplayValue {
+    val count = BlockDataSchema.entries(node.params).size
     if (count == 0) return displayUnset()
     return displayLiteral(count.toString())
 }

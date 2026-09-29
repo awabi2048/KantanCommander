@@ -34,8 +34,11 @@ import me.awabi2048.kantancommander.error.displayKey
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.item.KantanItemService
+import me.awabi2048.kantancommander.model.BlockDataSchema
+import me.awabi2048.kantancommander.model.BlockStateValueKind
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
@@ -398,6 +401,7 @@ class GestureLowerPanel(
                     PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
                 ),
                 summonPropertyId = summonSelectedPropertyId(state),
+                blockPropertyId = blockSelectedPropertyId(state),
             ),
             currentSelection,
         )
@@ -804,6 +808,7 @@ class GestureLowerPanel(
                     PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
                 ),
                 summonPropertyId = summonSelectedPropertyId(state),
+                blockPropertyId = blockSelectedPropertyId(state),
             ),
             state.currentFrameSelectionId(),
         )
@@ -2134,6 +2139,7 @@ class GestureLowerPanel(
                         PresetSelectionDisplay.detailVisitKey(field.key, settingContext.role),
                     ),
                     summonPropertyId = summonSelectedPropertyId(state),
+                blockPropertyId = blockSelectedPropertyId(state),
                 ),
                 state.currentFrameSelectionId(),
             )
@@ -2550,6 +2556,12 @@ class GestureLowerPanel(
                 nodes, frame, node, field.key, selectedSource, state.scriptId, player,
                 compact = false,
             )
+            // 「現在設定されているブロックを取得する」の直下に、ブロック状態
+            // 子画面への入口カードを置きます。一時変数参照・ブロック未設定時は
+            // 無効表示のまま残し、理由はホバーへ出します。
+            appendBlockStateCard(
+                nodes, frame, node, field.key, selectedSource, state.scriptId, player,
+            )
         } else if (heldMainHandSetting || dialogInputSetting) {
             val editVisualText = if (heldMainHandSetting) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
@@ -2936,6 +2948,64 @@ class GestureLowerPanel(
     }
 
     /**
+     * 「現在設定されているブロックを取得する」の直下に置く、ブロック状態
+     * 子画面への入口カードです。
+     *
+     * 一時変数参照・ブロック未設定のときもカード自体は残し、共通の無効
+     * ポリシーで薄灰色へ変更します。値や補足はラベルへ含めずホバーへ出します。
+     */
+    private fun appendBlockStateCard(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        node: CommandNode,
+        fieldKey: String,
+        source: CommandValueSource,
+        scriptId: java.util.UUID,
+        player: Player,
+    ) {
+        if (fieldKey != "block" || node.type != CommandType.BLOCK_OPERATION) return
+        val label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_BLOCK_STATE)
+        val descriptionLines = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_BLOCK_STATE_DESCRIPTION)
+            .filter(String::isNotBlank)
+        val disabledLines = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_BLOCK_STATE_DISABLED_TEMPORARY)
+            .filter(String::isNotBlank)
+        val enabled = source == CommandValueSource.LITERAL &&
+            typedValuePreviewConfigured(node, "block")
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-block-state",
+                label = Component.text(label).color(
+                    if (enabled) NamedTextColor.GOLD else DisabledChoiceVisualPolicy.textColor,
+                ),
+                background = Bukkit.createBlockData(
+                    if (enabled) Material.PURPLE_CONCRETE else DisabledGuiVisualPolicy.material,
+                ),
+                cx = TYPED_VALUE_PREVIEW_CENTER_X,
+                cy = BLOCK_STATE_CARD_CENTER_Y,
+                w = TYPED_VALUE_PREVIEW_WIDTH,
+                h = BLOCK_STATE_CARD_HEIGHT,
+                labelSize = 0.0043,
+                labelWidth = 180,
+                gestures = if (enabled) GestureGuiClickPolicy.CLICK else emptySet(),
+                guard = { _, _ ->
+                    plugin.scripts.load(scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                        CommandSettingsModel.temporaryValueSource(current, "block") == CommandValueSource.LITERAL &&
+                            typedValuePreviewConfigured(current, "block")
+                    } == true
+                },
+                hover = multiLineHover(
+                    if (enabled) descriptionLines else disabledLines,
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
+                ),
+                visualTag = "lower-block-state",
+            ),
+        )
+    }
+
+    /**
      * ITEM／BLOCK／SOUND／EFFECTの設定元を、既存の入力欄と同じ右下領域へ2分割で表示します。
      *
      * 直接値側はITEM／BLOCKならメインハンド、SOUND／EFFECTならDialogへ進みます。
@@ -3013,6 +3083,15 @@ class GestureLowerPanel(
             )
         }
         addTypedValuePreview(
+            node = node,
+            fieldKey = fieldKey,
+            source = selectedSource,
+            scriptId = scriptId,
+            player = player,
+            visuals = visuals,
+            elements = elements,
+        )
+        addBlockStateCard(
             node = node,
             fieldKey = fieldKey,
             source = selectedSource,
@@ -3351,6 +3430,67 @@ class GestureLowerPanel(
                 ?.takeUnless { it == Material.AIR } != null
             else -> false
         }
+
+    /**
+     * 「現在設定されているブロックを取得する」の直下に置く、ブロック状態
+     * 子画面への入口カードです（旧型経路）。
+     */
+    private fun addBlockStateCard(
+        node: CommandNode,
+        fieldKey: String,
+        source: CommandValueSource,
+        scriptId: java.util.UUID,
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+    ) {
+        if (fieldKey != "block" || node.type != CommandType.BLOCK_OPERATION) return
+        val label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_BLOCK_STATE)
+        val descriptionLines = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_BLOCK_STATE_DESCRIPTION)
+            .filter(String::isNotBlank)
+        val disabledLines = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_BLOCK_STATE_DISABLED_TEMPORARY)
+            .filter(String::isNotBlank)
+        val enabled = source == CommandValueSource.LITERAL &&
+            typedValuePreviewConfigured(node, "block")
+        addBlock(
+            visuals,
+            "lower-block-state-bg",
+            TYPED_VALUE_PREVIEW_CENTER_X,
+            BLOCK_STATE_CARD_CENTER_Y,
+            TYPED_VALUE_PREVIEW_WIDTH,
+            BLOCK_STATE_CARD_HEIGHT,
+            if (enabled) Material.PURPLE_CONCRETE else DisabledGuiVisualPolicy.material,
+            4,
+        )
+        addText(
+            visuals,
+            "lower-block-state",
+            TYPED_VALUE_PREVIEW_CENTER_X,
+            BLOCK_STATE_CARD_CENTER_Y,
+            0.0043,
+            180,
+            Component.text(label).color(
+                if (enabled) NamedTextColor.GOLD else DisabledChoiceVisualPolicy.textColor,
+            ),
+        )
+        elements += GestureGuiElement(
+            elementId = "lower-block-state",
+            bounds = rect(TYPED_VALUE_PREVIEW_CENTER_X, BLOCK_STATE_CARD_CENTER_Y, TYPED_VALUE_PREVIEW_WIDTH, BLOCK_STATE_CARD_HEIGHT),
+            acceptedGestures = if (enabled) GestureGuiClickPolicy.CLICK else emptySet(),
+            gestureGuard = { _, _ ->
+                plugin.scripts.load(scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                    CommandSettingsModel.temporaryValueSource(current, "block") == CommandValueSource.LITERAL &&
+                        typedValuePreviewConfigured(current, "block")
+                } == true
+            },
+            targetVisualId = "lower-block-state-bg",
+            hoverText = multiLineHover(
+                if (enabled) descriptionLines else disabledLines,
+                x = HOVER_SLOT_X,
+                y = HOVER_SLOT_Y,
+            ),
+        )
+    }
 
     /**
      * 操作不能な設定候補は、候補専用の共通ポリシーで無効色へ変更します。
@@ -3898,7 +4038,11 @@ class GestureLowerPanel(
         // 項目パス欄がないため、保存値や経路末尾からは推測せず、
         // 現在フレームへ保持した項目IDだけを根拠にします。
         summonPropertyId: String? = null,
-    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild, detailVisited, summonPropertyId)
+        // ブロック状態の有限候補子画面で表示するproperty IDです。
+        // 設置ブロックにも項目パス欄がないため、召喚時個別設定と同じく
+        // 現在フレームへ保持したproperty IDだけを根拠にします。
+        blockPropertyId: String? = null,
+    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild, detailVisited, summonPropertyId, blockPropertyId)
         .map { decorateSettingChoice(node, context, fieldKey, it, attentionFields) }
 
     private fun rawSettingTreeNodes(
@@ -3910,6 +4054,7 @@ class GestureLowerPanel(
         inChild: Boolean = false,
         detailVisited: Boolean = false,
         summonPropertyId: String? = null,
+        blockPropertyId: String? = null,
     ): List<GestureSettingTreeNode> = when (screen) {
         GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player, inChild, detailVisited)
@@ -3953,7 +4098,7 @@ class GestureLowerPanel(
             ),
         )
         GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player)
-        else -> settingChoices(node, context, screen, fieldKey, player, detailVisited, summonPropertyId)
+        else -> settingChoices(node, context, screen, fieldKey, player, detailVisited, summonPropertyId, blockPropertyId)
     }
 
     /**
@@ -3965,6 +4110,15 @@ class GestureLowerPanel(
      */
     internal fun summonSelectedPropertyId(state: GestureEditorState): String? =
         state.currentSummonPropertyId()
+
+    /**
+     * ブロック状態で選択中のproperty IDを現在フレームから復元します。
+     *
+     * 設置ブロックにも項目パス欄がないため、有限候補子画面の表示対象は
+     * 親画面の行選択をフレームへ明示的に保持します。
+     */
+    internal fun blockSelectedPropertyId(state: GestureEditorState): String? =
+        state.currentBlockPropertyId()
 
     /**
      * 生の選択肢へドメインの選択方式と値状態を付与します。
@@ -4206,6 +4360,24 @@ class GestureLowerPanel(
                 val raw = node.string(EntityDataSchema.summonDataKey(propertyId))
                 definition?.let { EntityPropertyChoicePolicy.isValueConfigured(it, raw) } == true
             }
+            // ブロック状態の選択状態です。値の有無で判定し、
+            // 有限候補の選択肢は現在の保存値との一致で判定します。
+            id.startsWith("blockStateValue:") -> {
+                val remainder = id.removePrefix("blockStateValue:")
+                val separator = remainder.indexOf(':')
+                if (separator <= 0) false
+                else {
+                    val propertyId = remainder.substring(0, separator)
+                    val choice = remainder.substring(separator + 1)
+                    node.string(BlockDataSchema.stateKey(propertyId)) == choice
+                }
+            }
+            id.startsWith("blockState:") -> {
+                // selectedは現在の操作経路、真偽値は背景色で表すため、
+                // 設定済み判定にはどちらも使いません。明示的なfalseも有効な保存値です。
+                val propertyId = id.removePrefix("blockState:")
+                node.params[BlockDataSchema.stateKey(propertyId)]?.isNotBlank() == true
+            }
             id.startsWith("equipmentSlot:") -> choice.selected &&
                 node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
                 CommandSettingsModel.isFieldConfigured(node, "slot")
@@ -4321,6 +4493,7 @@ class GestureLowerPanel(
             PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
         ),
         summonPropertyId = summonSelectedPropertyId(state),
+        blockPropertyId = blockSelectedPropertyId(state),
     )
 
     private fun settingChoices(
@@ -4331,6 +4504,7 @@ class GestureLowerPanel(
         player: Player,
         detailVisited: Boolean = false,
         summonPropertyId: String? = null,
+        blockPropertyId: String? = null,
     ): List<GestureSettingTreeNode> = when (screen) {
         GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
         GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
@@ -4380,6 +4554,16 @@ class GestureLowerPanel(
         // issue #10: 召喚時個別設定の一覧画面です。召喚種類が確定できる場合のみ
         // 適用可能な項目を表示し、和集合表示は行いません。
         GestureSettingScreen.SUMMON_DATA_ROOT -> summonDataRootChoices(node, player)
+        // 設置ブロックタブは入力欄・取得カード・一時変数切替が本体です。
+        // ブロック状態子画面の経路起点としてのみ使うため、候補行は持ちません。
+        GestureSettingScreen.BLOCK -> emptyList()
+        // ブロック状態の一覧画面です。対象ブロックが確定できる場合のみ
+        // 適用可能な項目を表示し、和集合表示は行いません。
+        GestureSettingScreen.BLOCK_STATE_ROOT -> blockStateRootChoices(node, player)
+        // ブロック状態の有限候補子画面です。保存値ではなく経路記憶の
+        // property IDから候補を生成します。不正なproperty IDでは
+        // 空にして、未知選択肢の保存経路を作りません。
+        GestureSettingScreen.BLOCK_STATE_VALUE -> blockStateValueChoices(node, blockPropertyId)
         // 召喚時個別設定の有限候補子画面です。召喚には項目パス欄がないため、
         // 保存値ではなく経路記憶の項目IDから候補を生成します。不正な項目IDでは
         // 空にして、未知選択肢の保存経路を作りません。
@@ -4922,6 +5106,90 @@ class GestureLowerPanel(
                 }
             }
         }
+    }
+
+    /**
+     * ブロック状態の一覧選択肢です。
+     *
+     * 召喚時個別設定と同じ階層・操作契約で、保存先だけを
+     * `blockState_<propertyId>` へ振り替えます。真偽値は1クリックの
+     * 単純トグル、有限候補は子画面、整数は連続クリック後のDialog入力です。
+     * property名・候補値はsetblock文法と同じMinecraft識別子をそのまま
+     * 表示し、値はdescription欄へ、選択枠（白）へは流用しません。
+     */
+    private fun blockStateRootChoices(node: CommandNode, player: Player): List<SettingChoice> {
+        val base = blockStateBaseData(node) ?: return emptyList()
+        val entries = BlockDataSchema.entries(node.params)
+        return buildList {
+            BlockDataSchema.propertiesFor(base).forEach { property ->
+                val current = entries[property.id]
+                when (property.valueKind) {
+                    BlockStateValueKind.BOOLEAN -> add(
+                        SettingChoice(
+                            "blockState:${property.id}",
+                            property.id,
+                            // ON/OFFは保存値の背景色表示に使い、操作選択として白枠へ流用しません。
+                            selected = false,
+                            description = current?.toBooleanStrictOrNull()?.let { enabled ->
+                                KcI18n.text(
+                                    player,
+                                    if (enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED
+                                    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
+                                )
+                            }.orEmpty(),
+                            interactionMode = GestureSettingInteractionMode.TOGGLE,
+                            toggleValue = current?.toBooleanStrictOrNull(),
+                        ),
+                    )
+                    BlockStateValueKind.ENUM -> add(
+                        GestureSettingTreeNode(
+                            id = "blockState:${property.id}",
+                            label = property.id,
+                            selected = false,
+                            description = current.orEmpty(),
+                            children = property.enumChoices.map { choice ->
+                                SettingChoice(
+                                    "blockStateValue:${property.id}:$choice",
+                                    choice,
+                                    current == choice,
+                                )
+                            },
+                        ),
+                    )
+                    BlockStateValueKind.INTEGER -> add(
+                        SettingChoice(
+                            "blockState:${property.id}",
+                            property.id,
+                            selected = false,
+                            description = current.orEmpty(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * ブロック状態の有限候補子画面の選択肢です。
+     *
+     * 経路記憶のproperty IDから現在のBlockData上の候補を生成します。
+     * ブロック変更で消えたpropertyでは空を返し、未知候補の保存経路を作りません。
+     */
+    private fun blockStateValueChoices(node: CommandNode, blockPropertyId: String?): List<SettingChoice> {
+        if (blockPropertyId.isNullOrBlank()) return emptyList()
+        val base = blockStateBaseData(node) ?: return emptyList()
+        val property = BlockDataSchema.propertyFor(base, blockPropertyId) ?: return emptyList()
+        if (property.valueKind != BlockStateValueKind.ENUM) return emptyList()
+        val current = node.string(BlockDataSchema.stateKey(property.id))
+        return property.enumChoices.map { choice ->
+            SettingChoice("blockStateValue:${property.id}:$choice", choice, current == choice)
+        }
+    }
+
+    /** 現在の設置ブロックの既定BlockDataを返します。未設定・解決不能時はnullです。 */
+    private fun blockStateBaseData(node: CommandNode): BlockData? {
+        val material = CommandValueRules.placementMaterial(node.string("block")) ?: return null
+        return runCatching { material.createBlockData() }.getOrNull()
     }
 
     /**
@@ -5990,6 +6258,10 @@ class GestureLowerPanel(
         const val TYPED_VALUE_PREVIEW_CENTER_Y = -0.17
         const val TYPED_VALUE_PREVIEW_WIDTH = 1.20
         const val TYPED_VALUE_PREVIEW_HEIGHT = 0.16
+        // ブロック状態カードは取得カードの直下へ置きます。下端はホバー
+        // スロット（-0.45）を侵さない範囲で最下部とします。
+        const val BLOCK_STATE_CARD_CENTER_Y = -0.33
+        const val BLOCK_STATE_CARD_HEIGHT = 0.12
         // 詳細・警告行は入力欄の上端から一定距離を空け、値行の計算結果が
         // 入力欄へ入り込む場合は値行ブロック全体を上へ移動します。
         const val SETTING_DETAIL_INPUT_GAP = 0.02

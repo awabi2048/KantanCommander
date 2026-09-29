@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.BlockDataSchema
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -1459,6 +1460,45 @@ object ExecutableScriptValidator {
         if (operation == null) errors += nodeError(node, path, setOf("operation"), "配置方式が不正です")
         if (node.blockTempRef.isNullOrBlank() && CommandValueRules.placementMaterial(node.string("block")) == null) {
             errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
+        }
+        // ブロック状態の検証です。一時変数参照では適用できないため不整合を
+        // 拒否し、直接値ではpropertyの存在・候補値・組み合わせを確認します。
+        val blockStates = BlockDataSchema.entries(node.params)
+        if (blockStates.isNotEmpty()) {
+            if (!node.blockTempRef.isNullOrBlank()) {
+                errors += nodeError(node, path, setOf("blockState"), "一時変数参照ではブロック状態を指定できません")
+            } else {
+                val material = CommandValueRules.placementMaterial(node.string("block"))
+                if (material != null) {
+                    val base = runCatching { material.createBlockData() }.getOrNull()
+                    var propsValid = true
+                    blockStates.forEach { (propertyId, value) ->
+                        when {
+                            propertyId !in BlockDataSchema.allIds() -> {
+                                errors += nodeError(node, path, setOf("blockState"), "ブロック状態が不正です: $propertyId")
+                                propsValid = false
+                            }
+                            base == null -> {
+                                // サーバー基盤が無い環境では型だけを静的に確認します。
+                                if (!BlockDataSchema.staticallyAccepted(propertyId, value)) {
+                                    errors += nodeError(node, path, setOf("blockState"), "ブロック状態の値が不正です: $propertyId=$value")
+                                    propsValid = false
+                                }
+                            }
+                            else -> {
+                                val property = BlockDataSchema.propertyFor(base, propertyId)
+                                if (property == null || !BlockDataSchema.accepts(property, value)) {
+                                    errors += nodeError(node, path, setOf("blockState"), "ブロック状態の値が不正です: $propertyId=$value")
+                                    propsValid = false
+                                }
+                            }
+                        }
+                    }
+                    if (propsValid && base != null && BlockDataSchema.apply(base, blockStates) == null) {
+                        errors += nodeError(node, path, setOf("blockState"), "ブロック状態の組み合わせが適用できません")
+                    }
+                }
+            }
         }
         when (operation) {
             // issue #26: コマンド固有位置が未設定のときは実行位置を既定値とします。
