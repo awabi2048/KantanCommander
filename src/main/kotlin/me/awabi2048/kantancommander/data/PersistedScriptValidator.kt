@@ -151,9 +151,11 @@ object PersistedScriptValidator {
         optionalInteger(spec, "limit", path, errors)
         // issue #35-3: 旧FIXED_ENTITYの個体識別欄は撤去しました。
         // 旧保存データの kind 検証で隔離するため、欄自体の検証は不要です。
-        // 領域・探索基準・詳細表示フラグは撤去しました。旧保存データは互換読み込みせず
-        // 破損として隔離します。detailed は操作層の状態として保存値へ残しません。
-        listOf("region", "searchOrigin", "detailed").forEach { field ->
+        // 領域・探索基準は撤去しました。意味を持つ旧保存データは互換読み込みせず
+        // 破損として隔離します。
+        // detailed（旧詳細表示フラグ）は操作層だけの状態で意味を持たないため、
+        // 旧保存データに残っていても読み込み時に黙って無視します。
+        listOf("region", "searchOrigin").forEach { field ->
             if (spec.has(field) && !spec[field].isJsonNull) {
                 errors += "$path/$field: 廃止された項目です"
             }

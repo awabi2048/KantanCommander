@@ -106,15 +106,13 @@ class TargetRangeValidationTest {
     }
 
     @Test
-    fun `persisted detailed flag is rejected`() {
-        // detailed は操作層だけの状態です。保存値へ残った旧データは破損として隔離します。
+    fun `persisted detailed flag is ignored`() {
+        // detailed は操作層だけの状態で意味を持ちません。保存値へ残った旧データは
+        // 破損扱いせず、読み込み時に黙って無視します。
         val root = persistedRoot(
-            """{"kind": "NEARBY_ENTITIES", "sort": "NEAREST", "detailed": true}""",
+            """{"kind": "NEARBY_ENTITIES", "dx": -2.0, "dz": 0.5, "detailed": true}""",
         )
-        assertTrue(
-            PersistedScriptValidator.validate(root)
-                .any { it.contains("/detailed") },
-        )
+        assertTrue(PersistedScriptValidator.validate(root).isEmpty())
     }
 
     @Test
