@@ -480,12 +480,14 @@ enum class MyworldSpawnKind {
 }
 
 /**
- * issue #4 の座標成分の意味付けです。スレッド指示により基準は `session.origin`
- * （制御ブロック位置の複製）に固定します。実行コンテキスト位置は基準にしません。
+ * issue #4 の座標成分の意味付けです。基準は PositionSpec.kind で決まり、
+ * COORDINATES／CAPTURED は `session.origin`（制御ブロック位置の複製）を、
+ * TEMPORARY は参照先の一時変数位置を基準にします。実行コンテキスト位置は基準にしません。
  *
  * - ABSOLUTE: 絶対値として扱います。従来の保存値と同じ意味です。
- * - RELATIVE: `~` 相当で、`session.origin` からの差分として扱います。
- * - LOCAL: `^` 相当で、`session.origin` の位置と向きを基準にした左・上・前として扱います。
+ *   値を省略した成分は基準位置の成分を継承します。
+ * - RELATIVE: `~` 相当で、基準からの差分として扱います。
+ * - LOCAL: `^` 相当で、基準の位置と向きを基準にした左・上・前として扱います。
  *   角度には基準が定義できないため使用できず、検証で拒否します。
  */
 enum class CoordinateSemantics {
@@ -557,8 +559,10 @@ data class PositionSpec(
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
     /**
-     * 成分ごとの解釈です。COORDINATES／CAPTURED の座標成分に RELATIVE／LOCAL を許し、
-     * yaw／pitch には ABSOLUTE／RELATIVE を許します。それ以外の種別・組合せは
+     * 成分ごとの解釈です。COORDINATES／CAPTURED では `session.origin` を基準とし、
+     * TEMPORARY では参照先の一時変数位置を基準として成分を解釈します。
+     * 座標成分に RELATIVE／LOCAL、角度に RELATIVE を許し、差分を取る成分は
+     * 有限値を必須とします。角度の LOCAL と、これら以外の種別への付与は
      * 検証で拒否します。既定は全 ABSOLUTE で従来の保存値と同じ意味です。
      */
     val semanticsX: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,

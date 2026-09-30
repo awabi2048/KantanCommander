@@ -5225,6 +5225,14 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
             ) { displayLiteral(it.string("property")) },
+            // 引数変数は詳細値の定義が要求する場合だけ表示されます。
+            field(
+                "propertyArg",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+            ),
             field(
                 "range",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
@@ -5290,6 +5298,18 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
             ) { displayLiteral(it.string("property")) })
+            // 引数を要求する詳細値では、参照元と同じscopeの引数変数名を入力します。
+            val argRequired = me.awabi2048.kantancommander.model.ValueProperties
+                .definition(node.string("property"))?.argType != null
+            if (argRequired) {
+                add(field(
+                    "propertyArg",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE,
+                    Material.NAME_TAG,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+                ))
+            }
         }
         if (mode == VariableChangeMode.RANDOM) {
             add(field("range", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, Material.COMPARATOR) {

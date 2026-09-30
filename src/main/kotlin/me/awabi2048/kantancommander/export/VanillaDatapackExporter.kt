@@ -1364,10 +1364,17 @@ class VanillaDatapackExporter(
                 "${position.y ?: error("location y is missing")} " +
                 "${position.z ?: error("location z is missing")}"
         }
-        PositionKind.TEMPORARY -> temporaryPositionCoordinates(
-            position.tempName?.takeIf(String::isNotBlank)
-                ?: error("temporary LOCATION source name is missing"),
-        )
+        PositionKind.TEMPORARY -> {
+            // 変数基準の相対・ローカル指定は実行層のみで扱い、黙って基準位置へ
+            // 変換しません。出力側でも明示的に拒否します。
+            if (position.hasNonAbsoluteSemantics()) {
+                error("relative/local position is not supported by vanilla export")
+            }
+            temporaryPositionCoordinates(
+                position.tempName?.takeIf(String::isNotBlank)
+                    ?: error("temporary LOCATION source name is missing"),
+            )
+        }
         PositionKind.DISK -> "~ ~ ~"
         PositionKind.TARGET -> error("temporary LOCATION target position is not supported")
         PositionKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn position is not supported by vanilla")

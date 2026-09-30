@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.SavedLocation
 import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -327,6 +328,47 @@ class TypedVariableValidationTest {
         assertTrue(
             ExecutableScriptValidator.validate(missingSource, variableDefinitions = definitions)
                 .any { it.message.contains("参照元変数が未定義") },
+        )
+    }
+
+    @Test
+    fun `property generation validates the argument variable`() {
+        val definitions = worldDefinitions(
+            "anchor" to TypedValue(ValueType.LOCATION, location = SavedLocation(0.0, 64.0, 0.0)),
+            "count" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
+        )
+        fun node(arg: String? = "anchor", property: String = "distance") = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "dist"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = "PROPERTY"
+            params["propertySource"] = "anchor"
+            params["property"] = property
+            if (arg != null) params["propertyArg"] = arg
+        }
+        // 引数変数が型一致で定義済みなら受理します。
+        assertFalse(
+            ExecutableScriptValidator.validate(node(), variableDefinitions = definitions)
+                .any { it.nodeId != null },
+        )
+        // 引数欠落は変数名不正として拒否します。
+        assertTrue(
+            ExecutableScriptValidator.validate(node(arg = null), variableDefinitions = definitions)
+                .any { it.fieldKeys == setOf("propertyArg") },
+        )
+        // 未定義名・型不一致もそれぞれ拒否します。
+        assertTrue(
+            ExecutableScriptValidator.validate(node(arg = "ghost"), variableDefinitions = definitions)
+                .any { it.message.contains("引数変数が未定義") },
+        )
+        assertTrue(
+            ExecutableScriptValidator.validate(node(arg = "count"), variableDefinitions = definitions)
+                .any { it.message.contains("引数変数の型が一致しません") },
+        )
+        // 引数を取らない詳細値への残存設定は拒否します。
+        assertTrue(
+            ExecutableScriptValidator.validate(node(property = "x"), variableDefinitions = definitions)
+                .any { it.message.contains("引数変数を取りません") },
         )
     }
 

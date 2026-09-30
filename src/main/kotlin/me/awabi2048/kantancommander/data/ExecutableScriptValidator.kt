@@ -1709,11 +1709,33 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
+        // 角度にLOCALは基準が定義できないため拒否します。成分別指定を許さない種別は
+        // 後段の種別拒否へ一本化し、二重のエラーを出しません。
+        val allowsComponentSemantics = spec.kind in setOf(
+            PositionKind.CAPTURED, PositionKind.COORDINATES, PositionKind.TEMPORARY,
+        )
+        if (allowsComponentSemantics &&
+            (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL)
+        ) {
+            errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
+        }
         if (spec.kind == PositionKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, ValueType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
-            if (spec.hasNonAbsoluteSemantics()) {
-                errors += nodeError(node, path, setOf("semantics"), "一時変数位置に相対・ローカルは指定できません")
-            }
+            // 一時変数位置を基準とした成分別指定です。差分を取る座標成分
+            // （RELATIVE・LOCAL）は有限値を必須とし、ABSOLUTE成分は省略時に
+            // 基準変数の成分を継承します。角度は RELATIVE のみ差分値を必須とします。
+            listOf(spec.semanticsX to spec.x, spec.semanticsY to spec.y, spec.semanticsZ to spec.z)
+                .forEach { (semantics, value) ->
+                    if (semantics != CoordinateSemantics.ABSOLUTE && value?.isFinite() != true) {
+                        errors += nodeError(node, path, setOf("semantics"), "相対・ローカル成分は有限値で指定してください")
+                    }
+                }
+            listOf(spec.semanticsYaw to spec.yaw, spec.semanticsPitch to spec.pitch)
+                .forEach { (semantics, value) ->
+                    if (semantics == CoordinateSemantics.RELATIVE && value?.isFinite() != true) {
+                        errors += nodeError(node, path, setOf("semantics"), "相対角度は有限値で指定してください")
+                    }
+                }
             return
         }
         // 成分別指定は座標種別だけの指定です。他種別への付与は拒否します。
@@ -1722,10 +1744,6 @@ object ExecutableScriptValidator {
         ) {
             errors += nodeError(node, path, setOf("semantics"), "相対・ローカルは座標指定のときだけ有効です")
             return
-        }
-        // 角度にLOCALは基準が定義できないため拒否します。
-        if (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL) {
-            errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
         }
         // 位置は各コマンドのPositionSpecだけで解決し、実行者・前段対象を
         // 位置設定へ暗黙に読み替える経路は検証しません。
@@ -2128,6 +2146,29 @@ object ExecutableScriptValidator {
                 }
                 if (targetType != null && sourceType != null && definition.result != targetType) {
                     errors += nodeError(node, path, setOf("property"), "取得値の型が変数の型と一致しません: $propertyId")
+                }
+                // 引数を取る詳細値は、参照元と同じscopeの引数変数を要求します。
+                // 引数を取らない詳細値への付与は残存設定として拒否します。
+                val argName = node.string("propertyArg")
+                if (definition.argType == null) {
+                    if (argName.isNotBlank()) {
+                        errors += nodeError(node, path, setOf("propertyArg"), "この詳細値は引数変数を取りません: $propertyId")
+                    }
+                } else {
+                    if (!CommandValueRules.isVariableName(argName)) {
+                        errors += nodeError(node, path, setOf("propertyArg"), "引数変数名が不正です")
+                    } else {
+                        val argType = when (scope) {
+                            VariableScope.WORLD -> variableDefinitions?.get(argName)?.type
+                            VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(argName))
+                            VariableScope.ENTITY -> null
+                        }
+                        if (hasTables && argType == null) {
+                            errors += nodeError(node, path, setOf("propertyArg"), "引数変数が未定義です: $argName")
+                        } else if (argType != null && argType != definition.argType) {
+                            errors += nodeError(node, path, setOf("propertyArg"), "引数変数の型が一致しません: $propertyId")
+                        }
+                    }
                 }
             }
             VariableChangeMode.RANDOM -> {

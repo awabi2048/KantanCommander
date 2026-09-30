@@ -514,11 +514,11 @@ object CommandSettingsModel {
                         VariableOperation.SET -> field.key == "source"
                         VariableOperation.CHANGE -> field.key == "type" || field.key == "source"
                         VariableOperation.COPY -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
-                            field.key == "propertySource" || field.key == "property" ||
+                            field.key == "propertySource" || field.key == "property" || field.key == "propertyArg" ||
                             field.key == "range"
                         VariableOperation.DELETE -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
                             field.key == "source" || field.key == "propertySource" || field.key == "property" ||
-                            field.key == "range"
+                            field.key == "propertyArg" || field.key == "range"
                     }
                 }
             }
@@ -666,6 +666,10 @@ object CommandSettingsModel {
         if (fieldKey == "changeMode") return true
         // #3: 生成方法別の項目は対応する生成方法のときだけ表示します。
         if (fieldKey == "propertySource" || fieldKey == "property") return mode == VariableChangeMode.PROPERTY
+        // 引数変数欄は、選択中の詳細値が引数を要求する場合だけ表示します。
+        if (fieldKey == "propertyArg") {
+            return mode == VariableChangeMode.PROPERTY && propertyArgRequired(node)
+        }
         if (fieldKey == "range") return mode == VariableChangeMode.RANDOM
         val type = ValueType.parse(node.string("type")) ?: return false
         return when (fieldKey) {
@@ -694,6 +698,9 @@ object CommandSettingsModel {
         if (fieldKey == "changeMode") return true
         // 生成方法別の項目は対応する生成方法のときだけ表示します。
         if (fieldKey == "propertySource" || fieldKey == "property") return mode == VariableChangeMode.PROPERTY
+        if (fieldKey == "propertyArg") {
+            return mode == VariableChangeMode.PROPERTY && propertyArgRequired(node)
+        }
         if (fieldKey == "range") return mode == VariableChangeMode.RANDOM
         return when (fieldKey) {
             "value" -> (mode == VariableChangeMode.ASSIGN &&
@@ -706,6 +713,11 @@ object CommandSettingsModel {
             else -> true
         }
     }
+
+    /** 選択中の詳細値が引数変数を要求するかを返します。未定義の詳細値は非表示とします。 */
+    private fun propertyArgRequired(node: CommandNode): Boolean =
+        me.awabi2048.kantancommander.model.ValueProperties.definition(node.string("property"))
+            ?.argType != null
 
     /**
      * Gesture GUIで表示するフィールドを返します。
@@ -1501,7 +1513,7 @@ object CommandSettingsModel {
         val current = ValueType.parse(node.string(key, ValueType.NUMBER.name))
         if (current != type) {
             setOf(
-                "value", "range", "propertySource", "property",
+                "value", "range", "propertySource", "property", "propertyArg",
                 "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
                 "sound", "volume", "effect", "level", "seconds",
             ).forEach(node.params::remove)
@@ -1511,7 +1523,7 @@ object CommandSettingsModel {
             node.temporaryLocationPositionSpec = null
             node.temporaryLocationFacingSpec = null
             node.clearConfigured(
-                "value", "range", "propertySource", "property",
+                "value", "range", "propertySource", "property", "propertyArg",
                 "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
                 "sound", "volume", "effect", "level", "seconds", "entity", "location",
                 "locationPosition", "locationFacing",

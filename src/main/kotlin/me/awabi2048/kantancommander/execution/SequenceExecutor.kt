@@ -3051,9 +3051,36 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             VariableChangeMode.PROPERTY -> {
                 val source = sourceRead(node.string("propertySource")) ?: error("property source is missing")
+                val propertyId = node.string("property")
+                val definition = me.awabi2048.kantancommander.model.ValueProperties.definition(propertyId)
+                    ?: error("property is unavailable")
+                // 引数を取る詳細値は、参照元と同じscopeの変数から引数値を読み出します。
+                val arg = definition.argType?.let { argType ->
+                    sourceRead(node.string("propertyArg"))
+                        ?.takeIf { it.type == argType }
+                        ?: error("property argument is missing")
+                }
+                // ワールド内実体へ触れる解決はここで注入します。位置の基準worldは
+                // 座標解決と同じく session.origin 側です。
                 me.awabi2048.kantancommander.model.ValueProperties.resolve(
                     source,
-                    node.string("property"),
+                    propertyId,
+                    arg = arg,
+                    environment = me.awabi2048.kantancommander.model.ValueProperties.Environment(
+                        blockAt = { location ->
+                            Location(session.origin.world, location.x, location.y, location.z).block
+                        },
+                        signalStrengthAt = { location ->
+                            RedstoneInputReader.incomingSignalStrength(
+                                Location(session.origin.world, location.x, location.y, location.z).block,
+                            )
+                        },
+                        hasItem = { entity, item ->
+                            (entity as? Player)?.let {
+                                playerHasItem(it, item.item.orEmpty(), item.itemData.orEmpty())
+                            } == true
+                        },
+                    ),
                 ) { uuid -> plugin.server.getEntity(uuid) } ?: error("property is unavailable")
             }
             VariableChangeMode.RANDOM -> generateRandomValue(node.string("range"))
@@ -3566,19 +3593,23 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
     ): Location? = when (spec.kind) {
-        PositionKind.CAPTURED, PositionKind.COORDINATES -> resolveCoordinatePosition(spec, session)
+        PositionKind.CAPTURED, PositionKind.COORDINATES -> resolveCoordinatePosition(spec, session.origin)
         PositionKind.DISK -> {
             // 成分別指定は座標種別だけの指定です。制御ブロック自体への付与は拒否します。
             if (spec.hasNonAbsoluteSemantics()) return null
             session.origin.clone()
         }
         PositionKind.TEMPORARY -> {
-            if (spec.hasNonAbsoluteSemantics()) return null
+            // 一時変数位置を基準に成分別指定を解釈します。全成分 ABSOLUTE で値なしの
+            // 指定は基準位置そのものとなり、従来の一時変数参照と同じ結果です。
             val temp = spec.tempName
                 ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
                     ?.takeIf { it.type == ValueType.LOCATION }
                     ?.location ?: return null
-            Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
+            resolveCoordinatePosition(
+                spec,
+                Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch),
+            )
         }
         // TARGETはテレポート先などのコマンド固有設定で解決するため、通常の
         // 実行位置へ渡された場合は静的検証と同じく未解決として扱います。
@@ -3662,8 +3693,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #4 の座標解決です。基準は `session.origin` に固定し、
+     * issue #4 の座標解決です。基準は引数の起点位置であり、
      * 実行コンテキスト位置は基準にしません。成分ごとに解釈が異なります。
+     *
+     * 起点は COORDINATES／CAPTURED では `session.origin`、TEMPORARY では
+     * 参照先の一時変数位置（ワールドは `session.origin` 側）です。
      *
      * - ABSOLUTE軸：値そのまま（欠落時は起点値を継承します）。
      * - RELATIVE軸：起点からの差分として加算します。欠落・非有限は未解決です。
@@ -3673,8 +3707,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * - yaw／pitch：ABSOLUTEは上書き、RELATIVEは起点へ加算して正規化します。
      *   LOCALは角度に基準が定義できないため未解決です。
      */
-    private fun resolveCoordinatePosition(spec: PositionSpec, session: ExecutionSession): Location? {
-        val origin = session.origin
+    private fun resolveCoordinatePosition(spec: PositionSpec, origin: Location): Location? {
         val localOffset = if (
             spec.semanticsX == CoordinateSemantics.LOCAL ||
             spec.semanticsY == CoordinateSemantics.LOCAL ||

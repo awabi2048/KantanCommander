@@ -1276,7 +1276,11 @@ internal object CommandDialogSpecs {
         }
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "source" && node.type == CommandType.VARIABLE) return variableName
-        if (fieldKey == "propertySource" && (node.type == CommandType.VARIABLE || node.type == CommandType.TEMP_SET)) return variableName
+        if ((fieldKey == "propertySource" || fieldKey == "propertyArg") &&
+            (node.type == CommandType.VARIABLE || node.type == CommandType.TEMP_SET)
+        ) {
+            return variableName
+        }
         if (fieldKey == "range" && (node.type == CommandType.VARIABLE || node.type == CommandType.TEMP_SET)) {
             return randomRange
         }

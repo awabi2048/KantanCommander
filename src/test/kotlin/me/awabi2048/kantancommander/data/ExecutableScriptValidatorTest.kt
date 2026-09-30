@@ -14,6 +14,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.BlockOperationMode
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.TypedValue
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -817,6 +818,89 @@ class ExecutableScriptValidatorTest {
                 it.nodeId == particle.id && it.message.contains("複数位置は指定できません")
             },
             "図形終点の複数は対応関係が定まらないため拒否する",
+        )
+    }
+
+    @Test
+    fun `temporary positions resolve components against the variable`() {
+        val script = DiskScript(name = "temp-base-offset", owner = UUID.randomUUID())
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "base"
+            params["tempType"] = ValueType.LOCATION.name
+            temporaryLocationPositionSpec = PositionSpec(
+                PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0,
+            )
+            temporaryLocationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = 0f, pitch = 0f)
+        }
+        val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["summonEntity"] = "minecraft:zombie"
+            summonPositionSpec = PositionSpec(
+                PositionKind.TEMPORARY,
+                tempName = "base",
+                // 基準変数からの差分です。省略したy成分は基準値を継承します。
+                x = 1.0,
+                z = -2.0,
+                semanticsX = CoordinateSemantics.RELATIVE,
+                semanticsZ = CoordinateSemantics.RELATIVE,
+            )
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none { it.nodeId == summon.id },
+            "一時変数を基準にした成分別指定は受理する",
+        )
+    }
+
+    @Test
+    fun `temporary positions reject missing offsets and local angles`() {
+        val script = DiskScript(name = "temp-base-invalid", owner = UUID.randomUUID())
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "base"
+            params["tempType"] = ValueType.LOCATION.name
+            temporaryLocationPositionSpec = PositionSpec(
+                PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0,
+            )
+            temporaryLocationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = 0f, pitch = 0f)
+        }
+        val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["summonEntity"] = "minecraft:zombie"
+            summonPositionSpec = PositionSpec(
+                PositionKind.TEMPORARY,
+                tempName = "base",
+                semanticsX = CoordinateSemantics.RELATIVE,
+                semanticsYaw = CoordinateSemantics.LOCAL,
+            )
+        }
+
+        val errors = ExecutableScriptValidator.validate(script)
+        assertTrue(
+            errors.any { it.nodeId == summon.id && it.message.contains("有限値で指定") },
+            "RELATIVE成分の値欠落は拒否する",
+        )
+        assertTrue(
+            errors.any { it.nodeId == summon.id && it.message.contains("向きにローカル") },
+            "角度のLOCALは変数基準でも拒否する",
+        )
+    }
+
+    @Test
+    fun `temporary positions require a defined location variable`() {
+        val script = DiskScript(name = "temp-base-undefined", owner = UUID.randomUUID())
+        val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["summonEntity"] = "minecraft:zombie"
+            summonPositionSpec = PositionSpec(
+                PositionKind.TEMPORARY,
+                tempName = "base",
+                x = 1.0,
+                semanticsX = CoordinateSemantics.RELATIVE,
+            )
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == summon.id && it.message.contains("一時変数が未定義")
+            },
+            "基準変数の未定義は従来どおり拒否する",
         )
     }
 
