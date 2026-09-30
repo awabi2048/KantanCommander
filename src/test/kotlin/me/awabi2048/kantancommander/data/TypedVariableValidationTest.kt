@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -223,19 +224,8 @@ class TypedVariableValidationTest {
     }
 
     @Test
-    fun `removed boolean and vector types are rejected`() {
+    fun `removed vector type is rejected`() {
         val definitions = emptyMap<String, TypedValue>()
-        val removedBoolean = scriptWith {
-            params["scope"] = "WORLD"
-            params["name"] = "flag"
-            params["type"] = "BOOLEAN"
-            params["operation"] = VariableOperation.DEFINE.name
-        }
-        assertTrue(
-            ExecutableScriptValidator.validate(removedBoolean, variableDefinitions = definitions)
-                .any { it.fieldKeys == setOf("type") },
-        )
-
         val removedVector = scriptWith {
             params["scope"] = "WORLD"
             params["name"] = "direction"
@@ -245,6 +235,39 @@ class TypedVariableValidationTest {
         assertTrue(
             ExecutableScriptValidator.validate(removedVector, variableDefinitions = definitions)
                 .any { it.fieldKeys == setOf("type") },
+        )
+    }
+
+    @Test
+    fun `boolean define accepts literals and boolean references only`() {
+        val definitions = worldDefinitions(
+            "flag" to TypedValue(ValueType.BOOLEAN, booleanValue = true),
+            "count" to TypedValue(ValueType.NUMBER, numberValue = 0.0),
+        )
+        fun define(value: String) = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "fresh_flag"
+            params["type"] = ValueType.BOOLEAN.name
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = VariableChangeMode.ASSIGN.name
+            params["value"] = value
+        }
+        assertFalse(
+            ExecutableScriptValidator.validate(define("true"), variableDefinitions = definitions)
+                .any { it.nodeId != null },
+        )
+        assertFalse(
+            ExecutableScriptValidator.validate(define("\${flag}"), variableDefinitions = definitions)
+                .any { it.nodeId != null },
+        )
+        assertTrue(
+            ExecutableScriptValidator.validate(define("yes"), variableDefinitions = definitions)
+                .any { it.fieldKeys == setOf("value") },
+        )
+        // 真偽値欄は他型の変数参照を黙って文字列化せず、型不一致として拒否します。
+        assertTrue(
+            ExecutableScriptValidator.validate(define("\${count}"), variableDefinitions = definitions)
+                .any { it.fieldKeys == setOf("value") },
         )
     }
 

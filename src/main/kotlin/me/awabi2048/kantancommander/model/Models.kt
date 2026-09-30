@@ -679,6 +679,7 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
 fun ValueType.displayKey(): LocalizationKey<String> = when (this) {
     ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
     ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOOLEAN
     ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
     ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK

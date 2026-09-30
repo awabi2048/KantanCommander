@@ -44,13 +44,14 @@ object VariableTemplate {
     /**
      * 型付き値をテキストへ変換します。
      *
- * NUMBER・STRING だけを埋め込み可能とし、複合型は空文字にします。
+ * NUMBER・STRING・BOOLEAN だけを埋め込み可能とし、複合型は空文字にします。
      * 複合値を空文字へ黙って変換して実行を続けると型エラーが成功に見えるため、
      * 呼び出し側は事前に型を確認してください。
      */
     fun stringify(value: TypedValue): String = when (value.type) {
         ValueType.NUMBER -> value.numberValue?.let(::formatNumber).orEmpty()
         ValueType.STRING -> value.stringValue.orEmpty()
+        ValueType.BOOLEAN -> value.booleanValue?.toString().orEmpty()
         ValueType.LOCATION,
         ValueType.ITEM,
         ValueType.BLOCK,

@@ -670,7 +670,7 @@ object CommandSettingsModel {
         val type = ValueType.parse(node.string("type")) ?: return false
         return when (fieldKey) {
             "value" -> (mode == VariableChangeMode.ASSIGN &&
-                (type == ValueType.NUMBER || type == ValueType.STRING)) ||
+                (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN)) ||
                 (mode == VariableChangeMode.CALCULATE && type == ValueType.NUMBER)
             "location" -> mode == VariableChangeMode.ASSIGN && type == ValueType.LOCATION
             "item" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ITEM
@@ -697,7 +697,7 @@ object CommandSettingsModel {
         if (fieldKey == "range") return mode == VariableChangeMode.RANDOM
         return when (fieldKey) {
             "value" -> (mode == VariableChangeMode.ASSIGN &&
-                (type == ValueType.NUMBER || type == ValueType.STRING)) ||
+                (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN)) ||
                 (mode == VariableChangeMode.CALCULATE && type == ValueType.NUMBER)
             "location" -> mode == VariableChangeMode.ASSIGN && type == ValueType.LOCATION
             "item" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ITEM
@@ -2168,6 +2168,9 @@ object CommandSettingsModel {
      */
     fun isCallArgumentLiteralValid(type: ValueType, raw: String): Boolean = when (type) {
         ValueType.NUMBER -> CommandValueRules.parseFiniteDouble(raw) != null ||
+            VariableTemplate.isSingleReference(raw) ||
+            TemporaryTemplate.isSingleReference(raw)
+        ValueType.BOOLEAN -> raw.trim().toBooleanStrictOrNull() != null ||
             VariableTemplate.isSingleReference(raw) ||
             TemporaryTemplate.isSingleReference(raw)
         else -> !VariableTemplate.hasMalformedReference(raw) &&

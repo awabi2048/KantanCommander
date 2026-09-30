@@ -1075,6 +1075,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         when (argument.type) {
             ValueType.NUMBER -> TypedValue(argument.type, numberValue = resolveNumber(raw, session) ?: error("number is invalid"))
             ValueType.STRING -> TypedValue(argument.type, stringValue = resolveText(raw, session) ?: error("string is invalid"))
+            ValueType.BOOLEAN -> TypedValue(argument.type, booleanValue = resolveBoolean(raw, session) ?: error("boolean is invalid"))
             ValueType.LOCATION,
             ValueType.ITEM,
             ValueType.BLOCK,
@@ -2768,15 +2769,28 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ConditionSubject.VARIABLE -> {
                 val value = plugin.variables.get(session.worldId, node.string("variable"))
                     ?: return ConditionEvaluation.UNRESOLVED
-                // 非 NUMBER 変数との数値比較は正常 false ではなく型不一致として分離します。
-                if (value.type != ValueType.NUMBER) return ConditionEvaluation.INVALID
-                val comparisonValue = resolveNumber(node.string("value"), session)
-                    ?: return ConditionEvaluation.UNRESOLVED
                 val operator = node.string("operator", "==")
-                if (operator !in setOf("==", "!=", ">", "<", ">=", "<=")) {
-                    return ConditionEvaluation.INVALID
+                val applicable = when (value.type) {
+                    ValueType.NUMBER -> {
+                        // 非 NUMBER 変数との数値比較は正常 false ではなく型不一致として分離します。
+                        if (operator !in setOf("==", "!=", ">", "<", ">=", "<=")) {
+                            return ConditionEvaluation.INVALID
+                        }
+                        val comparisonValue = resolveNumber(node.string("value"), session)
+                            ?: return ConditionEvaluation.UNRESOLVED
+                        compareVariable(value, comparisonValue, operator)
+                    }
+                    ValueType.BOOLEAN -> {
+                        // 真偽値に大小関係はないため等値比較だけを許可します。
+                        if (operator !in setOf("==", "!=")) return ConditionEvaluation.INVALID
+                        val expected = resolveBoolean(node.string("value"), session)
+                            ?: return ConditionEvaluation.UNRESOLVED
+                        val actual = value.booleanValue ?: return ConditionEvaluation.INVALID
+                        if (operator == "==") actual == expected else actual != expected
+                    }
+                    // 非 NUMBER・非 BOOLEAN 変数との比較は正常 false ではなく型不一致として分離します。
+                    else -> return ConditionEvaluation.INVALID
                 }
-                val applicable = compareVariable(value, comparisonValue, operator)
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
             // issue #27×#26・#29: 判定対象名はBLOCKへ置換し、複数位置ANY評価と実行起点集合を維持します。
@@ -3166,6 +3180,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     }
                     TypedValue(type, stringValue = text)
                 }
+                ValueType.BOOLEAN -> TypedValue(
+                    type,
+                    booleanValue = resolveBoolean(node.string("value"), session) ?: error("boolean is invalid"),
+                )
                 ValueType.LOCATION -> {
                 // 新形式は通常コマンドと同じPositionSpec/FacingSpecから解決します。
                 // 旧POSITIONのx/y/z形式は読み込み済みデータを壊さないため、この実行境界
@@ -3843,6 +3861,35 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
+     * 真偽値欄を解決します。
+     *
+     * true／false リテラルか、真偽値型の一時変数 `%{name}%`・ワールド内変数
+     * `${name}` の単一参照を受け付けます。文字列変数など別型への暗黙変換は
+     * 行わず、参照型が一致しない場合は失敗です。
+     */
+    private fun resolveBoolean(raw: String, session: ExecutionSession): Boolean? {
+        val tempExpanded = if (TemporaryTemplate.references(raw).isEmpty() && !raw.contains('%')) {
+            raw
+        } else {
+            TemporaryTemplate.interpolateText(raw) { name ->
+                session.executionVariables.get(TemporaryTemplate.normalized(name))
+                    ?.takeIf { it.type == ValueType.BOOLEAN }
+                    ?.booleanValue?.toString()
+            } ?: return null
+        }
+        val expanded = if (VariableTemplate.references(tempExpanded).isEmpty()) {
+            tempExpanded
+        } else {
+            VariableTemplate.interpolateText(tempExpanded) { name ->
+                plugin.variables.get(session.worldId, name)
+                    ?.takeIf { it.type == ValueType.BOOLEAN }
+                    ?.booleanValue?.toString()
+            } ?: return null
+        }
+        return expanded.trim().toBooleanStrictOrNull()
+    }
+
+    /**
      * 実行時にだけ確定する一時参照の欠損を、通常のノード失敗と分けて判定します。
      *
      * 静的検証は「その経路で定義が存在すること」までしか保証できません。特に
@@ -3854,7 +3901,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         fun scalarReferencesAvailable(raw: String): Boolean =
             TemporaryTemplate.references(raw).all { name ->
                 val value = session.executionVariables.get(TemporaryTemplate.normalized(name))
-                value != null && value.type in setOf(ValueType.NUMBER, ValueType.STRING)
+                value != null && value.type in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
             }
 
         // テキスト／数値欄に現れる `%{name}%` はスカラーだけを許可します。
@@ -3935,6 +3982,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             if (it.isFinite() && it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
         }
         ValueType.STRING -> value.stringValue
+        ValueType.BOOLEAN -> value.booleanValue?.toString()
         else -> null
     }
 

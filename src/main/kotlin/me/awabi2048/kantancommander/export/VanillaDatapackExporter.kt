@@ -304,7 +304,7 @@ class VanillaDatapackExporter(
                     // EXECUTION scope の複合値は一時storage compoundで扱うため対象外です。
                     if (scope != VariableScope.EXECUTION &&
                         type != null &&
-                        type != ValueType.NUMBER && type != ValueType.STRING
+                        type != ValueType.NUMBER && type != ValueType.STRING && type != ValueType.BOOLEAN
                     ) {
                         errors += "${script.id}/${node.id}: 複合型の変数は完全バニラ出力に未対応です"
                     }
@@ -482,30 +482,46 @@ class VanillaDatapackExporter(
         when (subject) {
             ConditionSubject.VARIABLE -> {
                 val variable = node.string("variable")
+                val variableType = worldValueTypes[variable]
                 if (variable.isBlank()) {
                     errors += "${script.id}/${node.id}: ワールド内変数名がありません"
                 }
-                if (worldValueTypes[variable] != ValueType.NUMBER) {
-                    errors += "${script.id}/${node.id}: 数値型以外の変数条件は完全バニラ出力に未対応です"
+                if (variableType != ValueType.NUMBER && variableType != ValueType.BOOLEAN) {
+                    errors += "${script.id}/${node.id}: 数値・真偽値型以外の変数条件は完全バニラ出力に未対応です"
                 }
-                if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
+                val operators = if (variableType == ValueType.BOOLEAN) {
+                    setOf("==", "!=")
+                } else setOf(">", ">=", "<", "<=", "==", "!=")
+                if (node.string("operator") !in operators) {
                     errors += "${script.id}/${node.id}: 変数比較方法が不正です"
                 }
                 val raw = node.string("value")
-                val parsed = raw.toDoubleOrNull()
                 val reference = VariableTemplate.references(raw).singleOrNull()
-                if (reference == null && parsed == null) {
-                    errors += "${script.id}/${node.id}: バニラ出力の比較値は数値または単一の変数参照で指定してください: $raw"
-                } else if (reference == null && scaledScore(parsed!!) == null) {
-                    errors += "${script.id}/${node.id}: 比較値がバニラの固定小数点範囲外です: $raw"
-                } else if (reference != null && SystemVariableNames.isSystemName(reference) &&
-                    enclosingFor(script.graph, node.id) == null
-                ) {
-                    errors += "${script.id}/${node.id}: システム変数はfor本体内でのみ参照できます"
-                } else if (reference != null && !SystemVariableNames.isSystemName(reference) &&
-                    worldValueTypes[reference] != ValueType.NUMBER
-                ) {
-                    errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
+                if (variableType == ValueType.BOOLEAN) {
+                    // 真偽値はbyte値の数値比較へ写像するため、リテラルか真偽値型変数参照を要求します。
+                    val parsedBoolean = raw.toBooleanStrictOrNull()
+                    if (parsedBoolean == null && reference == null) {
+                        errors += "${script.id}/${node.id}: バニラ出力の真偽値比較値は true/false または単一の変数参照で指定してください: $raw"
+                    } else if (reference != null && !SystemVariableNames.isSystemName(reference) &&
+                        worldValueTypes[reference] != ValueType.BOOLEAN
+                    ) {
+                        errors += "${script.id}/${node.id}: 比較対象の変数は真偽値型である必要があります: $reference"
+                    }
+                } else {
+                    val parsed = raw.toDoubleOrNull()
+                    if (reference == null && parsed == null) {
+                        errors += "${script.id}/${node.id}: バニラ出力の比較値は数値または単一の変数参照で指定してください: $raw"
+                    } else if (reference == null && scaledScore(parsed!!) == null) {
+                        errors += "${script.id}/${node.id}: 比較値がバニラの固定小数点範囲外です: $raw"
+                    } else if (reference != null && SystemVariableNames.isSystemName(reference) &&
+                        enclosingFor(script.graph, node.id) == null
+                    ) {
+                        errors += "${script.id}/${node.id}: システム変数はfor本体内でのみ参照できます"
+                    } else if (reference != null && !SystemVariableNames.isSystemName(reference) &&
+                        worldValueTypes[reference] != ValueType.NUMBER
+                    ) {
+                        errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
+                    }
                 }
             }
             ConditionSubject.PLAYER -> {
@@ -534,8 +550,8 @@ class VanillaDatapackExporter(
                     val type = worldValueTypes[name]
                     if (type == null) {
                         errors += "${node.id}: ワールド内変数の型を一意に解決できません: $name"
-                    } else if (type != ValueType.NUMBER) {
-                        errors += "${node.id}: 文字列変数の条件は完全バニラ出力に未対応です: $name"
+                    } else if (type != ValueType.NUMBER && type != ValueType.BOOLEAN) {
+                        errors += "${node.id}: 複合型変数の条件は完全バニラ出力に未対応です: $name"
                     } else {
                         node.params[EXPORT_VARIABLE_TYPE] = type.name
                     }
@@ -1109,6 +1125,10 @@ class VanillaDatapackExporter(
             ValueType.STRING ->
                 directReference(node.string("value"))
                     ?: "data modify storage kantan:variables $destination set value \"${escape(node.string("value"))}\""
+            // SNBTの真偽値リテラルはbyteへ正規化され、参照側・macro置換とも一致します。
+            ValueType.BOOLEAN ->
+                directReference(node.string("value"))
+                    ?: "data modify storage kantan:variables $destination set value ${booleanLiteral(node.string("value"))}"
             ValueType.LOCATION -> {
                 val position = node.temporaryLocationPositionSpec
                 val facing = node.temporaryLocationFacingSpec
@@ -1900,7 +1920,9 @@ class VanillaDatapackExporter(
         ConditionSubject.VARIABLE -> {
             val holder = conditionCountHolder(node)
             val raw = node.string("value")
+            // 真偽値はbyte（1b／0b）としてstorageへ入るため、1.0／0.0 の数値比較へ写像します。
             val value = raw.toDoubleOrNull()?.let(::scaledScore)
+                ?: raw.toBooleanStrictOrNull()?.let { scaledScore(if (it) 1.0 else 0.0) }
             val operator = comparisonOperator(node)
             if (value != null) {
                 "score $holder kc_runtime matches ${scoreRange(operator, value)}"
@@ -1931,6 +1953,7 @@ class VanillaDatapackExporter(
                     "kantan:variables ${VanillaStorageNames.variablePath(leftName, temporary = false)} $FIXED_POINT_SCALE",
             )
             val staticValue = raw.toDoubleOrNull()?.let(::scaledScore)
+                ?: raw.toBooleanStrictOrNull()?.let { scaledScore(if (it) 1.0 else 0.0) }
             if (staticValue != null) {
                 add("scoreboard players set ${conditionValueHolder(node)} kc_runtime $staticValue")
             } else {
@@ -2030,6 +2053,9 @@ class VanillaDatapackExporter(
                 "data modify storage kantan:variables $storagePath set value ${raw}d"
             ValueType.STRING ->
                 "data modify storage kantan:variables $storagePath set value \"${escape(raw)}\""
+            // `${var}`／`%{x}%` 参照は呼び出し側のmacro置換がbyte値を挿入します。
+            ValueType.BOOLEAN ->
+                "data modify storage kantan:variables $storagePath set value ${booleanLiteral(raw)}"
             ValueType.LOCATION,
             ValueType.ITEM,
             ValueType.BLOCK,
@@ -2079,6 +2105,8 @@ class VanillaDatapackExporter(
                 "data modify storage kantan:variables $destination set value ${raw}d"
             ValueType.STRING ->
                 "data modify storage kantan:variables $destination set value \"${escape(raw)}\""
+            ValueType.BOOLEAN ->
+                "data modify storage kantan:variables $destination set value ${booleanLiteral(raw)}"
             else -> null
         }
     }
@@ -2822,6 +2850,19 @@ class VanillaDatapackExporter(
     }
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+    /**
+     * SNBTの真偽値リテラルを返します。
+     *
+     * 変数参照を含む入力はmacro置換へ委ねてそのまま通し、リテラルだけを
+     * true／false へ正規化します。不正なリテラルは検証漏れとして明示的に失敗させます。
+     */
+    private fun booleanLiteral(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.contains('{') || trimmed.contains('%')) return trimmed
+        require(trimmed == "true" || trimmed == "false") { "invalid boolean literal: $trimmed" }
+        return trimmed
+    }
 
     private fun temporaryMarker(name: String, field: String): String =
         "@{temp.${TemporaryTemplate.normalized(name)}.$field}"

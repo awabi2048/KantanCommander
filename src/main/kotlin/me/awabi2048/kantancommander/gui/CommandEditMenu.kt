@@ -2784,7 +2784,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     /** 呼び出し引数の値を編集します。型に応じて値入力または変数名入力へ進みます。 */
     private fun openDiskCallArgumentForm(player: Player, route: MenuRoute, argument: DiskArgument) {
         val current = node(route) ?: return
-        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING)
+        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
         if (complex) {
             val spec = CommandDialogSpecs.variableName
             showTextForm(
@@ -5295,7 +5295,7 @@ object EditorMenuLayout {
             add(field("range", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, Material.COMPARATOR) {
                 displayVariableValue(it.string("range"))
             })
-        } else if ((type == ValueType.NUMBER || type == ValueType.STRING) && mode == VariableChangeMode.ASSIGN ||
+        } else if ((type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN) && mode == VariableChangeMode.ASSIGN ||
             (type == ValueType.NUMBER && mode == VariableChangeMode.CALCULATE)
         ) {
             add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
@@ -5317,7 +5317,8 @@ object EditorMenuLayout {
      */
     private fun typedValueSubFields(node: CommandNode, type: ValueType): List<EditorField> = buildList {
         when (type) {
-            ValueType.NUMBER, ValueType.STRING -> Unit
+            // 真偽値も単一の値欄で扱うため、複合型のような型別設定欄は持ちません。
+            ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> Unit
             ValueType.LOCATION -> add(field(
                 "location",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
@@ -5551,6 +5552,7 @@ private fun displayCondition(node: CommandNode) = node.conditionSubject()
 private fun displayValueTypeLabel(type: ValueType): LocalizationKey<String> = when (type) {
     ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
     ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOOLEAN
     ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
     ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK

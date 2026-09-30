@@ -21,7 +21,7 @@ class VariablesTest {
         assertEquals(ValueType.NUMBER, ValueType.parse("NUMBER"))
         assertEquals(ValueType.LOCATION, ValueType.parse("POSITION"))
         assertEquals(ValueType.LOCATION, ValueType.parse(" position "))
-        assertNull(ValueType.parse("BOOLEAN"))
+        assertEquals(ValueType.BOOLEAN, ValueType.parse("BOOLEAN"))
         assertNull(ValueType.parse("VECTOR"))
         assertNull(ValueType.parse("unknown"))
         assertNull(ValueType.parse(null))
@@ -33,6 +33,10 @@ class VariablesTest {
         assertFalse(TypedValue(ValueType.NUMBER, numberValue = Double.NaN).isValid())
         assertFalse(TypedValue(ValueType.NUMBER, numberValue = 1.0, stringValue = "x").isValid())
         assertTrue(TypedValue(ValueType.STRING, stringValue = "a").isValid())
+        assertTrue(TypedValue(ValueType.BOOLEAN, booleanValue = true).isValid())
+        assertTrue(TypedValue(ValueType.BOOLEAN, booleanValue = false).isValid())
+        assertFalse(TypedValue(ValueType.BOOLEAN).isValid())
+        assertFalse(TypedValue(ValueType.BOOLEAN, booleanValue = true, numberValue = 1.0).isValid())
         assertTrue(
             TypedValue(ValueType.LOCATION, location = SavedLocation(1.0, 2.0, 3.0)).isValid(),
         )

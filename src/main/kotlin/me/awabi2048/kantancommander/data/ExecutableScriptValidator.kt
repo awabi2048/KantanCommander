@@ -1943,13 +1943,24 @@ object ExecutableScriptValidator {
                 }
             }
             ConditionSubject.VARIABLE -> {
-                if (!CommandValueRules.isVariableName(node.string("variable"))) {
+                val variableName = node.string("variable")
+                if (!CommandValueRules.isVariableName(variableName)) {
                     errors += nodeError(node, path, setOf("variable"), "評価する変数名が不正です")
-                } else checkDefinition(node.string("variable"), ValueType.NUMBER, variableDefinitions, node, path, setOf("variable"), errors)
-                if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
-                    errors += nodeError(node, path, setOf("condition"), "評価の方法が不正です")
                 }
-                validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                // 定義済みの真偽値変数は等値比較専用の別経路で検証します。
+                // 未定義・型不一致は数値側の checkDefinition が従来どおり報告します。
+                if (variableDefinitions?.get(variableName)?.type == ValueType.BOOLEAN) {
+                    if (node.string("operator") !in setOf("==", "!=")) {
+                        errors += nodeError(node, path, setOf("condition"), "真偽値変数の評価方法は == または != のみ使用できます")
+                    }
+                    validateBooleanInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                } else {
+                    checkDefinition(variableName, ValueType.NUMBER, variableDefinitions, node, path, setOf("variable"), errors)
+                    if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
+                        errors += nodeError(node, path, setOf("condition"), "評価の方法が不正です")
+                    }
+                    validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                }
             }
             ConditionSubject.BLOCK -> {
                 if (CommandValueRules.material(node.string("block")) == null) {
@@ -2248,6 +2259,12 @@ object ExecutableScriptValidator {
             }            ValueType.STRING -> {
                 if (VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)) {
                     errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の文字列が不正です")
+                }
+            }
+            ValueType.BOOLEAN -> {
+                val isReference = VariableTemplate.isSingleReference(raw) || TemporaryTemplate.isSingleReference(raw)
+                if (!isReference && raw.trim().toBooleanStrictOrNull() == null) {
+                    errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の真偽値が不正です")
                 }
             }
             ValueType.LOCATION,
@@ -2666,6 +2683,9 @@ object ExecutableScriptValidator {
             ValueType.STRING -> validateTemplate(
                 node.string("value"), node, path, "value", errors, worldDefinitions, temporaries = temporaryDefinitions,
             )
+            ValueType.BOOLEAN -> validateBooleanInput(
+                node.string("value"), worldDefinitions, node, path, setOf("value"), errors, temporaryDefinitions,
+            )
             ValueType.LOCATION -> {
                 // 新形式では位置と向きをそれぞれ既存の共通Specで保持します。
                 // 片方だけ設定されたLOCATIONは実行時に暗黙補完せず、親欄を未完了として
@@ -2809,6 +2829,44 @@ object ExecutableScriptValidator {
         }
     }
 
+    /**
+     * 真偽値欄の検証です。
+     *
+     * true／false リテラルか、真偽値型のワールド内変数 `${name}`・一時変数
+     * `%{name}%` の単一参照を受け付けます。実行時の
+     * [SequenceExecutor.resolveBoolean] と同じ入力を受理することが契約です。
+     */
+    private fun validateBooleanInput(
+        raw: String,
+        definitions: Map<String, TypedValue>?,
+        node: CommandNode,
+        path: String,
+        fields: Set<String>,
+        errors: MutableList<ScriptValidationError>,
+        temporaries: Map<String, ValueType>? = null,
+    ) {
+        validateTemplate(raw, node, path, fields.firstOrNull() ?: "value", errors, definitions, temporaries = temporaries)
+        if (VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)) return
+        if (raw.trim().toBooleanStrictOrNull() != null) return
+        when {
+            VariableTemplate.isSingleReference(raw) -> {
+                val reference = VariableTemplate.references(raw).single()
+                if (SystemVariableNames.isSystemName(reference)) {
+                    errors += nodeError(node, path, fields, "システム変数は真偽値欄で参照できません: $reference")
+                } else if (definitions != null && definitions[reference]?.type != ValueType.BOOLEAN) {
+                    errors += nodeError(node, path, fields, "真偽値欄では真偽値型変数だけを参照できます: $reference")
+                }
+            }
+            TemporaryTemplate.isSingleReference(raw) -> {
+                val reference = TemporaryTemplate.references(raw).map(TemporaryTemplate::normalized).single()
+                if (temporaries != null && temporaries[reference] != ValueType.BOOLEAN) {
+                    errors += nodeError(node, path, fields, "真偽値欄の一時変数が未定義または真偽値型ではありません: $reference")
+                }
+            }
+            else -> errors += nodeError(node, path, fields, "true または false で入力してください")
+        }
+    }
+
     /** 表示時間とWAITに共通する、秒数・上限・ティック単位の検証です。 */
     private fun validateTickAlignedTime(
         node: CommandNode,
@@ -2926,7 +2984,7 @@ object ExecutableScriptValidator {
             TemporaryTemplate.references(raw).map(TemporaryTemplate::normalized).forEach { reference ->
                 when (val type = temporaries[reference]) {
                     null -> errors += nodeError(node, path, setOf(field), "一時変数が未定義です: $reference")
-                    ValueType.NUMBER, ValueType.STRING -> Unit
+                    ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> Unit
                     else -> errors += nodeError(node, path, setOf(field), "複合型の一時変数はテキストへ埋め込めません: $reference ($type)")
                 }
             }
@@ -2946,6 +3004,7 @@ object ExecutableScriptValidator {
                 temporaries[reference] == null || temporaries[reference] !in setOf(
                     ValueType.NUMBER,
                     ValueType.STRING,
+                    ValueType.BOOLEAN,
                 )
             }) {
             return false

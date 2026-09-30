@@ -29,6 +29,8 @@ class EntityVariablesTest {
         val values = listOf(
             TypedValue(ValueType.NUMBER, numberValue = 1.5),
             TypedValue(ValueType.STRING, stringValue = "a:b,c|d"),
+            TypedValue(ValueType.BOOLEAN, booleanValue = true),
+            TypedValue(ValueType.BOOLEAN, booleanValue = false),
             TypedValue(ValueType.LOCATION, location = SavedLocation(1.0, 2.0, 3.0, 90f, 45f)),
             TypedValue(ValueType.ITEM, item = "STONE", itemData = "e30=", amount = 3),
             TypedValue(ValueType.ITEM, item = "STONE", amount = 1),

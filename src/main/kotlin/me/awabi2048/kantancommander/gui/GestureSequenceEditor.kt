@@ -5142,7 +5142,7 @@ class GestureSequenceEditor(
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
         val argument = node.declaredArguments().firstOrNull { it.name == name } ?: return
         observedRevision = script.revision
-        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING)
+        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
         val inputId = "value"
         if (complex) {
             val spec = CommandDialogSpecs.variableName
@@ -5624,6 +5624,13 @@ class GestureSequenceEditor(
                     )
                 }
                 ValueType.STRING -> TypedValue(ValueType.STRING, stringValue = raw)
+                ValueType.BOOLEAN -> TypedValue(
+                    ValueType.BOOLEAN,
+                    booleanValue = raw.trim().toBooleanStrictOrNull(),
+                ).takeIf { it.isValid() } ?: return@showInputDialog KcI18n.text(
+                    player,
+                    CommandDialogSpecs.worldVariableValueInvalid(ValueType.BOOLEAN),
+                )
                 ValueType.LOCATION,
                 ValueType.ITEM,
                 ValueType.BLOCK,
@@ -7611,7 +7618,15 @@ class GestureSequenceEditor(
                             }) updateLower(player)
                     }
                     "condition-operator" -> {
-                        val operators = listOf("==", "!=", ">", ">=", "<", "<=")
+                        // 真偽値変数に大小関係はないため、宣言型がBOOLEANのときは
+                        // 等値比較だけを巡回します。型が不明な場合は全演算子を維持します。
+                        val variableType = resolveVariableWorldId()
+                            ?.let { worldId -> plugin.variables.definitions(worldId)[node.string("variable")]?.type }
+                        val operators = if (variableType == ValueType.BOOLEAN) {
+                            listOf("==", "!=")
+                        } else {
+                            listOf("==", "!=", ">", ">=", "<", "<=")
+                        }
                         if (updateSettingNode(player, settingContext) {
                                 val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                                 CommandSettingsModel.setParameter(it, "operator", operators[(current + 1) % operators.size])

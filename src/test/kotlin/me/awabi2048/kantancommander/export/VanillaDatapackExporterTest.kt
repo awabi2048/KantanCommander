@@ -996,15 +996,23 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params.putAll(mapOf("name" to "label", "tempType" to ValueType.STRING.name, "value" to "prefix-%{copied}%"))
         }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(mapOf("name" to "ready", "tempType" to ValueType.BOOLEAN.name, "value" to "true"))
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(mapOf("name" to "still_ready", "tempType" to ValueType.BOOLEAN.name, "value" to "%{ready}%"))
+        }
 
-        val success = assertInstanceOf(
-            StandaloneCompilation.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
-        )
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script)
+        if (result is StandaloneCompilation.Failure) println("DEBUG_ERRORS=${result.errors}")
+        val success = assertInstanceOf(StandaloneCompilation.Success::class.java, result)
         val body = success.functions.values.joinToString("\n")
 
         assertTrue(body.contains("set from storage kantan:variables variables.temporary"))
+        // 真偽値の一時変数はリテラル・参照ともにSNBTの真偽値として出力されます。
+        assertTrue(body.contains("set value true"))
         assertFalse(body.contains("%{amount}%"), "temporary references must be lowered before output")
+        assertFalse(body.contains("%{ready}%"), "boolean temporary references must be lowered before output")
     }
 
     @Test
@@ -1201,6 +1209,69 @@ class VanillaDatapackExporterTest {
         val compilation = VanillaDatapackExporter(store, temp.resolve("exports"))
             .compileForStandalone(script, mapOf("enabled" to ValueType.STRING))
         assertInstanceOf(StandaloneCompilation.Failure::class.java, compilation)
+    }
+
+    @Test
+    fun `boolean variables and conditions export via byte storage and score`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "boolean-condition")
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "enabled",
+                "type" to ValueType.BOOLEAN.name,
+                "operation" to VariableOperation.DEFINE.name,
+                "value" to "true",
+            )
+        )
+        val definitionCompilation = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        // 真偽値はSNBTリテラルとしてstorageへ入ります。
+        assertTrue(definitionCompilation.functions.values.joinToString("\n").contains("set value true"))
+
+        // 定義済みの真偽値変数を参照する条件は、固定小数点score比較へ写像します。
+        val consumer = store.create(UUID.randomUUID(), "boolean-consumer")
+        val condition = GraphEditor.append(consumer.graph, CommandType.CONDITION)
+        condition.params.putAll(
+            mapOf(
+                "subject" to "VARIABLE",
+                "variable" to "enabled",
+                "operator" to "==",
+                "value" to "true",
+            )
+        )
+        GraphEditor.insert(consumer.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
+            .targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        val conditionCompilation = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
+                consumer,
+                mapOf("enabled" to ValueType.BOOLEAN),
+            ),
+        )
+        val text = conditionCompilation.functions.values.joinToString("\n")
+        assertTrue(text.contains("scoreboard players set"))
+        assertTrue(text.contains("if score #c_"))
+
+        // 真偽値比較は ==／!= に限定します。大小比較は意味がないため検証で拒否します。
+        val ordered = store.create(UUID.randomUUID(), "boolean-ordered")
+        GraphEditor.append(ordered.graph, CommandType.CONDITION).params.putAll(
+            mapOf(
+                "subject" to "VARIABLE",
+                "variable" to "enabled",
+                "operator" to ">",
+                "value" to "true",
+            )
+        )
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
+                ordered,
+                mapOf("enabled" to ValueType.BOOLEAN),
+            ),
+        )
+        assertTrue(failure.errors.any { it.contains("変数比較方法") })
     }
 
     @Test

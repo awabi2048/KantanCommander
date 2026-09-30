@@ -257,6 +257,27 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID,
             string.validateInput("value=\${BadName}"),
         )
+
+        // 真偽値は即値として保存するため、true／false リテラル以外を拒否します。
+        val boolean = requireNotNull(CommandDialogSpecs.worldVariableValue(ValueType.BOOLEAN))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BOOLEAN_BODY,
+            CommandDialogSpecs.worldVariableValueBody(ValueType.BOOLEAN),
+        )
+        assertNull(boolean.validateInput("true"))
+        assertNull(boolean.validateInput(" false "))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BOOLEAN_INVALID,
+            CommandDialogSpecs.worldVariableValueInvalid(ValueType.BOOLEAN),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BOOLEAN_INVALID,
+            boolean.validateInput("yes"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BOOLEAN_INVALID,
+            boolean.validateInput("1"),
+        )
     }
 
     @Test

@@ -18,6 +18,7 @@ import java.util.UUID
 enum class ValueType {
     NUMBER,
     STRING,
+    BOOLEAN,
     LOCATION,
     ITEM,
     BLOCK,
@@ -54,6 +55,8 @@ data class TypedValue(
     val type: ValueType,
     val numberValue: Double? = null,
     val stringValue: String? = null,
+    /** BOOLEAN型の値です。 */
+    val booleanValue: Boolean? = null,
     /** LOCATION型の解決済み座標・向きです。位置と向きを分離して保持しません。 */
     val location: SavedLocation? = null,
     /** アイテム型の素材IDと実体（Base64）です。 */
@@ -77,6 +80,7 @@ data class TypedValue(
         ValueType.STRING -> stringValue != null &&
             stringValue.length <= CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH &&
             isClearExcept("stringValue")
+        ValueType.BOOLEAN -> booleanValue != null && isClearExcept("booleanValue")
         ValueType.LOCATION -> location != null &&
             location.x.isFinite() && location.y.isFinite() && location.z.isFinite() &&
             isClearExcept("location")
@@ -91,6 +95,7 @@ data class TypedValue(
         val kept = keep.toSet()
         if ("numberValue" !in kept && numberValue != null) return false
         if ("stringValue" !in kept && stringValue != null) return false
+        if ("booleanValue" !in kept && booleanValue != null) return false
         if ("location" !in kept && location != null) return false
         if ("item" !in kept && item != null) return false
         if ("itemData" !in kept && itemData != null) return false
@@ -110,6 +115,7 @@ data class TypedValue(
         fun empty(type: ValueType): TypedValue = when (type) {
             ValueType.NUMBER -> TypedValue(type, numberValue = 0.0)
             ValueType.STRING -> TypedValue(type, stringValue = "")
+            ValueType.BOOLEAN -> TypedValue(type, booleanValue = false)
             ValueType.LOCATION -> TypedValue(type, location = SavedLocation(0.0, 0.0, 0.0))
             ValueType.ITEM -> TypedValue(type, item = "STONE")
             ValueType.BLOCK -> TypedValue(type, block = "STONE")

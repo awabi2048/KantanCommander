@@ -40,6 +40,7 @@ object EntityVariableCodec {
         val payload: String = when (value.type) {
             ValueType.NUMBER -> value.numberValue.toString()
             ValueType.STRING -> base64(value.stringValue.orEmpty())
+            ValueType.BOOLEAN -> value.booleanValue.toString()
             ValueType.LOCATION -> {
                 val location = value.location ?: return null
                 listOf(location.x, location.y, location.z, location.yaw, location.pitch)
@@ -66,6 +67,7 @@ object EntityVariableCodec {
         val value: TypedValue = when (type) {
             ValueType.NUMBER -> TypedValue(type, numberValue = payload.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null)
             ValueType.STRING -> TypedValue(type, stringValue = unbase64(payload) ?: return null)
+            ValueType.BOOLEAN -> TypedValue(type, booleanValue = payload.toBooleanStrictOrNull() ?: return null)
             ValueType.LOCATION -> {
                 val parts = payload.split(',')
                 if (parts.size != 5) return null

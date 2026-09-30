@@ -217,7 +217,7 @@ class WorldVariableStore(
                     addProperty("stringValue", raw.asString)
                 }
             }
-            "LOCATION", "ITEM", "BLOCK", "ENTITY", "SOUND", "EFFECT" -> {
+            "LOCATION", "ITEM", "BLOCK", "ENTITY", "BOOLEAN", "SOUND", "EFFECT" -> {
                 val converted = JsonObject().apply {
                     addProperty("type", type)
                     source.entrySet()
@@ -230,7 +230,7 @@ class WorldVariableStore(
                     null
                 } else converted
             }
-            "BOOLEAN", "VECTOR" -> {
+            "VECTOR" -> {
                 warnDropped(file, section, name, "廃止された型 $type です")
                 null
             }

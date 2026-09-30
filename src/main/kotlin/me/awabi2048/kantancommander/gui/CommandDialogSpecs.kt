@@ -1049,6 +1049,18 @@ internal object CommandDialogSpecs {
             required = false,
             format = InputFormat.ANY_STRING,
         )
+        // 真偽値は即値として保存するため、true／false リテラルだけを受け付けます。
+        ValueType.BOOLEAN -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+            64,
+            validate = { raw ->
+                if (raw.trim().toBooleanStrictOrNull() == null) {
+                    worldVariableValueInvalid(ValueType.BOOLEAN)
+                } else null
+            },
+            required = true,
+            format = InputFormat.ANY_STRING,
+        )
         ValueType.LOCATION,
         ValueType.ITEM,
         ValueType.BLOCK,
@@ -1060,6 +1072,7 @@ internal object CommandDialogSpecs {
     fun worldVariableValueBody(type: ValueType): LocalizationKey<String> = when (type) {
         ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY
         ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY
+        ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BOOLEAN_BODY
         ValueType.LOCATION,
         ValueType.ITEM,
         ValueType.BLOCK,
@@ -1071,6 +1084,7 @@ internal object CommandDialogSpecs {
     fun worldVariableValueInvalid(type: ValueType): LocalizationKey<String> = when (type) {
         ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID
         ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID
+        ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BOOLEAN_INVALID
         ValueType.LOCATION,
         ValueType.ITEM,
         ValueType.BLOCK,

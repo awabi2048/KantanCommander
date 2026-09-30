@@ -123,14 +123,14 @@ class WorldVariableStoreTest {
         val store = WorldVariableStore(directory)
         assertEquals(4.0, store.get(world, "integer_value")?.numberValue)
         assertEquals("world", store.get(world, "text_value")?.stringValue)
-        // 廃止したBOOLEAN／VECTORと旧POSITIONは定義・値ともに破棄します。
-        assertNull(store.get(world, "new_flag"))
+        // BOOLEANは現行の型として移行し、廃止したVECTORと旧POSITIONは定義・値ともに破棄します。
+        assertEquals(false, store.get(world, "new_flag")?.booleanValue)
         assertNull(store.get(world, "old_vector"))
         assertNull(store.get(world, "old_position"))
         assertTrue(store.definitions(world).keys.none { it.equals("current_loop_count", ignoreCase = true) })
         assertEquals(ValueType.NUMBER, store.definitions(world)["integer_value"]?.type)
         assertEquals(ValueType.STRING, store.definitions(world)["text_value"]?.type)
-        assertTrue("new_flag" !in store.definitions(world))
+        assertEquals(ValueType.BOOLEAN, store.definitions(world)["new_flag"]?.type)
         assertTrue("old_vector" !in store.definitions(world))
     }
 

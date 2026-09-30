@@ -108,6 +108,7 @@ class KantanStandaloneExportContributor(
         val valid = when (value.type) {
             ValueType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
             ValueType.STRING -> value.stringValue != null && value.numberValue == null
+            ValueType.BOOLEAN -> value.booleanValue != null
             ValueType.LOCATION,
             ValueType.ITEM,
             ValueType.BLOCK,
@@ -326,6 +327,8 @@ internal class PreparedKantanExport(
         return when (value.type) {
             ValueType.NUMBER -> storageSet(name, "${value.numberValue ?: 0.0}d")
             ValueType.STRING -> storageSet(name, "\"${escapeNbt(value.stringValue.orEmpty())}\"")
+            // SNBTの真偽値はbyte（1b／0b）として保存され、参照側のdata getとも一致します。
+            ValueType.BOOLEAN -> storageSet(name, (value.booleanValue ?: false).toString())
             ValueType.LOCATION,
             ValueType.ITEM,
             ValueType.BLOCK,
