@@ -101,13 +101,14 @@ object CommandValueRules {
      *
      * `4`（強度4ちょうど）・`4..6`（4以上6以下）・`3..`（3以上）・`..2`（2以下）を受理します。
      * 片側省略はその端の限界値を意味し、空欄・非整数・逆順・範囲外・余分な区切り・
-     * 両端省略は拒否します。`0` や `..0` のように0だけを含む範囲は構文上受理しますが、
-     * 呼び出し側で「条件なし」として扱います。
+     * 両端省略は拒否します。区切りの前後空白は `4 .. 6` のように受理します
+     * （`min..max` の乱数範囲と同じ許容方針）。`0`・`..0`・`0..0` のような
+     * 0だけを含む範囲も有効な指定であり、無信号の判定として扱います。
      */
     fun parseSignalStrengthRange(raw: String): IntRange? {
         val normalized = raw.trim()
         if (normalized.isEmpty() || normalized.contains("...")) return null
-        val parts = normalized.split("..", limit = 2)
+        val parts = normalized.split("..", limit = 2).map(String::trim)
         if (parts.size == 1) {
             val single = parseNonNegativeInt(parts[0]) ?: return null
             return (single..single).takeIf { single <= SIGNAL_STRENGTH_MAX }

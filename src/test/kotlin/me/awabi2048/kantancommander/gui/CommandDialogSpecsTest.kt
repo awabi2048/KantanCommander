@@ -511,6 +511,10 @@ class CommandDialogSpecsTest {
         )
         assertNull(CommandDialogSpecs.parseCoordinateComponent(""))
         assertNull(CommandDialogSpecs.parseCoordinateComponent("~~5"))
+        // 相対とローカルの二重記法は受理しません。
+        assertNull(CommandDialogSpecs.parseCoordinateComponent("~^"))
+        assertNull(CommandDialogSpecs.parseCoordinateComponent("~^5"))
+        assertNull(CommandDialogSpecs.parseCoordinateComponent("^~5"))
         assertNull(CommandDialogSpecs.parseCoordinateComponent("abc"))
         assertNull(CommandDialogSpecs.parseCoordinateComponent("1.7976931348623157E309"))
     }
@@ -550,6 +554,7 @@ class CommandDialogSpecsTest {
         )
         assertNull(CommandDialogSpecs.parseAngleComponent("^90"))
         assertNull(CommandDialogSpecs.parseAngleComponent("^"))
+        assertNull(CommandDialogSpecs.parseAngleComponent("~^90"))
         assertNull(CommandDialogSpecs.parseAngleComponent("abc"))
         val spec = CommandDialogSpecs.rotationSpec("yaw")
         assertNull(spec.validate("~90"))
@@ -578,14 +583,16 @@ class CommandDialogSpecsTest {
     @Test
     fun `condition signal strength accepts ranges and rejects malformed input`() {
         val spec = CommandDialogSpecs.conditionSignalStrength
-        // 空欄と0は「条件なし」へ戻す入力として受理します。
+        // 空欄は「条件なし」へ戻す入力として受理します。
         assertNull(spec.validateInput(""))
+        // 0も無信号を判定する有効な入力です。
         assertNull(spec.validateInput("0"))
-        // 単値・開放端・両端範囲を受理します。
+        // 単値・開放端・両端範囲を受理します。区切りの前後空白も受理します。
         assertNull(spec.validateInput("4"))
         assertNull(spec.validateInput("3.."))
         assertNull(spec.validateInput("..2"))
         assertNull(spec.validateInput("4..6"))
+        assertNull(spec.validateInput("4 .. 6"))
         // 範囲外・逆順・非整数は拒否します。
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_SIGNAL_INVALID,

@@ -1969,7 +1969,8 @@ object ExecutableScriptValidator {
                 // 判定位置が未設定の場合は、実行元の制御ブロック位置を使います。
             }
             ConditionSubject.CONTROL_BLOCK -> {
-                // 空欄・0のみの範囲（0指定）は「条件なし」の未選択、構文不正は不正値として区別します。
+                // 空欄は「条件なし」の未選択、構文不正は不正値として区別します。
+                // 0のみの範囲は無信号を判定する有効な指定です。
                 if (node.redstoneSignalSpec() == null) {
                     val raw = node.string("redstoneSignal")
                     val invalid = raw.isNotBlank() &&

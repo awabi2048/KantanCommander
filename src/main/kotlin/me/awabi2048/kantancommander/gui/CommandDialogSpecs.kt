@@ -735,7 +735,9 @@ internal object CommandDialogSpecs {
             trimmed.startsWith("^") -> CoordinateSemantics.LOCAL
             else -> CoordinateSemantics.ABSOLUTE
         }
-        val number = trimmed.removePrefix("~").removePrefix("^").trim()
+        // 接頭辞は先頭1文字だけです。2文字目以降に残る ~ や ^ は数値解析で
+        // 弾かれるため、"~^5" のような二重記法は受理しません。
+        val number = if (semantics == CoordinateSemantics.ABSOLUTE) trimmed else trimmed.substring(1).trim()
         val value = number.takeIf(String::isNotEmpty)?.toDoubleOrNull() ?: 0.0.takeIf { number.isEmpty() }
         if (value == null || !value.isFinite()) return null
         return semantics to value
@@ -1115,7 +1117,8 @@ internal object CommandDialogSpecs {
      * 制御ブロック条件の赤石信号強度指定です。
      *
      * `4`（強度4ちょうど）・`4..6`・`3..`・`..2` の形式を受け付けます。
-     * `0`（または空欄）は「条件なし」へ戻す値として扱い、形式自体は受理します。
+     * `0` も無信号を判定する有効な指定です。空欄のみ「条件なし」へ戻す値として
+     * 扱い、形式自体は受理します。
      */
     val conditionSignalStrength = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT,

@@ -2823,7 +2823,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             ConditionSubject.CONTROL_BLOCK -> {
                 // 制御ブロックへ実際に入力されている信号強度が範囲指定に収まるかを判定します。
-                // 未設定・0指定は「条件なし」の未選択なので未設定不正として扱い、
+                // 0のみの範囲は無信号を判定する有効な条件であり、未設定・空欄だけを
+                // 「条件なし」の未選択として未設定不正にします。
                 // 外側の反転指定は既存の条件実行共通処理へ任せます。
                 val spec = node.redstoneSignalSpec() ?: return ConditionEvaluation.INVALID
                 val strength = RedstoneInputReader.incomingSignalStrength(session.origin.block)

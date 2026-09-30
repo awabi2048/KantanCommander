@@ -734,12 +734,13 @@ fun CommandNode.variableScopeStrict(): VariableScope? {
  * 制御ブロック条件の赤石信号強度指定です。
  *
  * `params["redstoneSignal"]` に 0..15 の整数範囲を `4`・`4..6`・`3..`・`..2` 形式で
- * 保持します。未設定・空欄・0のみの範囲（0指定）は「条件なし」の未選択状態として
- * null を返します。旧 `controlBlockStates` 集合は読込時に LegacyConditionMigration が
+ * 保持します。`0`・`..0`・`0..0` のような0だけを含む範囲は無信号を判定する有効な
+ * 指定であり、未設定・空欄・構文不正だけを null（条件なしの未選択状態）として
+ * 返します。旧 `controlBlockStates` 集合は読込時に LegacyConditionMigration が
  * 本欄へ移行します。
  */
 fun CommandNode.redstoneSignalSpec(): IntRange? =
-    CommandValueRules.parseSignalStrengthRange(string("redstoneSignal"))?.takeIf { it.last > 0 }
+    CommandValueRules.parseSignalStrengthRange(string("redstoneSignal"))
 
 /**
  * 変数操作の大分類です。

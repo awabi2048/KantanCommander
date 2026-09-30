@@ -7576,7 +7576,8 @@ class GestureSequenceEditor(
             GestureSettingScreen.CONDITION_DETAIL -> {
                 // 赤石信号の入力は値駆動で扱います。未選択状態のクリックで有効化
                 // （信号あり＝1..）し、選択済みの再クリックで強度範囲の入力Dialogを
-                // 開きます。0のみの範囲または空欄は「条件なし」として欄を消去します。
+                // 開きます。0指定は無信号の有効な条件であり、空欄だけを「条件なし」
+                // として欄を消去します。
                 if (encoded == "condition-redstone-input") {
                     if (node.redstoneSignalSpec() == null) {
                         if (updateSettingNode(player, settingContext) {
@@ -7593,7 +7594,7 @@ class GestureSequenceEditor(
                             if (validationError != null) return@beginSettingInput KcI18n.text(player, validationError)
                             if (!updateSettingNode(player, settingContext) {
                                     val parsed = CommandValueRules.parseSignalStrengthRange(raw)
-                                    if (parsed == null || parsed.last == 0) {
+                                    if (parsed == null) {
                                         it.params.remove("redstoneSignal")
                                         it.clearConfigured("redstoneSignal")
                                     } else {

@@ -69,14 +69,12 @@ class ExecutableScriptValidatorTest {
             params["subject"] = ConditionSubject.CONTROL_BLOCK.name
         }
 
-        // 空欄と0指定は「条件なし」として拒否します。
+        // 空欄は「条件なし」として拒否します。
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
                 it.nodeId == condition.id && it.fieldKeys == setOf("condition")
             },
         )
-        condition.params["redstoneSignal"] = "0"
-        assertTrue(ExecutableScriptValidator.validate(script).any { it.nodeId == condition.id })
 
         // 構文上受理できない値は条件なしと区別して拒否します。
         condition.params["redstoneSignal"] = "abc"
@@ -86,7 +84,11 @@ class ExecutableScriptValidatorTest {
             },
         )
 
-        // 強度範囲を指定した場合だけ判定条件として有効です。
+        // 0指定は無信号を判定する有効な条件です。
+        condition.params["redstoneSignal"] = "0"
+        assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == condition.id })
+
+        // 強度範囲を指定した場合も判定条件として有効です。
         condition.params["redstoneSignal"] = "1.."
         assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == condition.id })
     }

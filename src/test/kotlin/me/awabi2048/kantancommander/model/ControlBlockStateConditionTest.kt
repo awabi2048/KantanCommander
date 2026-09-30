@@ -8,7 +8,8 @@ import org.junit.jupiter.api.Test
  * 制御ブロック条件の赤石信号強度指定テストです。
  *
  * `redstoneSignal` 欄は `4`・`4..6`・`3..`・`..2` の形式を受理し、
- * 空欄または0だけを含む指定は「条件なし」として扱います。
+ * 空欄のみ「条件なし」として扱います。0だけを含む指定は無信号を判定する
+ * 有効な範囲です。
  */
 class ControlBlockStateConditionTest {
     private fun signalSpec(raw: String?): IntRange? =
@@ -17,12 +18,17 @@ class ControlBlockStateConditionTest {
         }.redstoneSignalSpec()
 
     @Test
-    fun `zero signal range means no condition`() {
+    fun `blank signal means no condition`() {
         assertNull(signalSpec(null))
         assertNull(signalSpec(""))
-        assertNull(signalSpec("0"))
-        assertNull(signalSpec("..0"))
-        assertNull(signalSpec("0..0"))
+    }
+
+    @Test
+    fun `zero signal range tests for no signal`() {
+        // 0だけを含む指定は無信号を判定する有効な範囲です。
+        assertEquals(0..0, signalSpec("0"))
+        assertEquals(0..0, signalSpec("..0"))
+        assertEquals(0..0, signalSpec("0..0"))
     }
 
     @Test
@@ -32,6 +38,8 @@ class ControlBlockStateConditionTest {
         assertEquals(4..6, signalSpec("4..6"))
         assertEquals(4..4, signalSpec("4"))
         assertEquals(15..15, signalSpec("15"))
+        // 区切りの前後空白は乱数範囲と同じく受理します。
+        assertEquals(4..6, signalSpec("4 .. 6"))
     }
 
     @Test
@@ -46,6 +54,8 @@ class ControlBlockStateConditionTest {
         assertNull(CommandValueRules.parseSignalStrengthRange("..16"))
         assertNull(CommandValueRules.parseSignalStrengthRange("1..2..3"))
         assertNull(CommandValueRules.parseSignalStrengthRange(".."))
+        // 空白だけの両端省略は受理しません。
+        assertNull(CommandValueRules.parseSignalStrengthRange(" .. "))
     }
 
     @Test
