@@ -17,9 +17,12 @@ class DslCheckException(message: String, val pos: DslPos) : Exception("$pos: $me
  *
  * @param worldTypes ワールド変数の型表です。実行コンテキスト（ディスク編集対象）に
  *   応じて呼出し側が供給します。表にないワールド変数は未定義としてエラーにします。
+ * @param exprTypes 指定時は検証済みの各式の型を記録します。モデルへの低級化で
+ *   一時変数の型を決めるためにコンパイラが利用します。
  */
 class DslChecker(
     private val worldTypes: Map<String, ValueType> = emptyMap(),
+    private val exprTypes: MutableMap<DslExpr, ValueType>? = null,
 ) {
     /** 実行内変数の型表です。ブロックはスコープを分けず、実行内変数は平坦です。 */
     private val vars = LinkedHashMap<String, ValueType>()
@@ -29,13 +32,29 @@ class DslChecker(
 
     /** 検証を実行し、最終的な実行内変数の型表を返します。 */
     fun check(program: DslProgram): Map<String, ValueType> {
-        program.body.forEach(::checkStmt)
+        checkBlock(program.body)
         return vars.toMap()
+    }
+
+    /**
+     * 1ブロック分の文を検証します。
+     *
+     * 終端文（return／break／continue）の後に続く文は実行経路上到達できず、
+     * グラフでも「到達不能ノード」として保存不可になるため、ここで拒否します。
+     */
+    private fun checkBlock(stmts: List<DslStmt>) {
+        var terminated = false
+        stmts.forEach { stmt ->
+            if (terminated) error(stmt.pos, "終端文の後ろの文は到達できません")
+            checkStmt(stmt)
+            if (stmt is DslReturn || stmt is DslBreak || stmt is DslContinue) terminated = true
+        }
     }
 
     private fun checkStmt(stmt: DslStmt) {
         when (stmt) {
             is DslVarDecl -> {
+                checkVarName(stmt.name, stmt.pos)
                 val actual = checkExpr(stmt.value)
                 if (actual != stmt.type) {
                     error(stmt.value.pos, "変数 '${stmt.name}' は ${stmt.type.dslName()} 型ですが、${actual.dslName()} 型の値は代入できません")
@@ -45,10 +64,16 @@ class DslChecker(
             }
             is DslAssign -> {
                 val targetType = when (val t = stmt.target) {
-                    is DslAssignTarget.Variable -> vars[t.name]
-                        ?: error(t.pos, "未定義の変数 '${t.name}' です")
-                    is DslAssignTarget.WorldVariable -> worldTypes[t.name]
-                        ?: error(t.pos, "未定義のワールド変数 '${t.name}' です")
+                    is DslAssignTarget.Variable -> {
+                        checkVarName(t.name, t.pos)
+                        vars[t.name]
+                            ?: error(t.pos, "未定義の変数 '${t.name}' です")
+                    }
+                    is DslAssignTarget.WorldVariable -> {
+                        checkVarName(t.name, t.pos)
+                        worldTypes[modelName(t.name)]
+                            ?: error(t.pos, "未定義のワールド変数 '${t.name}' です")
+                    }
                 }
                 val valueType = checkExpr(stmt.value)
                 if (stmt.op == DslAssignOp.ASSIGN) {
@@ -59,13 +84,17 @@ class DslChecker(
                     if (targetType != ValueType.NUMBER || valueType != ValueType.NUMBER) {
                         error(stmt.pos, "複合代入は number 型同士でのみ使えます")
                     }
+                    // モデルの数値式言語は剰余を持たないため、%= は写像不能です。
+                    if (stmt.op == DslAssignOp.MOD) {
+                        error(stmt.pos, "剰余代入（%=）はモデルが未対応のため使えません")
+                    }
                 }
             }
             is DslIf -> {
                 val cond = checkExpr(stmt.condition)
                 if (cond != ValueType.BOOLEAN) error(stmt.condition.pos, "if の条件は boolean 型が必要です（${cond.dslName()} 型）")
-                stmt.thenBody.forEach(::checkStmt)
-                stmt.elseBody?.forEach(::checkStmt)
+                checkBlock(stmt.thenBody)
+                stmt.elseBody?.let(::checkBlock)
             }
             is DslRepeat -> {
                 val count = checkExpr(stmt.count)
@@ -75,7 +104,7 @@ class DslChecker(
                     if (n < 1 || n % 1.0 != 0.0) error(stmt.count.pos, "repeat の回数は 1 以上の整数が必要です")
                 }
                 loopDepth++
-                try { stmt.body.forEach(::checkStmt) } finally { loopDepth-- }
+                try { checkBlock(stmt.body) } finally { loopDepth-- }
             }
             is DslBreak -> if (loopDepth == 0) error(stmt.pos, "break は repeat の内側でのみ使えます")
             is DslContinue -> if (loopDepth == 0) error(stmt.pos, "continue は repeat の内側でのみ使えます")
@@ -120,14 +149,30 @@ class DslChecker(
         }
     }
 
-    private fun checkExpr(expr: DslExpr): ValueType = when (expr) {
+    private fun checkExpr(expr: DslExpr): ValueType {
+        val type = inferExpr(expr)
+        // コンパイラが一時変数の型・返り値の型を決めるため、検証済みの式型を残します。
+        exprTypes?.put(expr, type)
+        return type
+    }
+
+    private fun inferExpr(expr: DslExpr): ValueType = when (expr) {
         is DslNumberLiteral -> ValueType.NUMBER
         is DslStringLiteral -> { checkStringLiteral(expr); ValueType.STRING }
         is DslBooleanLiteral -> ValueType.BOOLEAN
         is DslVarRef -> vars[expr.name] ?: error(expr.pos, "未定義の変数 '${expr.name}' です")
-        is DslWorldRef -> worldTypes[expr.name] ?: error(expr.pos, "未定義のワールド変数 '${expr.name}' です")
+        is DslWorldRef -> {
+            checkVarName(expr.name, expr.pos)
+            worldTypes[modelName(expr.name)]
+                ?: error(expr.pos, "未定義のワールド変数 '${expr.name}' です")
+        }
         is DslConst -> when (expr.group) {
-            "gamemode" -> ValueType.STRING
+            "gamemode" -> {
+                if (expr.name !in GAMEMODE_NAMES) {
+                    error(expr.pos, "不明なゲームモード定数 '${expr.name}' です（${GAMEMODE_NAMES.joinToString("/")}）")
+                }
+                ValueType.STRING
+            }
             else -> error(expr.pos, "不明な定数 '${expr.group}.${expr.name}' です")
         }
         is DslUnary -> {
@@ -151,10 +196,22 @@ class DslChecker(
             "'${expr.op.symbol()}' は ${left.dslName()} 型と ${right.dslName()} 型には使えません",
         )
         return when (expr.op) {
-            DslBinaryOp.ADD, DslBinaryOp.SUB, DslBinaryOp.MUL, DslBinaryOp.DIV, DslBinaryOp.MOD ->
+            DslBinaryOp.ADD, DslBinaryOp.SUB, DslBinaryOp.MUL, DslBinaryOp.DIV ->
                 if (left == ValueType.NUMBER && right == ValueType.NUMBER) ValueType.NUMBER else fail()
-            DslBinaryOp.EQ, DslBinaryOp.NE ->
-                if (left == right) ValueType.BOOLEAN else fail()
+            // モデルの数値式言語は剰余を持たないため、% は写像不能です。
+            DslBinaryOp.MOD -> error(expr.pos, "剰余演算（%）はモデルが未対応のため使えません")
+            DslBinaryOp.EQ, DslBinaryOp.NE -> {
+                // モデルの条件が比較できるのは NUMBER／BOOLEAN／STRING の等値と、
+                // `pos.block == block(...)` 形式のブロック照合だけです。
+                val allowed = when {
+                    left == right && left in COMPARABLE_TYPES -> true
+                    left == ValueType.BLOCK && right == ValueType.BLOCK &&
+                        expr.left is DslPropertyRead && expr.left.name == "block" &&
+                        expr.right is DslCallExpr && expr.right.name == "block" -> true
+                    else -> false
+                }
+                if (allowed) ValueType.BOOLEAN else fail()
+            }
             DslBinaryOp.LT, DslBinaryOp.LE, DslBinaryOp.GT, DslBinaryOp.GE ->
                 if (left == ValueType.NUMBER && right == ValueType.NUMBER) ValueType.BOOLEAN else fail()
             DslBinaryOp.AND, DslBinaryOp.OR ->
@@ -195,6 +252,9 @@ class DslChecker(
     /**
      * コンストラクタの引数を検証します。コンストラクタは全引数が名前付きで、
      * 未知の引数名・必須引数の欠落・重複・型不一致をエラーにします。
+     *
+     * location/item/block/target の引数はモデルの構造指定（PositionSpec/TargetSpec/
+     * TypedValue）へ直接写像するため、実行時式は展開できずリテラルだけを受理します。
      */
     private fun checkConstructor(expr: DslCallExpr, spec: Map<String, ArgSpec>) {
         val seen = mutableSetOf<String>()
@@ -206,10 +266,25 @@ class DslChecker(
             if (type != argSpec.type) {
                 error(arg.pos, "引数 '${arg.name}' は ${argSpec.type.dslName()} 型が必要です")
             }
+            if (!isCompileTimeLiteral(arg.value)) {
+                error(arg.value.pos, "'${expr.name}' の引数はリテラルのみ使用できます")
+            }
         }
         spec.filter { it.value.required && it.key !in seen }.keys.firstOrNull()?.let {
             error(expr.pos, "必須の引数 '$it' がありません")
         }
+        // item の個数はモデルの TypedValue 組立が読まないため、表層でも拒否します。
+        if (expr.name == "item" && "amount" in seen) {
+            error(expr.pos, "item の 'amount' はモデルが未対応のため使用できません")
+        }
+    }
+
+    /** コンパイル時定数となる式（数値・非補間文字列・真偽値・名前空間定数）です。 */
+    private fun isCompileTimeLiteral(expr: DslExpr): Boolean = when (expr) {
+        is DslNumberLiteral, is DslBooleanLiteral, is DslConst -> true
+        is DslStringLiteral -> expr.plainText() != null
+        is DslUnary -> expr.op == DslUnaryOp.NEG && expr.operand is DslNumberLiteral
+        else -> false
     }
 
     private fun checkTarget(expr: DslCallExpr): ValueType {
@@ -236,6 +311,25 @@ class DslChecker(
 
     private data class ArgSpec(val type: ValueType, val required: Boolean)
 
+    /**
+     * DSL の変数名をモデルの変数名へ写像します。
+     * モデル命名規則 `[a-z][a-z0-9_.-]*` は `_` を含まないため、
+     * DSL の snake_case は `-` へ置き換えます。`worldTypes` のキーは
+     * モデル側の変数名であるため、参照時にもこの写像を適用します。
+     */
+    private fun modelName(name: String): String = name.replace('_', '-')
+
+    /**
+     * DSL で宣言・参照できる変数名を検証します。
+     * 小文字 snake_case（`[a-z][a-z0-9_]*`）に限定することで、
+     * `_`→`-` の写像が一意に定まります。
+     */
+    private fun checkVarName(name: String, pos: DslPos) {
+        if (!namePattern.matches(name)) {
+            error(pos, "変数名 '${name}' は小文字の snake_case（[a-z][a-z0-9_]*）で指定してください")
+        }
+    }
+
     private fun ValueType.dslName(): String = name.lowercase()
     private fun DslBinaryOp.symbol(): String = when (this) {
         DslBinaryOp.ADD -> "+"; DslBinaryOp.SUB -> "-"; DslBinaryOp.MUL -> "*"
@@ -247,6 +341,9 @@ class DslChecker(
 
     companion object {
         private val INTERP_TYPES = setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+
+        // モデルの条件評価が等値比較できる型（VARIABLE 判定の対応型と一致）です。
+        private val COMPARABLE_TYPES = setOf(ValueType.NUMBER, ValueType.BOOLEAN, ValueType.STRING)
 
         private val LOCATION_ARGS = mapOf(
             "x" to ArgSpec(ValueType.NUMBER, true),
@@ -281,5 +378,9 @@ class DslChecker(
             "nearest_player", "nearby_players", "all_players",
             "random_player", "nearest_entity", "nearby_entities",
         )
+
+        private val GAMEMODE_NAMES = setOf("survival", "creative", "adventure", "spectator")
+
+        private val namePattern = Regex("[a-z][a-z0-9_]*")
     }
 }

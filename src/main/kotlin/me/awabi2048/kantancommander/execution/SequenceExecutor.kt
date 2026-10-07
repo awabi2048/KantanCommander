@@ -2767,8 +2767,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
             }
             ConditionSubject.VARIABLE -> {
-                val value = plugin.variables.get(session.worldId, node.string("variable"))
-                    ?: return ConditionEvaluation.UNRESOLVED
+                // variable 欄はワールド内変数名か、実行内変数の `%{name}%` 単一参照を
+                // 受け付けます。DSL 等で実行内変数を条件へ使えるよう、記法でstoreを
+                // 切り替えます。`${name}` 形式は plain 名と同じワールド内変数として扱います。
+                val rawVariable = node.string("variable")
+                val value = if (TemporaryTemplate.isSingleReference(rawVariable)) {
+                    val tempName = TemporaryTemplate.references(rawVariable).single()
+                    session.executionVariables.get(TemporaryTemplate.normalized(tempName))
+                        ?: return ConditionEvaluation.UNRESOLVED
+                } else {
+                    plugin.variables.get(session.worldId, rawVariable)
+                        ?: return ConditionEvaluation.UNRESOLVED
+                }
                 val operator = node.string("operator", "==")
                 val applicable = when (value.type) {
                     ValueType.NUMBER -> {
@@ -2788,7 +2798,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         val actual = value.booleanValue ?: return ConditionEvaluation.INVALID
                         if (operator == "==") actual == expected else actual != expected
                     }
-                    // 非 NUMBER・非 BOOLEAN 変数との比較は正常 false ではなく型不一致として分離します。
+                    ValueType.STRING -> {
+                        // 文字列に大小関係はないため等値比較だけを許可します。
+                        // gamemode 等の文字列詳細値との照合を可能にします。
+                        if (operator !in setOf("==", "!=")) return ConditionEvaluation.INVALID
+                        val expected = resolveText(node.string("value"), session)
+                            ?: return ConditionEvaluation.UNRESOLVED
+                        val actual = value.stringValue ?: return ConditionEvaluation.INVALID
+                        if (operator == "==") actual == expected else actual != expected
+                    }
+                    // 非 NUMBER・非 BOOLEAN・非 STRING 変数との比較は正常 false ではなく型不一致として分離します。
                     else -> return ConditionEvaluation.INVALID
                 }
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE

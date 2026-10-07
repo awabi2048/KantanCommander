@@ -138,11 +138,13 @@ class DslCheckerTest {
         fail("""program "p" { var l: location = location(x = 1, y = 2, z = "a"); }""")
         fail("""program "p" { var l: location = location(x = 1, y = 2, z = 3, foo = 1); }""")
         fail("""program "p" { var i: item = item("minecraft:stone"); }""")
+        // モデルが item の amount を値として保持できないため、amount は拒否します。
+        fail("""program "p" { var i: item = item(id = "minecraft:stone", amount = 2); }""")
         assertDoesNotThrow {
             check(
                 """program "p" {
                     var l: location = location(x = 1, y = 2, z = 3, yaw = 0);
-                    var i: item = item(id = "minecraft:stone", amount = 2);
+                    var i: item = item(id = "minecraft:stone");
                     var b: block = block(id = "minecraft:dirt");
                 }""",
             )

@@ -1962,22 +1962,65 @@ object ExecutableScriptValidator {
             }
             ConditionSubject.VARIABLE -> {
                 val variableName = node.string("variable")
-                if (!CommandValueRules.isVariableName(variableName)) {
-                    errors += nodeError(node, path, setOf("variable"), "評価する変数名が不正です")
-                }
-                // 定義済みの真偽値変数は等値比較専用の別経路で検証します。
-                // 未定義・型不一致は数値側の checkDefinition が従来どおり報告します。
-                if (variableDefinitions?.get(variableName)?.type == ValueType.BOOLEAN) {
-                    if (node.string("operator") !in setOf("==", "!=")) {
-                        errors += nodeError(node, path, setOf("condition"), "真偽値変数の評価方法は == または != のみ使用できます")
+                // `%{name}%` 単一参照は実行内変数を条件対象にします。
+                // 実行側も同じ記法でstoreを切り替えるため、ここでも記法一致を検証します。
+                val tempVariable = TemporaryTemplate.references(variableName).singleOrNull()
+                    ?.takeIf { TemporaryTemplate.isSingleReference(variableName) }
+                    ?.let(TemporaryTemplate::normalized)
+                if (tempVariable != null) {
+                    val tempType = temporaryDefinitions?.get(tempVariable)
+                    if (temporaryDefinitions != null && tempType == null) {
+                        errors += nodeError(node, path, setOf("variable"), "一時変数が未定義です: $tempVariable")
                     }
-                    validateBooleanInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                    when (tempType) {
+                        ValueType.BOOLEAN -> {
+                            if (node.string("operator") !in setOf("==", "!=")) {
+                                errors += nodeError(node, path, setOf("condition"), "真偽値変数の評価方法は == または != のみ使用できます")
+                            }
+                            validateBooleanInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                        }
+                        ValueType.STRING -> {
+                            if (node.string("operator") !in setOf("==", "!=")) {
+                                errors += nodeError(node, path, setOf("condition"), "文字列変数の評価方法は == または != のみ使用できます")
+                            }
+                            validateTemplate(node.string("value"), node, path, "condition", errors, variableDefinitions, temporaries = temporaryDefinitions)
+                        }
+                        ValueType.NUMBER, null -> {
+                            if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
+                                errors += nodeError(node, path, setOf("condition"), "評価の方法が不正です")
+                            }
+                            validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                        }
+                        else -> errors += nodeError(node, path, setOf("variable"), "比較できない型の一時変数です: $tempVariable")
+                    }
                 } else {
-                    checkDefinition(variableName, ValueType.NUMBER, variableDefinitions, node, path, setOf("variable"), errors)
-                    if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
-                        errors += nodeError(node, path, setOf("condition"), "評価の方法が不正です")
+                    if (!CommandValueRules.isVariableName(variableName)) {
+                        errors += nodeError(node, path, setOf("variable"), "評価する変数名が不正です")
                     }
-                    validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                    val worldType = variableDefinitions?.get(variableName)?.type
+                    // 定義済みの真偽値・文字列変数は等値比較専用の別経路で検証します。
+                    // 未定義・型不一致は数値側の checkDefinition が従来どおり報告します。
+                    when (worldType) {
+                        ValueType.BOOLEAN -> {
+                            if (node.string("operator") !in setOf("==", "!=")) {
+                                errors += nodeError(node, path, setOf("condition"), "真偽値変数の評価方法は == または != のみ使用できます")
+                            }
+                            validateBooleanInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                        }
+                        ValueType.STRING -> {
+                            if (node.string("operator") !in setOf("==", "!=")) {
+                                errors += nodeError(node, path, setOf("condition"), "文字列変数の評価方法は == または != のみ使用できます")
+                            }
+                            validateTemplate(node.string("value"), node, path, "condition", errors, variableDefinitions, temporaries = temporaryDefinitions)
+                        }
+                        else -> {
+                            checkDefinition(variableName, ValueType.NUMBER, variableDefinitions, node, path, setOf("variable"), errors)
+                            if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
+                                errors += nodeError(node, path, setOf("condition"), "評価の方法が不正です")
+                            }
+                            validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
+                        }
+                    }
                 }
             }
             ConditionSubject.BLOCK -> {
