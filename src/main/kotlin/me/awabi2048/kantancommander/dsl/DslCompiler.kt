@@ -133,17 +133,21 @@ class DslCompiler(
 
         /** 終端文（return/break/continue）のように後続へ渡す辺を持たない構造です。 */
         private fun terminalChain(node: CommandNode): StmtChain =
-            StmtChain(node.id, Junction())
+            StmtChain(node.id, Junction(), listOf(node))
 
         // ---- ブロック（文列） ----
 
         /**
          * 文列を直列化します。各文の開放辺は次の文へ繋ぎ、最後の開放辺は
          * exitJunction へ集めます。到達不能な文（終端文の直後）はエラーです。
+         * 戻り値の terminals はブロック末端の終端ノード列で、途中の文が
+         * 終端を含んでいても後続文がある時点で到達不能エラーになるため、
+         * 実質「最後の文の終端集合」として伝播します。
          */
-        private fun compileBlock(stmts: List<DslStmt>, exitJunction: Junction): UUID? {
+        private fun compileBlock(stmts: List<DslStmt>, exitJunction: Junction): StmtChain {
             var pending = Junction()
             var entry: UUID? = null
+            var terminals = emptyList<CommandNode>()
             var first = true
             stmts.forEach { stmt ->
                 val chain = compileStmt(stmt)
@@ -153,9 +157,10 @@ class DslCompiler(
                 resolveJunction(pending, chain.entry)
                 if (first) { entry = chain.entry; first = false }
                 pending = chain.exit
+                terminals = chain.terminals
             }
             exitJunction.incoming += pending.incoming
-            return entry
+            return StmtChain(entry, exitJunction, terminals)
         }
 
         private fun compileStmt(stmt: DslStmt): StmtChain = when (stmt) {
@@ -435,17 +440,19 @@ class DslCompiler(
             val join = Junction()
 
             // then 側の末端を join へ集め、条件の true 辺を then 先頭へ接続します。
-            val thenEntry = compileBlock(stmt.thenBody, join)
-            if (thenEntry != null) resolveJunction(trueJunction, thenEntry) else join.incoming += trueJunction.incoming
+            val then = compileBlock(stmt.thenBody, join)
+            if (then.entry != null) resolveJunction(trueJunction, then.entry) else join.incoming += trueJunction.incoming
 
             // else 側も同様に join へ集めます。else なしのとき false は join へ直通です。
-            if (stmt.elseBody != null) {
-                val elseEntry = compileBlock(stmt.elseBody, join)
-                if (elseEntry != null) resolveJunction(falseJunction, elseEntry) else join.incoming += falseJunction.incoming
-            } else {
+            val elseChain = stmt.elseBody?.let { elseBody ->
+                val chain = compileBlock(elseBody, join)
+                if (chain.entry != null) resolveJunction(falseJunction, chain.entry) else join.incoming += falseJunction.incoming
+                chain
+            } ?: run {
                 join.incoming += falseJunction.incoming
+                null
             }
-            return StmtChain(condEntry, join)
+            return StmtChain(condEntry, join, then.terminals + (elseChain?.terminals ?: emptyList()))
         }
 
         /**
@@ -568,10 +575,20 @@ class DslCompiler(
             start.pairedNodeId = end.id
             end.pairedNodeId = start.id
             val bodyJunction = Junction()
-            val bodyEntry = compileBlock(stmt.body, bodyJunction)
+            val body = compileBlock(stmt.body, bodyJunction)
             resolveJunction(bodyJunction, end.id)
+            if (body.entry != null && bodyJunction.incoming.isEmpty()) {
+                // 本体の全経路が終端文（break/continue/return）で閉じるとき、
+                // FOR_END への構造辺が残りません。GUI の本体挿入と同じ規約で、
+                // 最後の終端ノード（実行時のジャンプ先と一致する CONTINUE を優先）
+                // の next を FOR_END へ繋ぎます。実行時はループ枠のジャンプが
+                // 優先されるため、この辺は構造到達性のためにのみ存在します。
+                val tail = body.terminals.lastOrNull { it.type == CommandType.CONTINUE }
+                    ?: body.terminals.last()
+                tail.next = end.id
+            }
             // 空本体は FOR_START の trueNext を対向ノードへ置く（実行層の即時退出経路）です。
-            start.trueNext = bodyEntry ?: end.id
+            start.trueNext = body.entry ?: end.id
             val exit = Junction().apply { incoming += Tail(end, Edge.NEXT) }
             val head = (pre + start)
             head.zipWithNext().forEach { (a, b) -> a.next = b.id }
@@ -604,7 +621,7 @@ class DslCompiler(
                     node.params["sourceScope"] = VariableScope.EXECUTION.name
                     node.params["source"] = temp
                     // 実体化チェーンの先頭が文の入口、RETURN_VALUE 自体が終端です。
-                    return StmtChain(pre.first().id, Junction())
+                    return StmtChain(pre.first().id, Junction(), listOf(node))
                 }
             }
             return terminalChain(node)
@@ -629,101 +646,7 @@ class DslCompiler(
 
         // ---- 命令呼出し ----
 
-        private val commands = mapOf(
-            "wait" to CommandSpec(CommandType.WAIT, mapOf(
-                "seconds" to ArgRule(ArgKind.NUMBER, required = true, param = "seconds"),
-            )),
-            "teleport" to CommandSpec(CommandType.TELEPORT, mapOf(
-                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
-                "to" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.DESTINATION),
-                "facing" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.DEST_FACING),
-                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
-            )),
-            "give_item" to CommandSpec(CommandType.GIVE_ITEM, mapOf(
-                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
-                "item" to ArgRule(ArgKind.ITEM, required = true),
-                "count" to ArgRule(ArgKind.NUMBER, required = false, param = "count"),
-            )),
-            "display_text" to CommandSpec(CommandType.DISPLAY_TEXT, mapOf(
-                "text" to ArgRule(ArgKind.STRING, required = true, param = "text"),
-                "mode" to ArgRule(ArgKind.LITERAL, required = false, param = "mode",
-                    enumValues = setOf("tellraw", "title", "subtitle", "actionbar")),
-                "subtitle" to ArgRule(ArgKind.STRING, required = false, param = "subtitle"),
-                "fade_in" to ArgRule(ArgKind.NUMBER, required = false, param = "fadeInSeconds"),
-                "stay" to ArgRule(ArgKind.NUMBER, required = false, param = "staySeconds"),
-                "fade_out" to ArgRule(ArgKind.NUMBER, required = false, param = "fadeOutSeconds"),
-                // DISPLAY_TEXT はモデル側で表示対象が必須です。
-                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
-            )),
-            "summon" to CommandSpec(CommandType.SUMMON_ENTITY, mapOf(
-                "entity" to ArgRule(ArgKind.LITERAL, required = true, param = "summonEntity"),
-                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.SUMMON_POS),
-                "tags" to ArgRule(ArgKind.STRING, required = false, param = "tags"),
-            )),
-            "play_sound" to CommandSpec(CommandType.PLAY_SOUND, mapOf(
-                "sound" to ArgRule(ArgKind.LITERAL, required = true, param = "sound"),
-                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.SOUND_POS),
-                "volume" to ArgRule(ArgKind.NUMBER, required = false, param = "volume"),
-                "pitch" to ArgRule(ArgKind.NUMBER, required = false, param = "pitch"),
-                "scope" to ArgRule(ArgKind.LITERAL, required = false, param = "soundScope",
-                    enumValues = setOf("POSITION", "WORLD")),
-                "category" to ArgRule(ArgKind.LITERAL, required = false, param = "soundCategory"),
-                "operation" to ArgRule(ArgKind.LITERAL, required = false, param = "soundOperation",
-                    enumValues = setOf("PLAY", "STOP")),
-            )),
-            "entity_delete" to CommandSpec(CommandType.ENTITY_DELETE, mapOf(
-                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
-            )),
-            "apply_effect" to CommandSpec(CommandType.APPLY_EFFECT, mapOf(
-                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
-                "effect" to ArgRule(ArgKind.LITERAL, required = true, param = "effect"),
-                "seconds" to ArgRule(ArgKind.NUMBER, required = false, param = "seconds"),
-                "level" to ArgRule(ArgKind.NUMBER, required = false, param = "level"),
-            )),
-            "camera_shake" to CommandSpec(CommandType.CAMERA_SHAKE, mapOf(
-                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
-                "intensity" to ArgRule(ArgKind.NUMBER, required = false, param = "intensity"),
-                "seconds" to ArgRule(ArgKind.NUMBER, required = false, param = "seconds"),
-                "type" to ArgRule(ArgKind.LITERAL, required = false, param = "shakeType",
-                    enumValues = setOf("positional", "rotational")),
-            )),
-            "entity_action" to CommandSpec(CommandType.ENTITY_ACTION, mapOf(
-                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
-                "vehicle" to ArgRule(ArgKind.ENTITY, required = false, slot = ArgSlot.SECONDARY_TARGET),
-                "action" to ArgRule(ArgKind.LITERAL, required = true, param = "action",
-                    enumValues = setOf("ride", "dismount", "motion")),
-                "motion_x" to ArgRule(ArgKind.NUMBER, required = false, param = "motionX"),
-                "motion_y" to ArgRule(ArgKind.NUMBER, required = false, param = "motionY"),
-                "motion_z" to ArgRule(ArgKind.NUMBER, required = false, param = "motionZ"),
-            )),
-            "setblock" to CommandSpec(CommandType.BLOCK_OPERATION, mapOf(
-                "pos" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.BLOCK_POS),
-                "block" to ArgRule(ArgKind.BLOCK, required = true),
-                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
-            ), fixedParams = mapOf("operation" to "setblock")),
-            "fill" to CommandSpec(CommandType.BLOCK_OPERATION, mapOf(
-                "from" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.BLOCK_FROM),
-                "to" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.BLOCK_TO),
-                "block" to ArgRule(ArgKind.BLOCK, required = true),
-                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
-            ), fixedParams = mapOf("operation" to "fill")),
-            "firework" to CommandSpec(CommandType.FIREWORK_LAUNCH, mapOf(
-                "item" to ArgRule(ArgKind.LITERAL, required = false, param = "fireworkItem"),
-                "data" to ArgRule(ArgKind.STRING, required = false, param = "fireworkData"),
-                "height" to ArgRule(ArgKind.NUMBER, required = false, param = "burstHeight"),
-                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.FIREWORK_POS),
-            )),
-            "particle" to CommandSpec(CommandType.PARTICLE, mapOf(
-                "particle" to ArgRule(ArgKind.LITERAL, required = true, param = "particle"),
-                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.PARTICLE_POS),
-                "count" to ArgRule(ArgKind.NUMBER, required = false, param = "particleCount"),
-                "speed" to ArgRule(ArgKind.NUMBER, required = false, param = "particleSpeed"),
-                "delta_x" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaX"),
-                "delta_y" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaY"),
-                "delta_z" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaZ"),
-                "data" to ArgRule(ArgKind.STRING, required = false, param = "particleData"),
-            )),
-        )
+        private val commands = DSL_COMMAND_TABLE
 
         private fun lowerCall(stmt: DslCallStmt): StmtChain {
             val spec = commands[stmt.name]
@@ -1066,7 +989,7 @@ class DslCompiler(
 
         fun build(program: DslProgram): CommandGraph {
             val exit = Junction()
-            val entry = compileBlock(program.body, exit)
+            val entry = compileBlock(program.body, exit).entry
             resolveJunction(exit, null)
             graph.entryNodeId = entry
             return graph
@@ -1084,8 +1007,17 @@ private class Junction {
     val incoming = mutableListOf<Tail>()
 }
 
-/** 1文分の構造です。entry は開始ノード、exit は後続へ渡す開放辺の集まりです。 */
-private class StmtChain(val entry: UUID?, val exit: Junction)
+/**
+ * 1文分の構造です。entry は開始ノード、exit は後続へ渡す開放辺の集まり、
+ * terminals はこの文が作った終端ノード（BREAK/CONTINUE/RETURN_VALUE など
+ * 開放辺を持たない末端）をプログラム順に保持します。FOR_END への構造辺の
+ * 供給元として repeat 低下時に使います。
+ */
+private class StmtChain(
+    val entry: UUID?,
+    val exit: Junction,
+    val terminals: List<CommandNode> = emptyList(),
+)
 
 /**
  * 値生成の形です。TEMP_SET／VARIABLE ノードの changeMode・spec・
@@ -1109,16 +1041,16 @@ private sealed interface ValuePlan {
 }
 
 /** 命令の引数仕様です。slot は構造値の格納先、param は params 欄です。 */
-private enum class ArgKind { NUMBER, STRING, BOOLEAN, ENTITY, LOCATION, ITEM, BLOCK, LITERAL }
-private enum class ArgSlot { TARGET, SECONDARY_TARGET, DESTINATION, DEST_FACING, EXEC_POS, SOUND_POS, SUMMON_POS, PARTICLE_POS, BLOCK_POS, BLOCK_FROM, BLOCK_TO, FIREWORK_POS }
-private data class ArgRule(
+internal enum class ArgKind { NUMBER, STRING, BOOLEAN, ENTITY, LOCATION, ITEM, BLOCK, LITERAL }
+internal enum class ArgSlot { TARGET, SECONDARY_TARGET, DESTINATION, DEST_FACING, EXEC_POS, SOUND_POS, SUMMON_POS, PARTICLE_POS, BLOCK_POS, BLOCK_FROM, BLOCK_TO, FIREWORK_POS }
+internal data class ArgRule(
     val kind: ArgKind,
     val required: Boolean,
     val param: String? = null,
     val slot: ArgSlot? = null,
     val enumValues: Set<String>? = null,
 )
-private data class CommandSpec(
+internal data class CommandSpec(
     val type: CommandType,
     val args: Map<String, ArgRule>,
     val fixedParams: Map<String, String> = emptyMap(),
@@ -1128,3 +1060,103 @@ private fun compoundSymbol(op: DslAssignOp): String = when (op) {
     DslAssignOp.ADD -> "+"; DslAssignOp.SUB -> "-"; DslAssignOp.MUL -> "*"
     DslAssignOp.DIV -> "/"; DslAssignOp.MOD -> "%"; DslAssignOp.ASSIGN -> "="
 }
+
+/**
+ * DSL の組み込み命令テーブルです。コンパイラ（DSL→モデル）と
+ * プリンタ（モデル→DSL）が同じ引数写像を共有します。
+ */
+internal val DSL_COMMAND_TABLE: Map<String, CommandSpec> = mapOf(
+            "wait" to CommandSpec(CommandType.WAIT, mapOf(
+                "seconds" to ArgRule(ArgKind.NUMBER, required = true, param = "seconds"),
+            )),
+            "teleport" to CommandSpec(CommandType.TELEPORT, mapOf(
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+                "to" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.DESTINATION),
+                "facing" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.DEST_FACING),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
+            )),
+            "give_item" to CommandSpec(CommandType.GIVE_ITEM, mapOf(
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+                "item" to ArgRule(ArgKind.ITEM, required = true),
+                "count" to ArgRule(ArgKind.NUMBER, required = false, param = "count"),
+            )),
+            "display_text" to CommandSpec(CommandType.DISPLAY_TEXT, mapOf(
+                "text" to ArgRule(ArgKind.STRING, required = true, param = "text"),
+                "mode" to ArgRule(ArgKind.LITERAL, required = false, param = "mode",
+                    enumValues = setOf("tellraw", "title", "subtitle", "actionbar")),
+                "subtitle" to ArgRule(ArgKind.STRING, required = false, param = "subtitle"),
+                "fade_in" to ArgRule(ArgKind.NUMBER, required = false, param = "fadeInSeconds"),
+                "stay" to ArgRule(ArgKind.NUMBER, required = false, param = "staySeconds"),
+                "fade_out" to ArgRule(ArgKind.NUMBER, required = false, param = "fadeOutSeconds"),
+                // DISPLAY_TEXT はモデル側で表示対象が必須です。
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+            )),
+            "summon" to CommandSpec(CommandType.SUMMON_ENTITY, mapOf(
+                "entity" to ArgRule(ArgKind.LITERAL, required = true, param = "summonEntity"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.SUMMON_POS),
+                "tags" to ArgRule(ArgKind.STRING, required = false, param = "tags"),
+            )),
+            "play_sound" to CommandSpec(CommandType.PLAY_SOUND, mapOf(
+                "sound" to ArgRule(ArgKind.LITERAL, required = true, param = "sound"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.SOUND_POS),
+                "volume" to ArgRule(ArgKind.NUMBER, required = false, param = "volume"),
+                "pitch" to ArgRule(ArgKind.NUMBER, required = false, param = "pitch"),
+                "scope" to ArgRule(ArgKind.LITERAL, required = false, param = "soundScope",
+                    enumValues = setOf("POSITION", "WORLD")),
+                "category" to ArgRule(ArgKind.LITERAL, required = false, param = "soundCategory"),
+                "operation" to ArgRule(ArgKind.LITERAL, required = false, param = "soundOperation",
+                    enumValues = setOf("PLAY", "STOP")),
+            )),
+            "entity_delete" to CommandSpec(CommandType.ENTITY_DELETE, mapOf(
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+            )),
+            "apply_effect" to CommandSpec(CommandType.APPLY_EFFECT, mapOf(
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+                "effect" to ArgRule(ArgKind.LITERAL, required = true, param = "effect"),
+                "seconds" to ArgRule(ArgKind.NUMBER, required = false, param = "seconds"),
+                "level" to ArgRule(ArgKind.NUMBER, required = false, param = "level"),
+            )),
+            "camera_shake" to CommandSpec(CommandType.CAMERA_SHAKE, mapOf(
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+                "intensity" to ArgRule(ArgKind.NUMBER, required = false, param = "intensity"),
+                "seconds" to ArgRule(ArgKind.NUMBER, required = false, param = "seconds"),
+                "type" to ArgRule(ArgKind.LITERAL, required = false, param = "shakeType",
+                    enumValues = setOf("positional", "rotational")),
+            )),
+            "entity_action" to CommandSpec(CommandType.ENTITY_ACTION, mapOf(
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+                "vehicle" to ArgRule(ArgKind.ENTITY, required = false, slot = ArgSlot.SECONDARY_TARGET),
+                "action" to ArgRule(ArgKind.LITERAL, required = true, param = "action",
+                    enumValues = setOf("ride", "dismount", "motion")),
+                "motion_x" to ArgRule(ArgKind.NUMBER, required = false, param = "motionX"),
+                "motion_y" to ArgRule(ArgKind.NUMBER, required = false, param = "motionY"),
+                "motion_z" to ArgRule(ArgKind.NUMBER, required = false, param = "motionZ"),
+            )),
+            "setblock" to CommandSpec(CommandType.BLOCK_OPERATION, mapOf(
+                "pos" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.BLOCK_POS),
+                "block" to ArgRule(ArgKind.BLOCK, required = true),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
+            ), fixedParams = mapOf("operation" to "setblock")),
+            "fill" to CommandSpec(CommandType.BLOCK_OPERATION, mapOf(
+                "from" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.BLOCK_FROM),
+                "to" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.BLOCK_TO),
+                "block" to ArgRule(ArgKind.BLOCK, required = true),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
+            ), fixedParams = mapOf("operation" to "fill")),
+            "firework" to CommandSpec(CommandType.FIREWORK_LAUNCH, mapOf(
+                "item" to ArgRule(ArgKind.LITERAL, required = false, param = "fireworkItem"),
+                "data" to ArgRule(ArgKind.STRING, required = false, param = "fireworkData"),
+                "height" to ArgRule(ArgKind.NUMBER, required = false, param = "burstHeight"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.FIREWORK_POS),
+            )),
+            "particle" to CommandSpec(CommandType.PARTICLE, mapOf(
+                "particle" to ArgRule(ArgKind.LITERAL, required = true, param = "particle"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.PARTICLE_POS),
+                "count" to ArgRule(ArgKind.NUMBER, required = false, param = "particleCount"),
+                "speed" to ArgRule(ArgKind.NUMBER, required = false, param = "particleSpeed"),
+                "delta_x" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaX"),
+                "delta_y" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaY"),
+                "delta_z" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaZ"),
+                "data" to ArgRule(ArgKind.STRING, required = false, param = "particleData"),
+            )),
+        )
