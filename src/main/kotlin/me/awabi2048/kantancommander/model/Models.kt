@@ -70,6 +70,14 @@ data class DiskScript(
      * 従来欄も整合させるため、null は旧保存の意味だけを持ちます。
      */
     var trigger: ScriptTrigger? = null,
+    /**
+     * このグラフを生成した DSL ソーステキストです。
+     *
+     * DSL 経路（import／export・更新）でだけ書き込み、GUI 編集では更新しません。
+     * 内容は出所記録であり、外部へ出すテキストは常にグラフから正規形を再生成します。
+     * 旧JSONには存在しないため null で復元します。
+     */
+    var dsl: String? = null,
 )
 
 /**
