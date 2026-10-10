@@ -6,14 +6,21 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.DiskArgument
+import me.awabi2048.kantancommander.model.EventTriggerConditions
+import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TriggerBlockIdentity
+import me.awabi2048.kantancommander.model.TriggerClickSide
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.TriggerLeverState
 import me.awabi2048.kantancommander.model.ValueProperties
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -48,18 +55,30 @@ data class DslDiskLink(
  * - 生成されるグラフは GraphValidator／ExecutableScriptValidator の規則に
  *   従うため、DSL 側の意味と保存・実行可能性を一致させます。
  */
+/** `compile` の結果です。本体グラフと宣言部（起動方法・呼出し引数）を返します。 */
+data class DslCompileResult(
+    val graph: CommandGraph,
+    val trigger: ScriptTrigger,
+    val arguments: List<DiskArgument>,
+)
+
 class DslCompiler(
     private val worldTypes: Map<String, ValueType> = emptyMap(),
     private val diskResolver: (String) -> DslDiskLink? = { null },
 ) {
-    /** 検証済みのプログラムを CommandGraph へ低級化します。 */
-    fun compile(program: DslProgram): CommandGraph {
+    /** 検証済みのプログラムを CommandGraph と宣言部へ低級化します。 */
+    fun compile(program: DslProgram): DslCompileResult {
         val exprTypes = mutableMapOf<DslExpr, ValueType>()
         DslChecker(worldTypes, exprTypes).check(program)
         val builder = Builder(exprTypes)
         val graph = builder.build(program)
         builder.assignMergePairs()
-        return graph
+        return DslCompileResult(
+            graph = graph,
+            trigger = builder.lowerTriggerDecl(program.decls.filterIsInstance<DslTriggerDecl>().singleOrNull()),
+            arguments = program.decls.filterIsInstance<DslDefarg>()
+                .map { DiskArgument(name = DslNames.modelName(it.name), type = it.type) },
+        )
     }
 
     private inner class Builder(private val exprTypes: Map<DslExpr, ValueType>) {
@@ -88,11 +107,10 @@ class DslCompiler(
 
         /**
          * DSL の変数名をモデルの変数名へ写像します。
-         * モデルの命名規則 `[a-z][a-z0-9_.-]*` は `_` を含まないため、
-         * DSLのsnake_caseは `-` へ置き換えます。DSL識別子は `-`／`.` を
-         * 含めないため、この変換は一意です。
+         * 写像規則（snake_case→kebab-case とシステム名の保持）は
+         * [DslNames] が単一正本です。
          */
-        private fun modelName(name: String): String = name.replace('_', '-')
+        private fun modelName(name: String): String = DslNames.modelName(name)
 
         /** 実行内変数参照 `%{name}%` の文字列です。 */
         private fun execRef(name: String): String = "%{${modelName(name)}}%"
@@ -591,6 +609,9 @@ class DslCompiler(
          * VARIABLE 判定（`%{x}%` で実行内変数を直接評価）へ写像します。
          */
         private fun emitCondition(expr: DslExpr, pre: MutableList<CommandNode>): CommandNode = when (expr) {
+            // `if (null)` は条件 subject 未設定の CONDITION ノードです。
+            // ノード既定値を明示的に空欄へ戻し、GUI の未設定状態と同一の保存値にします。
+            is DslNull -> node(CommandType.CONDITION).also { it.params["subject"] = "" }
             is DslBinary -> when (expr.op) {
                 DslBinaryOp.EQ, DslBinaryOp.NE -> {
                     if (expr.left is DslPropertyRead && expr.left.name == "block" &&
@@ -619,9 +640,9 @@ class DslCompiler(
                     // 対象存在判定です。PLAYER との違いは補足条件を持たない点だけです。
                     val node = node(CommandType.CONDITION)
                     node.params["subject"] = ConditionSubject.OTHER_ENTITY.name
-                    node.targetSpec = condTargetSpec(expr)
+                    condTargetSpec(expr)?.let { node.targetSpec = it }
                     // `at` は判定位置です。実行位置 spec は対象解決の起点として使われます。
-                    expr.args.firstOrNull { it.name == "at" }?.let {
+                    expr.args.firstOrNull { it.name == "at" && it.value !is DslNull }?.let {
                         node.executionPositionSpec = positionSpecOf(it.value, pre)
                     }
                     node
@@ -646,8 +667,9 @@ class DslCompiler(
         private fun playerCondition(expr: DslCallExpr, pre: MutableList<CommandNode>): CommandNode {
             val node = node(CommandType.CONDITION)
             node.params["subject"] = ConditionSubject.PLAYER.name
-            node.targetSpec = condTargetSpec(expr)
+            condTargetSpec(expr)?.let { node.targetSpec = it }
             expr.args.forEach { arg ->
+                if (arg.value is DslNull) return@forEach
                 when (arg.name) {
                     "at" -> node.executionPositionSpec = positionSpecOf(arg.value, pre)
                     "sneaking" -> node.params["sneaking"] = (arg.value as? DslBooleanLiteral)?.value?.toString()
@@ -669,24 +691,31 @@ class DslCompiler(
         /**
          * 条件呼出し（player/exists）から対象指定を構築します。
          * `target = <entity式>` の直接指定または `kind = ...` 以下の絞り込みです。
+         * `target = null`・全引数 null のときは未設定（null）を返します。
          */
-        private fun condTargetSpec(expr: DslCallExpr): TargetSpec {
+        private fun condTargetSpec(expr: DslCallExpr): TargetSpec? {
             val direct = expr.args.firstOrNull { it.name == "target" }
-            if (direct != null) return targetSpecOf(direct.value)
-            return targetSpecFromArgs(expr.args, expr.pos)
+            if (direct != null) {
+                if (direct.value is DslNull) return null
+                return targetSpecOf(direct.value)
+            }
+            if (expr.args.all { it.value is DslNull }) return null
+            return targetSpecFromArgs(expr.args.filter { it.value !is DslNull }, expr.pos)
         }
 
         /** `signal(...)` の強度範囲を `4`・`1..15`・`3..`・`..2` の範囲記法へ変換します。 */
         private fun signalRangeText(expr: DslCallExpr): String {
-            val positional = expr.args.filter { it.name == null }
+            val positional = expr.args.filter { it.name == null && it.value !is DslNull }
             if (positional.isNotEmpty()) return literalNumber(positional.single().value).toInt().toString()
-            val min = expr.args.firstOrNull { it.name == "min" }?.let { literalNumber(it.value).toInt() }
-            val max = expr.args.firstOrNull { it.name == "max" }?.let { literalNumber(it.value).toInt() }
+            val min = expr.args.firstOrNull { it.name == "min" && it.value !is DslNull }
+                ?.let { literalNumber(it.value).toInt() }
+            val max = expr.args.firstOrNull { it.name == "max" && it.value !is DslNull }
+                ?.let { literalNumber(it.value).toInt() }
             return when {
                 min != null && max != null -> "$min..$max"
                 min != null -> "$min.."
                 max != null -> "..$max"
-                else -> error(expr.pos, "signal には強度または min/max の指定が必要です")
+                else -> "" // 強度未設定（全引数 null）
             }
         }
 
@@ -726,7 +755,8 @@ class DslCompiler(
 
         private fun lowerRepeat(stmt: DslRepeat): StmtChain {
             val pre = mutableListOf<CommandNode>()
-            val count = scalarText(stmt.count, ValueType.NUMBER, pre)
+            // `repeat(null)` は回数未設定の FOR_START です。
+            val count = if (stmt.count is DslNull) "" else scalarText(stmt.count, ValueType.NUMBER, pre)
             val start = node(CommandType.FOR_START)
             start.params["count"] = count
             val end = node(CommandType.FOR_END)
@@ -800,6 +830,86 @@ class DslCompiler(
             node.params["declaredArgs"] = encodeDeclaredArguments(link.arguments)
             node.snapshot = link.snapshot.deepCopy()
             return stmtChain(node)
+        }
+
+        // ---- 宣言部 ----
+
+        /**
+         * `trigger` 宣言を ScriptTrigger へ写像します。
+         * 宣言がなければ既定の redstone（`effectiveTrigger` の既定と同一）です。
+         */
+        fun lowerTriggerDecl(decl: DslTriggerDecl?): ScriptTrigger {
+            val spec = decl?.spec ?: return ScriptTrigger(TriggerKind.REDSTONE)
+            return when (spec.name) {
+                "timer" -> ScriptTrigger(
+                    TriggerKind.TIMER,
+                    intervalSeconds = literalNumber(spec.args.single().value),
+                )
+                "event" -> lowerEventTrigger(spec)
+                else -> ScriptTrigger(TriggerKind.REDSTONE)
+            }
+        }
+
+        /** `trigger event(...)` の詳細条件を EventTriggerConditions へ写像します。 */
+        private fun lowerEventTrigger(spec: DslCallExpr): ScriptTrigger {
+            var kind: EventTriggerKind? = null
+            val conditions = EventTriggerConditions()
+            var actorTarget: TargetSpec? = null
+            var actorId: UUID? = null
+            var entityTarget: TargetSpec? = null
+            var entityId: UUID? = null
+            var blockType: String? = null
+            var blockIdentity: TriggerBlockIdentity? = null
+            var clickSide: TriggerClickSide? = null
+            var leverState: TriggerLeverState? = null
+            var blockWorld: String? = null
+            var blockX: Int? = null
+            var blockY: Int? = null
+            var blockZ: Int? = null
+            spec.args.forEach { arg ->
+                when (arg.name) {
+                    "kind" -> kind = EventTriggerKind.parse(literalString(arg.value, "kind"))
+                    "actor" -> actorTarget = targetSpecOf(arg.value)
+                    "entity" -> entityTarget = targetSpecOf(arg.value)
+                    "side" -> clickSide = when (literalString(arg.value, "side")) {
+                        "left" -> TriggerClickSide.LEFT
+                        else -> TriggerClickSide.RIGHT
+                    }
+                    "state" -> leverState = when (literalString(arg.value, "state")) {
+                        "on" -> TriggerLeverState.ON
+                        else -> TriggerLeverState.OFF
+                    }
+                    "block" -> blockType = literalString(arg.value, "block")
+                    "actor_id" -> actorId = runCatching {
+                        UUID.fromString(literalString(arg.value, "actor_id"))
+                    }.getOrNull()
+                    "entity_id" -> entityId = runCatching {
+                        UUID.fromString(literalString(arg.value, "entity_id"))
+                    }.getOrNull()
+                    "block_world" -> blockWorld = literalString(arg.value, "block_world")
+                    "block_x" -> blockX = literalNumber(arg.value).toInt()
+                    "block_y" -> blockY = literalNumber(arg.value).toInt()
+                    "block_z" -> blockZ = literalNumber(arg.value).toInt()
+                }
+            }
+            // 個体位置は world・x・y・z が揃ったときだけ構築します。
+            if (blockWorld != null && blockX != null && blockY != null && blockZ != null) {
+                blockIdentity = TriggerBlockIdentity(blockWorld, blockX, blockY, blockZ)
+            }
+            return ScriptTrigger(
+                kind = TriggerKind.EVENT,
+                event = kind,
+                conditions = conditions.copy(
+                    actorTarget = actorTarget,
+                    actorId = actorId,
+                    blockType = blockType,
+                    blockIdentity = blockIdentity,
+                    entityTarget = entityTarget,
+                    entityId = entityId,
+                    clickSide = clickSide,
+                    leverState = leverState,
+                ),
+            )
         }
 
         // ---- 命令呼出し ----
@@ -897,6 +1007,18 @@ class DslCompiler(
             rule: ArgRule,
             pre: MutableList<CommandNode>,
         ) {
+            // `arg = null` はその設定欄の未設定を表します。
+            // spec スロットは未設定のまま、param 欄は既定値（空欄）へ戻します。
+            if (arg.value is DslNull) {
+                rule.param?.let { node.params.remove(it) }
+                when (rule.kind) {
+                    ArgKind.ITEM -> { node.params.remove("item"); node.params.remove("itemData") }
+                    ArgKind.BLOCK -> node.params.remove("block")
+                    ArgKind.PATH_PROPERTY, ArgKind.PATH_ATTRIBUTE -> node.params.remove("entityDataPath")
+                    else -> Unit
+                }
+                return
+            }
             when (rule.kind) {
                 ArgKind.NUMBER -> node.params[rule.param!!] = scalarText(arg.value, ValueType.NUMBER, pre)
                 ArgKind.STRING -> node.params[rule.param!!] = scalarText(arg.value, ValueType.STRING, pre)
@@ -993,7 +1115,7 @@ class DslCompiler(
                     null -> PositionKind.COORDINATES
                     is DslVarRef -> PositionKind.TEMPORARY
                     is DslSpecialPosition -> specialPositionKind(expr.base)
-                    else -> error(expr.base!!.pos, "位置リテラルの基準は変数・disk・captured のみ指定できます")
+                    else -> error(expr.base.pos, "位置リテラルの基準は変数・disk・captured のみ指定できます")
                 }
                 val tempName = (expr.base as? DslVarRef)?.name?.let(::modelName)
                 PositionSpec(

@@ -30,10 +30,10 @@ class DslIOTest {
     @Test
     fun `import が名前・グラフ・出所テキストを持つスクリプトを返す`() {
         val text = """
-            program "hello" {
+            program "hello" ;
                 var x: number = 1;
                 wait(1);
-            }
+            
         """.trimIndent()
         val script = io.importScript(text, UUID.randomUUID())
         assertEquals("hello", script.name)
@@ -44,13 +44,13 @@ class DslIOTest {
     @Test
     fun `export が正規形テキストを返し往復が不動点になる`() {
         val text = """
-            program "round" {
+            program "round" ;
                 var x: number = 1;
                 if (x > 0) {
                     x += 2;
                 }
                 wait(1);
-            }
+            
         """.trimIndent()
         val script = io.importScript(text, UUID.randomUUID())
         val text1 = io.exportScript(script)
@@ -62,10 +62,10 @@ class DslIOTest {
     @Test
     fun `refreshDsl が dsl 欄を正規形へ更新する`() {
         val text = """
-            program "r" {
+            program "r" ;
                 var x: number = 1; // コメントは正規形で消えます
                 wait(1);
-            }
+            
         """.trimIndent()
         val script = io.importScript(text, UUID.randomUUID())
         val refreshed = io.refreshDsl(script)
@@ -79,9 +79,9 @@ class DslIOTest {
     fun `表現できないグラフの refreshDsl は null へ正規化する`() {
         val base = io.importScript(
             """
-            program "f" {
+            program "f" ;
                 wait(1);
-            }
+            
             """.trimIndent(),
             UUID.randomUUID(),
         )
@@ -97,9 +97,10 @@ class DslIOTest {
     @Test
     fun `ファイルの入出力が往復する`(@TempDir dir: File) {
         val text = """
-            program "file_io" {
-                world.score = 3;
-            }
+            program "file_io" ;
+            import world;
+            world.score = 3;
+            
         """.trimIndent()
         val script = io.importScript(text, UUID.randomUUID())
         val file = dir.resolve("file_io.kc")

@@ -31,10 +31,57 @@ class DslParser(text: String) {
     fun parse(): DslProgram {
         val head = expect(DslTokenKind.PROGRAM, "スクリプトは program で始めてください")
         val name = parsePlainString("program の後に \"名前\" を書いてください", "program 名に補間は使えません")
-        expect(DslTokenKind.LBRACE, "program 名の後に '{' を書いてください")
-        val body = parseStatements(DslTokenKind.RBRACE)
-        expect(DslTokenKind.EOF, "program ブロックの後に余分な記述があります")
-        return DslProgram(name, body, head.pos)
+        expectSemicolon()
+        // 宣言部（import／trigger／defarg）は本文より前にだけ書けます。
+        val decls = mutableListOf<DslDecl>()
+        while (true) {
+            when (peekKind()) {
+                DslTokenKind.IMPORT -> decls += parseImport()
+                DslTokenKind.TRIGGER -> decls += parseTrigger()
+                DslTokenKind.DEFARG -> decls += parseDefarg()
+                else -> break
+            }
+        }
+        val body = mutableListOf<DslStmt>()
+        while (peekKind() != DslTokenKind.EOF) {
+            body += parseStatement()
+        }
+        return DslProgram(name, decls, body, head.pos)
+    }
+
+    /** `import world;` の宣言です。現状の宣言対象は world のみです。 */
+    private fun parseImport(): DslDecl {
+        val head = advance()
+        val what = advance()
+        if (what.kind != DslTokenKind.WORLD) error(what.pos, "import の対象は world です")
+        expectSemicolon()
+        return DslImportWorld(head.pos)
+    }
+
+    /**
+     * `trigger timer(interval = 20);`・`trigger redstone;`・`trigger event(...);`
+     * です。裸識別子（redstone）は引数なし呼出しへ正規化します。
+     */
+    private fun parseTrigger(): DslDecl {
+        val head = advance()
+        val expr = parseIdentExpr()
+        expectSemicolon()
+        val spec = when (expr) {
+            is DslCallExpr -> expr
+            is DslVarRef -> DslCallExpr(expr.name, emptyList(), expr.pos)
+            else -> error(expr.pos, "trigger には timer(...)・redstone・event(...) のいずれかを書いてください")
+        }
+        return DslTriggerDecl(spec, head.pos)
+    }
+
+    /** `defarg name: type;` の引数宣言です。引数名は必須で、`defarg null:` は検証で拒否します。 */
+    private fun parseDefarg(): DslDecl {
+        val head = advance()
+        val name = parseVarName("defarg の後に引数名を書いてください")
+        expect(DslTokenKind.COLON, "引数名の後に ':' を書いてください")
+        val type = dslType(expect(DslTokenKind.IDENT, "':' の後に型名を書いてください"))
+        expectSemicolon()
+        return DslDefarg(name, type, head.pos)
     }
 
     /** `"..."` の素文字列を読みます。補間を含む場合はエラーにします。 */
@@ -77,9 +124,20 @@ class DslParser(text: String) {
         DslTokenKind.CALL -> parseCall()
         DslTokenKind.DEL -> parseDelete()
         DslTokenKind.WORLD -> parseAssign(parseAssignTarget())
+        // `null = e` は未命名（変数名が空）の変数への書き込みです。
+        DslTokenKind.NULL -> parseAssign(parseAssignTarget())
         DslTokenKind.IDENT -> parseIdentStatement()
         DslTokenKind.SEMICOLON -> error(peek().pos, "文が必要です")
         else -> error(peek().pos, "文を解釈できません（'${peek().text}'）")
+    }
+
+    /**
+     * 変数名の位置を読みます。`null` は未命名（GUI の空名スロット）を表し、
+     * 内部では空文字列として保持します。
+     */
+    private fun parseVarName(missingMessage: String): String {
+        accept(DslTokenKind.NULL)?.let { return "" }
+        return expect(DslTokenKind.IDENT, missingMessage).text
     }
 
     private fun parseVarDecl(): DslStmt {
@@ -87,7 +145,7 @@ class DslParser(text: String) {
         // `var world.x: T` はワールド変数の新規定義です。
         val world = accept(DslTokenKind.WORLD) != null
         if (world) expect(DslTokenKind.DOT, "var world の後に '.変数名' を書いてください")
-        val name = expect(DslTokenKind.IDENT, "var の後に変数名を書いてください").text
+        val name = parseVarName("var の後に変数名を書いてください")
         expect(DslTokenKind.COLON, "変数名の後に ':' を書いてください")
         val typeTok = expect(DslTokenKind.IDENT, "':' の後に型名を書いてください")
         val type = dslType(typeTok)
@@ -114,8 +172,12 @@ class DslParser(text: String) {
             DslTokenKind.WORLD -> {
                 advance()
                 expect(DslTokenKind.DOT, "world の後に '.変数名' を書いてください")
-                val name = expect(DslTokenKind.IDENT, "world. の後に変数名を書いてください")
-                DslAssignTarget.WorldVariable(name.text, head.pos)
+                val name = parseVarName("world. の後に変数名を書いてください")
+                DslAssignTarget.WorldVariable(name, head.pos)
+            }
+            DslTokenKind.NULL -> {
+                advance()
+                DslAssignTarget.Variable("", head.pos)
             }
             DslTokenKind.IDENT -> {
                 val primary = parseIdentExpr()
@@ -137,8 +199,8 @@ class DslParser(text: String) {
             advance() // .
             advance() // vars
             advance() // .
-            val name = expect(DslTokenKind.IDENT, "'.vars.' の後に変数名を書いてください")
-            return DslAssignTarget.EntityVariable(primary, name.text, pos)
+            val name = parseVarName("'.vars.' の後に変数名を書いてください")
+            return DslAssignTarget.EntityVariable(primary, name, pos)
         }
         if (primary is DslVarRef) return DslAssignTarget.Variable(primary.name, primary.pos)
         error(primary.pos, "代入先は変数名・world.変数名・対象.vars.変数名のいずれかです")
@@ -372,13 +434,14 @@ class DslParser(text: String) {
             DslNumberLiteral(value, t.pos)
         }
         DslTokenKind.STRING_START -> parseStringLiteral()
+        DslTokenKind.NULL -> { val t = advance(); DslNull(t.pos) }
         DslTokenKind.TRUE -> { val t = advance(); DslBooleanLiteral(true, t.pos) }
         DslTokenKind.FALSE -> { val t = advance(); DslBooleanLiteral(false, t.pos) }
         DslTokenKind.WORLD -> {
             val t = advance()
             expect(DslTokenKind.DOT, "world の後に '.変数名' を書いてください")
-            val name = expect(DslTokenKind.IDENT, "world. の後に変数名を書いてください")
-            DslWorldRef(name.text, t.pos)
+            val name = parseVarName("world. の後に変数名を書いてください")
+            DslWorldRef(name, t.pos)
         }
         DslTokenKind.IDENT -> parseIdentExpr()
         DslTokenKind.LPAREN -> {

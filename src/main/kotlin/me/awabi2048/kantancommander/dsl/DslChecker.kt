@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.dsl
 
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.EventTriggerArguments
+import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.ValueProperties
 import me.awabi2048.kantancommander.model.ValueType
 
@@ -31,6 +33,9 @@ class DslChecker(
     /** `del world.x` で削除済みとなったワールド変数名（モデル名）です。 */
     private val worldDeleted = mutableSetOf<String>()
     private var loopDepth = 0
+    /** `import world;` 宣言の有無です。world 参照・place_structure の前提です。 */
+    private var importWorld = false
+    private var triggerSeen = false
 
     /**
      * ワールド変数名（DSL名）の現在の型です。スクリプト内定義・外部定義の順に
@@ -46,8 +51,127 @@ class DslChecker(
 
     /** 検証を実行し、最終的な実行内変数の型表を返します。 */
     fun check(program: DslProgram): Map<String, ValueType> {
+        checkDecls(program.decls)
         checkBlock(program.body)
         return vars.toMap()
+    }
+
+    /**
+     * 宣言部（import／trigger／defarg）を検証します。
+     * 宣言順は import → trigger → defarg 固定です。
+     * defarg は呼出し引数として本文開始時点で定義済みの実行内変数になり、
+     * `trigger event` はイベント種別に応じたイベント引数を同様に定義します。
+     * イベント引数のシードは defarg より先に行い、同名 defarg は重複として
+     * 拒否します。
+     */
+    private fun checkDecls(decls: List<DslDecl>) {
+        var stage = 0
+        decls.forEach { decl ->
+            val next = when (decl) {
+                is DslImportWorld -> 1
+                is DslTriggerDecl -> 2
+                is DslDefarg -> 3
+            }
+            if (next < stage) {
+                error(decl.pos, "宣言の順序は import → trigger → defarg です")
+            }
+            stage = next
+        }
+        decls.forEach { decl ->
+            when (decl) {
+                is DslImportWorld -> importWorld = true
+                is DslTriggerDecl -> checkTrigger(decl)
+                is DslDefarg -> {
+                    if (decl.name.isEmpty()) {
+                        error(decl.pos, "defarg には引数名が必要です")
+                    }
+                    checkVarName(decl.name, decl.pos)
+                    if (decl.name in vars) {
+                        error(decl.pos, "引数 '${decl.name}' が重複しています")
+                    }
+                    vars[decl.name] = decl.type
+                }
+            }
+        }
+    }
+
+    /** `trigger` 宣言を検証します。種別ごとの引数構成を確認します。 */
+    private fun checkTrigger(decl: DslTriggerDecl) {
+        if (triggerSeen) error(decl.pos, "trigger は1つだけ宣言できます")
+        triggerSeen = true
+        val spec = decl.spec
+        when (spec.name) {
+            "redstone" -> if (spec.args.isNotEmpty()) {
+                error(spec.pos, "trigger redstone は引数を取りません")
+            }
+            "timer" -> {
+                val arg = spec.args.singleOrNull()
+                    ?: error(spec.pos, "trigger timer には interval 引数が必要です")
+                if (arg.name != null && arg.name != "interval") {
+                    error(arg.pos, "trigger timer の引数名は interval です")
+                }
+                val v = (arg.value as? DslNumberLiteral)?.value
+                    ?: error(arg.value.pos, "trigger timer の間隔は数値リテラルで指定してください")
+                if (!CommandValueRules.isTimerSeconds(v)) {
+                    error(arg.value.pos, "trigger timer の間隔が範囲外です")
+                }
+            }
+            "event" -> checkEventTrigger(spec)
+            else -> error(spec.pos, "trigger の種別は timer/redstone/event のいずれかです")
+        }
+    }
+
+    /** `trigger event(...)` の引数を検証し、イベント引数を変数表へ導入します。 */
+    private fun checkEventTrigger(spec: DslCallExpr) {
+        val seen = mutableSetOf<String>()
+        var kind: EventTriggerKind? = null
+        spec.args.forEach { arg ->
+            val name = arg.name ?: error(arg.pos, "trigger event の引数は名前付きが必須です")
+            if (!seen.add(name)) error(arg.pos, "引数 '${name}' が重複しています")
+            when (name) {
+                "kind" -> {
+                    val raw = (arg.value as? DslStringLiteral)?.plainText()
+                        ?: error(arg.pos, "kind は文字列リテラルで指定してください")
+                    kind = EventTriggerKind.parse(raw)
+                        ?: error(arg.pos, "kind が不明です（${EVENT_KINDS.joinToString("/")}）")
+                }
+                "actor", "entity" -> {
+                    if (checkExpr(arg.value) != ValueType.ENTITY) {
+                        error(arg.pos, "引数 '${name}' は entity 型が必要です")
+                    }
+                }
+                "side" -> literalEnum(arg, TRIGGER_SIDES)
+                "state" -> literalEnum(arg, TRIGGER_STATES)
+                "block", "block_world", "actor_id", "entity_id" -> {
+                    if ((arg.value as? DslStringLiteral)?.plainText() == null) {
+                        error(arg.pos, "引数 '${name}' は文字列リテラルで指定してください")
+                    }
+                }
+                "block_x", "block_y", "block_z" -> {
+                    val v = (arg.value as? DslNumberLiteral)?.value
+                    if (v == null || v % 1.0 != 0.0) {
+                        error(arg.pos, "引数 '${name}' は整数リテラルで指定してください")
+                    }
+                }
+                else -> error(arg.pos, "trigger event の引数名 '${name}' が不明です")
+            }
+        }
+        if (kind == null) error(spec.pos, "trigger event には kind 引数が必要です")
+        // イベント引数（event_actor 等）は実行開始時に定義済みの変数として導入します。
+        EventTriggerArguments.seedTypesFor(kind).forEach { (name, type) ->
+            vars.getOrPut(name) { type }
+        }
+    }
+
+    private fun literalEnum(arg: DslArg, allowed: Set<String>) {
+        val raw = (arg.value as? DslStringLiteral)?.plainText()
+            ?: error(arg.pos, "引数 '${arg.name}' は文字列リテラルで指定してください")
+        if (raw !in allowed) error(arg.pos, "'${raw}' は使えません（${allowed.joinToString("/")}）")
+    }
+
+    /** `import world;` が無い状態でのワールドコンテキスト使用を拒否します。 */
+    private fun requireWorld(pos: DslPos, what: String) {
+        if (!importWorld) error(pos, "${what}には冒頭の 'import world;' 宣言が必要です")
     }
 
     /**
@@ -69,10 +193,12 @@ class DslChecker(
         when (stmt) {
             is DslVarDecl -> {
                 checkVarName(stmt.name, stmt.pos)
+                if (stmt.world) requireWorld(stmt.pos, "ワールド変数の定義")
                 val actual = checkExpr(stmt.value)
                 if (actual != stmt.type) {
                     error(stmt.value.pos, "変数 '${stmt.name}' は ${stmt.type.dslName()} 型ですが、${actual.dslName()} 型の値は代入できません")
                 }
+                if (stmt.name.isEmpty()) return
                 if (stmt.world) {
                     // `var world.x` は新規定義（DEFINE）です。同一プログラム内の
                     // 重複宣言は拒否しますが、外部定義表（ワールドの変数定義）に
@@ -94,12 +220,17 @@ class DslChecker(
                 val targetType = when (val t = stmt.target) {
                     is DslAssignTarget.Variable -> {
                         checkVarName(t.name, t.pos)
-                        vars[t.name]
+                        // 未命名（空名）スロットへの書き込みは型表を持たないため
+                        // 定義確認を行いません（名なし変数は参照できません）。
+                        if (t.name.isEmpty()) null
+                        else vars[t.name]
                             ?: error(t.pos, "未定義の変数 '${t.name}' です")
                     }
                     is DslAssignTarget.WorldVariable -> {
+                        requireWorld(t.pos, "ワールド変数の使用")
                         checkVarName(t.name, t.pos)
-                        worldType(t.name)
+                        if (t.name.isEmpty()) null
+                        else worldType(t.name)
                             ?: error(t.pos, "未定義のワールド変数 '${t.name}' です")
                     }
                     is DslAssignTarget.EntityVariable -> {
@@ -135,17 +266,20 @@ class DslChecker(
                 when (val t = stmt.target) {
                     is DslAssignTarget.Variable -> {
                         checkVarName(t.name, t.pos)
-                        if (vars.remove(t.name) == null) {
+                        if (t.name.isNotEmpty() && vars.remove(t.name) == null) {
                             error(t.pos, "未定義の変数 '${t.name}' は削除できません")
                         }
                     }
                     is DslAssignTarget.WorldVariable -> {
+                        requireWorld(t.pos, "ワールド変数の削除")
                         checkVarName(t.name, t.pos)
-                        if (worldType(t.name) == null) {
-                            error(t.pos, "未定義のワールド変数 '${t.name}' は削除できません")
+                        if (t.name.isNotEmpty()) {
+                            if (worldType(t.name) == null) {
+                                error(t.pos, "未定義のワールド変数 '${t.name}' は削除できません")
+                            }
+                            worldVars.remove(modelName(t.name))
+                            worldDeleted += modelName(t.name)
                         }
-                        worldVars.remove(modelName(t.name))
-                        worldDeleted += modelName(t.name)
                     }
                     is DslAssignTarget.EntityVariable -> {
                         checkVarName(t.name, t.pos)
@@ -157,14 +291,19 @@ class DslChecker(
                 }
             }
             is DslIf -> {
-                val cond = checkExpr(stmt.condition)
-                if (cond != ValueType.BOOLEAN) error(stmt.condition.pos, "if の条件は boolean 型が必要です（${cond.dslName()} 型）")
+                // `if (null)` は条件 subject 未設定の CONDITION ノードへ写像します。
+                if (stmt.condition !is DslNull) {
+                    val cond = checkExpr(stmt.condition)
+                    if (cond != ValueType.BOOLEAN) error(stmt.condition.pos, "if の条件は boolean 型が必要です（${cond.dslName()} 型）")
+                }
                 checkBlock(stmt.thenBody)
                 stmt.elseBody?.let(::checkBlock)
             }
             is DslRepeat -> {
-                val count = checkExpr(stmt.count)
-                if (count != ValueType.NUMBER) error(stmt.count.pos, "repeat の回数は number 型が必要です")
+                if (stmt.count !is DslNull) {
+                    val count = checkExpr(stmt.count)
+                    if (count != ValueType.NUMBER) error(stmt.count.pos, "repeat の回数は number 型が必要です")
+                }
                 if (stmt.count is DslNumberLiteral) {
                     val n = stmt.count.value
                     if (n < 1 || n % 1.0 != 0.0) error(stmt.count.pos, "repeat の回数は 1 以上の整数が必要です")
@@ -181,7 +320,9 @@ class DslChecker(
     }
 
     private fun checkCallStmt(stmt: DslCallStmt) {
-        stmt.args.forEach { checkExpr(it.value) }
+        // 引数値の `null` はその設定欄の未設定を表し、型検証をスキップします。
+        stmt.args.forEach { if (it.value !is DslNull) checkExpr(it.value) }
+        if (stmt.name == "place_structure") requireWorld(stmt.pos, "ストラクチャーの配置")
         when (stmt.name) {
             "wait" -> {
                 val arg = stmt.args.singleOrNull()
@@ -223,12 +364,15 @@ class DslChecker(
     }
 
     private fun inferExpr(expr: DslExpr): ValueType = when (expr) {
+        is DslNull -> error(expr.pos, "null は値の位置では使えません（spec 引数・条件・変数名の未設定を表す場合のみ使えます）")
         is DslNumberLiteral -> ValueType.NUMBER
         is DslStringLiteral -> { checkStringLiteral(expr); ValueType.STRING }
         is DslBooleanLiteral -> ValueType.BOOLEAN
         is DslVarRef -> vars[expr.name] ?: error(expr.pos, "未定義の変数 '${expr.name}' です")
         is DslWorldRef -> {
+            requireWorld(expr.pos, "ワールド変数の参照")
             checkVarName(expr.name, expr.pos)
+            if (expr.name.isEmpty()) error(expr.pos, "名前が未設定のワールド変数は参照できません")
             worldType(expr.name)
                 ?: error(expr.pos, "未定義のワールド変数 '${expr.name}' です")
         }
@@ -345,7 +489,7 @@ class DslChecker(
      */
     private fun checkTargetCondCall(expr: DslCallExpr, playerExtras: Boolean) {
         val direct = expr.args.firstOrNull { it.name == "target" }
-        if (direct != null) {
+        if (direct != null && direct.value !is DslNull) {
             val type = checkExpr(direct.value)
             if (type != ValueType.ENTITY) {
                 error(direct.pos, "target は entity 型が必要です（${type.dslName()} 型）")
@@ -355,6 +499,8 @@ class DslChecker(
         expr.args.forEach { arg ->
             if (arg.name == null) error(arg.pos, "条件呼出しの引数は名前付きが必須です")
             if (!seen.add(arg.name)) error(arg.pos, "引数 '${arg.name}' が重複しています")
+            // `arg = null` はその条件欄の未設定を表します。
+            if (arg.value is DslNull) return@forEach
             when {
                 arg.name == "target" -> Unit // 上で型検証済み
                 // `at` は判定位置（conditionPositionSpec）です。
@@ -410,6 +556,7 @@ class DslChecker(
         }
         if (bounds.isEmpty()) error(expr.pos, "signal には強度または min/max の指定が必要です")
         bounds.forEach { arg ->
+            if (arg.value is DslNull) return@forEach
             val type = checkExpr(arg.value)
             if (type != ValueType.NUMBER) error(arg.pos, "signal の強度は number 型が必要です")
             val v = (arg.value as? DslNumberLiteral)?.value
@@ -504,11 +651,10 @@ class DslChecker(
 
     /**
      * DSL の変数名をモデルの変数名へ写像します。
-     * モデル命名規則 `[a-z][a-z0-9_.-]*` は `_` を含まないため、
-     * DSL の snake_case は `-` へ置き換えます。`worldTypes` のキーは
+     * 写像規則は [DslNames] が単一正本です。`worldTypes` のキーは
      * モデル側の変数名であるため、参照時にもこの写像を適用します。
      */
-    private fun modelName(name: String): String = name.replace('_', '-')
+    private fun modelName(name: String): String = DslNames.modelName(name)
 
     /**
      * DSL で宣言・参照できる変数名を検証します。
@@ -516,6 +662,8 @@ class DslChecker(
      * `_`→`-` の写像が一意に定まります。
      */
     private fun checkVarName(name: String, pos: DslPos) {
+        // 空文字列は `null` 指定による未命名スロットで、命名規則の対象外です。
+        if (name.isEmpty()) return
         if (!namePattern.matches(name)) {
             error(pos, "変数名 '${name}' は小文字の snake_case（[a-z][a-z0-9_]*）で指定してください")
         }
@@ -585,6 +733,9 @@ class DslChecker(
         )
 
         private val GAMEMODE_NAMES = setOf("survival", "creative", "adventure", "spectator")
+        private val EVENT_KINDS = EventTriggerKind.entries.map { it.name.lowercase() }
+        private val TRIGGER_SIDES = setOf("left", "right")
+        private val TRIGGER_STATES = setOf("on", "off")
 
         private val namePattern = Regex("[a-z][a-z0-9_]*")
         /** 予約位置式・システム変数と衝突するため変数名として使えない識別子です。 */

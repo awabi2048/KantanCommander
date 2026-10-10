@@ -6,8 +6,10 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableScope
@@ -31,7 +33,7 @@ class DslCompilerTest {
         src: String,
         worldTypes: Map<String, ValueType> = emptyMap(),
         resolver: (String) -> DslDiskLink? = { null },
-    ): CommandGraph = DslCompiler(worldTypes, resolver).compile(DslParser.parse(src))
+    ): CommandGraph = DslCompiler(worldTypes, resolver).compile(DslParser.parse(src)).graph
 
     private fun script(graph: CommandGraph) =
         DiskScript(name = "t", owner = UUID.randomUUID(), graph = graph)
@@ -48,11 +50,11 @@ class DslCompilerTest {
     fun `直列文が変数ノードと命令へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 x += 2;
                 wait(1);
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -76,13 +78,13 @@ class DslCompilerTest {
     fun `if が CONDITION と MERGE へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 if (x > 2) {
                     wait(1);
                 }
                 wait(2);
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -109,14 +111,14 @@ class DslCompilerTest {
     fun `if else の両枝が同じ MERGE へ合流する`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 if (x > 2) {
                     wait(1);
                 } else {
                     wait(2);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -136,7 +138,7 @@ class DslCompilerTest {
     fun `else if 連結は1つの合流へ正規化される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 if (x > 2) {
                     wait(1);
@@ -146,7 +148,7 @@ class DslCompilerTest {
                     wait(3);
                 }
                 wait(4);
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -170,11 +172,11 @@ class DslCompilerTest {
     fun `repeat が FOR_START と FOR_END の対応へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 repeat(3) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -195,14 +197,14 @@ class DslCompilerTest {
     fun `repeat 内の if が FOR_END 直前の合流へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 0;
                 repeat(3) {
                     if (x > 1) {
                         wait(1);
                     }
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -218,7 +220,7 @@ class DslCompilerTest {
     fun `break と continue がループ制御へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 0;
                 repeat(5) {
                     x += 1;
@@ -226,7 +228,7 @@ class DslCompilerTest {
                         break;
                     }
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -243,10 +245,10 @@ class DslCompilerTest {
     fun `return が変数と式の両方へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 return x;
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -256,10 +258,10 @@ class DslCompilerTest {
 
         val graph2 = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 return x + 2;
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph2)
@@ -277,9 +279,9 @@ class DslCompilerTest {
         val link = DslDiskLink(UUID.randomUUID(), target)
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 call "other_disk";
-            }
+            
             """.trimIndent(),
             resolver = { name -> if (name == "other_disk") link else null },
         )
@@ -293,13 +295,13 @@ class DslCompilerTest {
     fun `and と or の条件が木構造へ展開される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 var y: number = 2;
                 if (x > 0 && y > 0) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -319,13 +321,13 @@ class DslCompilerTest {
     fun `or 条件が短絡評価の木構造へ展開される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 var y: number = 2;
                 if (x > 0 || y > 0) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -341,12 +343,12 @@ class DslCompilerTest {
     fun `ブロック条件が BLOCK 判定へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var pos: location = location(x = 0, y = 64, z = 0);
                 if (pos.block == block(id = "minecraft:stone")) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -360,12 +362,12 @@ class DslCompilerTest {
     fun `詳細値の条件比較が PROPERTY 実体化と VARIABLE 判定へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var p: entity = target(kind = "nearest_player");
                 if (p.gamemode == gamemode.creative) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -383,13 +385,13 @@ class DslCompilerTest {
     fun `has_item 詳細値が引数付き PROPERTY へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var p: entity = target(kind = "nearest_player");
                 var i: item = item(id = "minecraft:stone");
                 if (p.has_item(i)) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -403,10 +405,11 @@ class DslCompilerTest {
     fun `ワールド変数の読み書きが写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
+            import world;
                 var x: number = world.score + 1;
                 world.score = x;
-            }
+            
             """.trimIndent(),
             worldTypes = mapOf("score" to ValueType.NUMBER),
         )
@@ -425,10 +428,10 @@ class DslCompilerTest {
     fun `setblock と fill がブロック操作へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 setblock(pos = location(x = 0, y = 64, z = 0), block = block(id = "minecraft:stone"));
                 fill(from = ~0 ~0 ~0, to = ~3 ~3 ~3, block = block(id = "minecraft:glass"));
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -446,10 +449,10 @@ class DslCompilerTest {
     fun `give_item の対象と item が写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var p: entity = target(kind = "nearest_player");
                 give_item(target = p, item = item(id = "minecraft:diamond", data = "{}"), count = 2);
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -465,9 +468,9 @@ class DslCompilerTest {
     fun `target クエリが構造値へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var m: entity = target(kind = "nearby_entities", type = "minecraft:zombie", within = 8.0, limit = 4);
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -483,10 +486,10 @@ class DslCompilerTest {
     fun `位置リテラルが成分別の構造値へ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var base: location = location(x = 100, y = 64, z = 0);
                 var l: location = base ~0 ~1 ~0;
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -499,10 +502,10 @@ class DslCompilerTest {
     fun `文字列補間がモデルテンプレートへ写像される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 5;
                 display_text(text = "count is ${'$'}{x}", target = target(kind = "all_players"));
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
@@ -515,9 +518,9 @@ class DslCompilerTest {
         assertThrows(DslCompileException::class.java) {
             compile(
                 """
-                program "t" {
+                program "t" ;
                     call "missing";
-                }
+                
                 """.trimIndent(),
             )
         }
@@ -528,10 +531,10 @@ class DslCompilerTest {
         assertThrows(DslCompileException::class.java) {
             compile(
                 """
-                program "t" {
+                program "t" ;
                     var x: number = 1;
                     var b: boolean = x > 2;
-                }
+                
                 """.trimIndent(),
             )
         }
@@ -542,10 +545,10 @@ class DslCompilerTest {
         assertThrows(DslCheckException::class.java) {
             compile(
                 """
-                program "t" {
+                program "t" ;
                     var x: number = 1;
                     x %= 2;
-                }
+                
                 """.trimIndent(),
             )
         }
@@ -556,10 +559,10 @@ class DslCompilerTest {
         assertThrows(DslCheckException::class.java) {
             compile(
                 """
-                program "t" {
+                program "t" ;
                     return;
                     wait(1);
-                }
+                
                 """.trimIndent(),
             )
         }
@@ -569,12 +572,77 @@ class DslCompilerTest {
     fun `wait の名前付き引数も受理される`() {
         val graph = compile(
             """
-            program "t" {
+            program "t" ;
                 wait(seconds = 0.5);
-            }
+            
             """.trimIndent(),
         )
         assertValid(graph)
         assertEquals("0.5", graph.nodes.values.single().string("seconds"))
+    }
+
+    @Test
+    fun `trigger 宣言が起動方法へ写像される`() {
+        val result = DslCompiler().compile(DslParser.parse("""program "t" ;"""))
+        assertEquals(TriggerKind.REDSTONE, result.trigger.kind)
+
+        val timer = DslCompiler().compile(
+            DslParser.parse("""program "t" ; trigger timer(interval = 20);"""),
+        )
+        assertEquals(TriggerKind.TIMER, timer.trigger.kind)
+        assertEquals(20.0, timer.trigger.intervalSeconds)
+
+        val event = DslCompiler().compile(
+            DslParser.parse("""program "t" ; trigger event(kind = "block_break", side = "left");"""),
+        )
+        assertEquals(TriggerKind.EVENT, event.trigger.kind)
+        assertEquals(EventTriggerKind.BLOCK_BREAK, event.trigger.event)
+    }
+
+    @Test
+    fun `defarg がモデル引数名へ写像される`() {
+        val result = DslCompiler().compile(
+            DslParser.parse("""program "t" ; defarg my_arg: number; var x: number = my_arg;"""),
+        )
+        // 引数名・本文参照ともにモデル名（my-arg）へ写像します。
+        assertEquals(listOf("my-arg"), result.arguments.map { it.name })
+        assertEquals(ValueType.NUMBER, result.arguments.single().type)
+        val decl = result.graph.nodes.values.first { it.type == CommandType.TEMP_SET }
+        assertEquals("%{my-arg}%", decl.string("value"))
+    }
+
+    @Test
+    fun `イベント引数はモデルのシステム名をそのまま使う`() {
+        val result = DslCompiler().compile(
+            DslParser.parse(
+                """program "t" ;
+                    trigger event(kind = "entity_click");
+                    var p: entity = event_actor;
+                """,
+            ),
+        )
+        // event_actor は _ を含むシステム名であり、kebab 写像を掛けません。
+        val decl = result.graph.nodes.values.first { it.type == CommandType.TEMP_SET }
+        assertEquals("event_actor", decl.temporaryEntityTargetSpec?.tempName)
+    }
+
+    @Test
+    fun `null は条件・引数・変数名の未設定へ写像される`() {
+        val graph = compile(
+            """
+            program "t" ;
+                if (null) { wait(1); }
+                setblock(pos = null, block = block(id = "minecraft:stone"));
+                var null: number = 0;
+            
+            """.trimIndent(),
+        )
+        val nodes = graph.nodes.values.toList()
+        val cond = nodes.first { it.type == CommandType.CONDITION }
+        assertEquals("", cond.string("subject"))
+        val setblock = nodes.first { it.type == CommandType.BLOCK_OPERATION }
+        assertNull(setblock.blockPositionSpec)
+        val variable = nodes.first { it.type == CommandType.TEMP_SET && it.string("tempType") == "NUMBER" }
+        assertEquals("", variable.string("name"))
     }
 }

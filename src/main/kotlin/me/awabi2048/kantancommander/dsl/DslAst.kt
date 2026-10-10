@@ -19,12 +19,38 @@ sealed interface DslNode {
     val pos: DslPos
 }
 
-/** `program "name" { ... }` の1ファイル分です。 */
+/**
+ * `.kcp` ファイル1つ分です。`program "name";` の宣言行・宣言部
+ * （import／trigger／defarg）・トップレベルの本文から成ります。
+ */
 data class DslProgram(
     val name: String,
+    val decls: List<DslDecl>,
     val body: List<DslStmt>,
     override val pos: DslPos,
 ) : DslNode
+
+// ---- 宣言部 ----
+
+sealed interface DslDecl : DslNode
+
+/**
+ * `import world;` です。このプログラムがワールドコンテキスト
+ * （ワールド変数・ワールド内ストラクチャー）へアクセスすることを宣言します。
+ */
+data class DslImportWorld(override val pos: DslPos) : DslDecl
+
+/**
+ * `trigger timer(interval = 20);`・`trigger redstone;`・`trigger event(...);`
+ * です。`redstone` の裸識別子は引数なし呼出しへ正規化します。
+ */
+data class DslTriggerDecl(val spec: DslCallExpr, override val pos: DslPos) : DslDecl
+
+/**
+ * `defarg name: type;` の呼出し引数宣言です。宣言順が引数順になり、
+ * 呼出し側では実行開始時に定義済みの EXECUTION 変数として現れます。
+ */
+data class DslDefarg(val name: String, val type: ValueType, override val pos: DslPos) : DslDecl
 
 // ---- 文 ----
 
@@ -33,6 +59,7 @@ sealed interface DslStmt : DslNode
 /**
  * `var name: type = expr;` / `var world.name: type = expr;` です。型注記は必須です。
  * world=true はワールド変数の新規定義（VARIABLE・DEFINE）へ写像します。
+ * name が空文字列の場合は GUI の未命名スロット（`var null`）を表します。
  */
 data class DslVarDecl(
     val name: String,
@@ -44,6 +71,7 @@ data class DslVarDecl(
 
 /** 代入先です。実行内変数・ワールド変数・エンティティ変数を区別します。 */
 sealed interface DslAssignTarget : DslNode {
+    /** name が空文字列の場合は未命名（`null` 指定）を表します。 */
     data class Variable(val name: String, override val pos: DslPos) : DslAssignTarget
     data class WorldVariable(val name: String, override val pos: DslPos) : DslAssignTarget
     /** `expr.vars.name` のエンティティ変数です。expr は entity 型の対象式です。 */
@@ -119,6 +147,12 @@ data class DslStringLiteral(val parts: List<DslStringPart>, override val pos: Ds
 }
 
 data class DslBooleanLiteral(val value: Boolean, override val pos: DslPos) : DslExpr
+
+/**
+ * `null` です。spec 引数・if 条件・変数名の「未設定」を表す専用の式で、
+ * 値としては型を持たず、上記の位置以外では使用できません。
+ */
+data class DslNull(override val pos: DslPos) : DslExpr
 
 /** 裸の識別子による実行内変数参照です。 */
 data class DslVarRef(val name: String, override val pos: DslPos) : DslExpr

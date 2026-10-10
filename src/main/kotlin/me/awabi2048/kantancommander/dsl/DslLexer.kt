@@ -7,6 +7,7 @@ enum class DslTokenKind {
     IDENT, NUMBER,
     STRING_START, STRING_TEXT, STRING_END, INTERP_START, INTERP_END,
     PROGRAM, VAR, IF, ELSE, REPEAT, BREAK, CONTINUE, RETURN, CALL, WORLD, TRUE, FALSE, DEL,
+    IMPORT, TRIGGER, DEFARG, NULL,
     LBRACE, RBRACE, LPAREN, RPAREN, COMMA, SEMICOLON, COLON, DOT,
     ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, PERCENT_ASSIGN,
     EQ, NE, LT, LE, GT, GE, AND, OR, NOT,
@@ -220,6 +221,10 @@ class DslLexer(private val text: String) {
         "call" to DslTokenKind.CALL,
         "world" to DslTokenKind.WORLD,
         "del" to DslTokenKind.DEL,
+        "import" to DslTokenKind.IMPORT,
+        "trigger" to DslTokenKind.TRIGGER,
+        "defarg" to DslTokenKind.DEFARG,
+        "null" to DslTokenKind.NULL,
         "true" to DslTokenKind.TRUE,
         "false" to DslTokenKind.FALSE,
     )

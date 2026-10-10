@@ -4,6 +4,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.dsl.DslCompileResult
 import me.awabi2048.kantancommander.dsl.DslCompiler
 import me.awabi2048.kantancommander.dsl.DslDiskLink
 import me.awabi2048.kantancommander.dsl.DslParser
@@ -12,6 +13,7 @@ import me.awabi2048.kantancommander.dsl.DslProgram
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
@@ -289,7 +291,9 @@ class ScriptStore(
         // 保存では正規形 DSL を正本として書きます。DSL へ写像できないグラフは
         // 従来形式のまま残し、次回読込の自動変換へ回します。
         script.dsl = runCatching {
-            DslPrinter(::diskName).print(script.graph, script.name)
+            DslPrinter(::diskName).print(
+                script.graph, script.name, script.effectiveTrigger(), script.arguments,
+            )
         }.onFailure {
             logger.warning(
                 "DSL への変換に失敗したためグラフ形式で保存します: ${script.name} (${it.message})"
@@ -324,7 +328,9 @@ class ScriptStore(
                 val target = file(caller.id)
                 if (!target.isFile) return@withScriptLock
                 caller.dsl = runCatching {
-                    DslPrinter(::diskName).print(caller.graph, caller.name)
+                    DslPrinter(::diskName).print(
+                        caller.graph, caller.name, caller.effectiveTrigger(), caller.arguments,
+                    )
                 }.getOrNull()
                 atomicWrite(target, gson.toJson(caller))
                 cache[caller.id] = caller.deepCopy()
@@ -616,7 +622,11 @@ class ScriptStore(
 
     /** 旧形式の読込済みスクリプトへ正規形 DSL を生成して `dsl` 欄を書き戻します。 */
     private fun convertToCanonicalDsl(script: DiskScript, target: File) {
-        val dsl = runCatching { DslPrinter(::diskName).print(script.graph, script.name) }
+        val dsl = runCatching {
+            DslPrinter(::diskName).print(
+                script.graph, script.name, script.effectiveTrigger(), script.arguments,
+            )
+        }
             .onFailure {
                 logger.warning(
                     "DSL へ変換できないためグラフ形式を維持します: ${script.name} (${it.message})"
@@ -628,15 +638,15 @@ class ScriptStore(
     }
 
     /**
-     * `dsl` 欄の DSL テキストを CommandGraph へ再コンパイルします。
+     * `dsl` 欄の DSL テキストを CommandGraph と宣言部へ再コンパイルします。
      * 読込時の正本処理であり、失敗は呼出し側で破損データとして隔離されます。
      * `call` の参照先グラフは現在の正本（DSL 適用済み）から取ります。
      */
-    private fun compileCanonicalDsl(script: DiskScript, program: DslProgram): CommandGraph {
+    private fun compileCanonicalDsl(script: DiskScript, program: DslProgram): DslCompileResult {
         if (!dslCompiling.get().add(script.id)) {
             // `call` 解決がこのディスクへ戻ってきた循環です。保存済みグラフを
             // スナップショットとして返し、循環可否は検証層へ委ねます。
-            return script.graph
+            return DslCompileResult(script.graph, script.effectiveTrigger(), script.arguments)
         }
         try {
             return DslCompiler(worldTypes(), ::resolveDiskLink).compile(program)
@@ -672,12 +682,13 @@ class ScriptStore(
     /**
      * 識別子・所有者・一覧公開状態・作成時刻を除いた利用者編集部分を比較します。
      * 折りたたみ表示は実行内容ではないため比較対象外とし、トグルだけで
-     * ディスク内容ありとは判定しません。
+     * ディスク内容ありとは判定しません。起動方法は正本 `trigger` と旧欄
+     * （`activation`／`timer`）の読み替え後の意味で比較します。
      */
     private fun sameEditableContent(left: DiskScript, right: DiskScript): Boolean =
         left.name == right.name &&
-            left.activation == right.activation &&
-            left.timer == right.timer &&
+            left.effectiveTrigger() == right.effectiveTrigger() &&
+            left.arguments == right.arguments &&
             left.graph == right.graph
 
     private fun file(id: UUID) = dir.resolve("$id.json")
@@ -768,9 +779,13 @@ class ScriptStore(
         script.dsl?.let { dsl ->
             runCatching {
                 val program = DslParser.parse(dsl)
-                script.graph = compileCanonicalDsl(script, program)
-                // DSL 正本では program 宣言名がプログラム名の正本です。
+                val compiled = compileCanonicalDsl(script, program)
+                script.graph = compiled.graph
+                // DSL 正本では program 宣言名がプログラム名、宣言部が起動方法・
+                // 呼出し引数の正本です。
                 script.name = program.name
+                script.trigger = compiled.trigger
+                script.arguments = compiled.arguments
             }.onFailure {
                 logger.warning(
                     "DSL 正本のコンパイルに失敗したため保存済みグラフを使います: " +

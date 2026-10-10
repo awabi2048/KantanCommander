@@ -21,93 +21,93 @@ class DslCheckerTest {
 
     @Test
     fun `variable must be declared before use`() {
-        fail("""program "p" { x = 1; }""")
-        fail("""program "p" { var y: number = x; }""")
-        assertDoesNotThrow { check("""program "p" { var x: number = 1; x = 2; }""") }
+        fail("""program "p" ; x = 1; """)
+        fail("""program "p" ; var y: number = x; """)
+        assertDoesNotThrow { check("""program "p" ; var x: number = 1; x = 2; """) }
     }
 
     @Test
     fun `variable redeclaration is rejected`() {
-        fail("""program "p" { var x: number = 1; var x: number = 2; }""")
+        fail("""program "p" ; var x: number = 1; var x: number = 2; """)
     }
 
     @Test
     fun `var declaration type must match initializer`() {
-        fail("""program "p" { var x: number = "a"; }""")
-        fail("""program "p" { var s: string = 1; }""")
-        assertDoesNotThrow { check("""program "p" { var x: number = 1 + 2; }""") }
+        fail("""program "p" ; var x: number = "a"; """)
+        fail("""program "p" ; var s: string = 1; """)
+        assertDoesNotThrow { check("""program "p" ; var x: number = 1 + 2; """) }
     }
 
     @Test
     fun `assignment type must match`() {
-        fail("""program "p" { var x: number = 1; x = "a"; }""")
-        assertDoesNotThrow { check("""program "p" { var x: number = 1; x = 2; }""") }
+        fail("""program "p" ; var x: number = 1; x = "a"; """)
+        assertDoesNotThrow { check("""program "p" ; var x: number = 1; x = 2; """) }
     }
 
     @Test
     fun `compound assignment requires number`() {
-        fail("""program "p" { var s: string = "a"; s += "b"; }""")
-        assertDoesNotThrow { check("""program "p" { var x: number = 1; x += 2; }""") }
+        fail("""program "p" ; var s: string = "a"; s += "b"; """)
+        assertDoesNotThrow { check("""program "p" ; var x: number = 1; x += 2; """) }
     }
 
     @Test
     fun `if condition must be boolean`() {
-        fail("""program "p" { var n: number = 1; if (n) { } }""")
-        assertDoesNotThrow { check("""program "p" { var b: boolean = true; if (b) { } }""") }
+        fail("""program "p" ; var n: number = 1; if (n) { } """)
+        assertDoesNotThrow { check("""program "p" ; var b: boolean = true; if (b) { } """) }
     }
 
     @Test
     fun `break and continue require enclosing repeat`() {
-        fail("""program "p" { break; }""")
-        fail("""program "p" { continue; }""")
+        fail("""program "p" ; break; """)
+        fail("""program "p" ; continue; """)
         assertDoesNotThrow {
-            check("""program "p" { repeat(3) { if (true) { break; } continue; } }""")
+            check("""program "p" ; repeat(3) { if (true) { break; } continue; } """)
         }
     }
 
     @Test
     fun `repeat count rules`() {
-        fail("""program "p" { repeat("x") { } }""")
-        fail("""program "p" { repeat(0) { } }""")
-        fail("""program "p" { repeat(2.5) { } }""")
-        assertDoesNotThrow { check("""program "p" { var n: number = 3; repeat(n) { } }""") }
+        fail("""program "p" ; repeat("x") { } """)
+        fail("""program "p" ; repeat(0) { } """)
+        fail("""program "p" ; repeat(2.5) { } """)
+        assertDoesNotThrow { check("""program "p" ; var n: number = 3; repeat(n) { } """) }
     }
 
     @Test
     fun `binary operator type rules`() {
-        fail("""program "p" { var x: number = 1 + "a"; }""")
-        fail("""program "p" { var b: boolean = true && 1; }""")
-        fail("""program "p" { var b: boolean = 1 == "a"; }""")
-        fail("""program "p" { var b: boolean = 1 < true; }""")
+        fail("""program "p" ; var x: number = 1 + "a"; """)
+        fail("""program "p" ; var b: boolean = true && 1; """)
+        fail("""program "p" ; var b: boolean = 1 == "a"; """)
+        fail("""program "p" ; var b: boolean = 1 < true; """)
         assertDoesNotThrow {
-            check("""program "p" { var a: boolean = 1 + 2 * 3 == 7; var b: boolean = !a; }""")
+            check("""program "p" ; var a: boolean = 1 + 2 * 3 == 7; var b: boolean = !a; """)
         }
     }
 
     @Test
     fun `unary operator type rules`() {
-        fail("""program "p" { var x: number = -"a"; }""")
-        fail("""program "p" { var b: boolean = !1; }""")
+        fail("""program "p" ; var x: number = -"a"; """)
+        fail("""program "p" ; var b: boolean = !1; """)
     }
 
     @Test
     fun `property reads follow the registry`() {
-        fail("""program "p" { var n: number = 1; var g: string = n.gamemode; }""")
-        fail("""program "p" { var e: entity = target(kind = "nearest_player"); var u: number = e.unknown; }""")
-        fail("""program "p" { var e: entity = target(kind = "nearest_player"); var d: number = e.distance; }""")
-        fail("""program "p" { var e: entity = target(kind = "nearest_player"); var d: number = e.distance(1); }""")
-        fail("""program "p" { var l: location = ~0 ~0 ~0; var a: number = l.amount; }""")
-        fail("""program "p" { var e: entity = target(kind = "nearest_player"); var n: string = e.name(1); }""")
+        fail("""program "p" ; var n: number = 1; var g: string = n.gamemode; """)
+        fail("""program "p" ; var e: entity = target(kind = "nearest_player"); var u: number = e.unknown; """)
+        fail("""program "p" ; var e: entity = target(kind = "nearest_player"); var d: number = e.distance; """)
+        fail("""program "p" ; var e: entity = target(kind = "nearest_player"); var d: number = e.distance(1); """)
+        fail("""program "p" ; var l: location = ~0 ~0 ~0; var a: number = l.amount; """)
+        fail("""program "p" ; var e: entity = target(kind = "nearest_player"); var n: string = e.name(1); """)
         assertDoesNotThrow {
             check(
-                """program "p" {
+                """program "p" ;
                     var e: entity = target(kind = "nearest_player");
                     var l: location = ~0 ~0 ~0;
                     var g: string = e.gamemode;
                     var d: number = e.distance(l);
                     var b: block = l.block;
                     var p: number = l.redstone_power;
-                }""",
+                """,
             )
         }
     }
@@ -115,88 +115,90 @@ class DslCheckerTest {
     @Test
     fun `property arg type must match`() {
         fail(
-            """program "p" {
+            """program "p" ;
                 var e: entity = target(kind = "nearest_player");
                 var h: boolean = e.has_item(1);
-            }""",
+            """,
         )
         assertDoesNotThrow {
             check(
-                """program "p" {
+                """program "p" ;
                     var e: entity = target(kind = "nearest_player");
                     var it: item = item(id = "minecraft:stone");
                     var h: boolean = e.has_item(it);
-                }""",
+                """,
             )
         }
     }
 
     @Test
     fun `constructors require named args and required params`() {
-        fail("""program "p" { var l: location = location(100, 64, 0); }""")
-        fail("""program "p" { var l: location = location(x = 1, y = 2); }""")
-        fail("""program "p" { var l: location = location(x = 1, y = 2, z = "a"); }""")
-        fail("""program "p" { var l: location = location(x = 1, y = 2, z = 3, foo = 1); }""")
-        fail("""program "p" { var i: item = item("minecraft:stone"); }""")
+        fail("""program "p" ; var l: location = location(100, 64, 0); """)
+        fail("""program "p" ; var l: location = location(x = 1, y = 2); """)
+        fail("""program "p" ; var l: location = location(x = 1, y = 2, z = "a"); """)
+        fail("""program "p" ; var l: location = location(x = 1, y = 2, z = 3, foo = 1); """)
+        fail("""program "p" ; var i: item = item("minecraft:stone"); """)
         // モデルが item の amount を値として保持できないため、amount は拒否します。
-        fail("""program "p" { var i: item = item(id = "minecraft:stone", amount = 2); }""")
+        fail("""program "p" ; var i: item = item(id = "minecraft:stone", amount = 2); """)
         assertDoesNotThrow {
             check(
-                """program "p" {
+                """program "p" ;
                     var l: location = location(x = 1, y = 2, z = 3, yaw = 0);
                     var i: item = item(id = "minecraft:stone");
                     var b: block = block(id = "minecraft:dirt");
-                }""",
+                """,
             )
         }
     }
 
     @Test
     fun `target query validation`() {
-        fail("""program "p" { var e: entity = target(); }""")
-        fail("""program "p" { var e: entity = target(kind = "bogus"); }""")
-        fail("""program "p" { var e: entity = target(kind = "nearest_player", within = "x"); }""")
-        fail("""program "p" { var e: entity = target(kind = "nearest_player", anchor = 1); }""")
+        fail("""program "p" ; var e: entity = target(); """)
+        fail("""program "p" ; var e: entity = target(kind = "bogus"); """)
+        fail("""program "p" ; var e: entity = target(kind = "nearest_player", within = "x"); """)
+        fail("""program "p" ; var e: entity = target(kind = "nearest_player", anchor = 1); """)
         assertDoesNotThrow {
             check(
-                """program "p" {
+                """program "p" ;
                     var e: entity = target(kind = "nearest_player", within = 8.0);
                     var m: entity = target(kind = "nearby_entities", type = "minecraft:zombie", limit = 3, sort = "random");
-                }""",
+                """,
             )
         }
     }
 
     @Test
     fun `position literal base must be location`() {
-        fail("""program "p" { var n: number = 1; var v: location = n ~0 ~0 ~0; }""")
-        fail("""program "p" { var s: string = "a"; var v: location = s ~0 ~0 ~0; }""")
+        fail("""program "p" ; var n: number = 1; var v: location = n ~0 ~0 ~0; """)
+        fail("""program "p" ; var s: string = "a"; var v: location = s ~0 ~0 ~0; """)
         assertDoesNotThrow {
-            check("""program "p" { var l: location = ~0 ~0 ~0; var v: location = l ~0 ~1 ~0; }""")
+            check("""program "p" ; var l: location = ~0 ~0 ~0; var v: location = l ~0 ~1 ~0; """)
         }
     }
 
     @Test
     fun `world variables use the provided type table`() {
-        fail("""program "p" { world.money = 1; }""")
-        fail("""program "p" { var n: number = world.money; }""")
-        fail("""program "p" { world.money += 1; }""", mapOf("money" to ValueType.STRING))
+        fail("""program "p" ; import world; world.money = 1; """)
+        fail("""program "p" ; import world; var n: number = world.money; """)
+        fail("""program "p" ; import world; world.money += 1; """, mapOf("money" to ValueType.STRING))
         assertDoesNotThrow {
-            check("""program "p" { world.money = 1; world.money += 2; var m: number = world.money; }""",
+            check("""program "p" ; import world; world.money = 1; world.money += 2; var m: number = world.money; """,
                 mapOf("money" to ValueType.NUMBER))
         }
+        // import world のないワールド参照は拒否します。
+        fail("""program "p" ; world.money = 1; """, mapOf("money" to ValueType.NUMBER))
     }
 
     @Test
     fun `string interpolation restricts expression types`() {
         fail(
-            """program "p" {
+            """program "p" ;
                 var e: entity = target(kind = "nearest_player");
                 var s: string = "${'$'}{e}";
-            }""",
+            """,
         )
         assertDoesNotThrow {
-            check("""program "p" { var n: number = 1; var s: string = "${'$'}{n + 1}"; }""")
+            check("""program "p" ; var n: number = 1; var s: string = "${'$'}{n + 1}"; """)
         }
     }
 
@@ -204,32 +206,104 @@ class DslCheckerTest {
     fun `gamemode constant compares as string`() {
         assertDoesNotThrow {
             check(
-                """program "p" {
+                """program "p" ;
                     var e: entity = target(kind = "nearest_player");
                     var g: boolean = e.gamemode == gamemode.creative;
-                }""",
+                """,
             )
         }
     }
 
     @Test
     fun `wait validation`() {
-        fail("""program "p" { wait(); }""")
-        fail("""program "p" { wait("a"); }""")
-        fail("""program "p" { wait(foo = 1); }""")
-        fail("""program "p" { wait(0.02); }""")
-        fail("""program "p" { wait(1, 2); }""")
-        assertDoesNotThrow { check("""program "p" { wait(1); wait(0.05); wait(seconds = 2); }""") }
+        fail("""program "p" ; wait(); """)
+        fail("""program "p" ; wait("a"); """)
+        fail("""program "p" ; wait(foo = 1); """)
+        fail("""program "p" ; wait(0.02); """)
+        fail("""program "p" ; wait(1, 2); """)
+        assertDoesNotThrow { check("""program "p" ; wait(1); wait(0.05); wait(seconds = 2); """) }
     }
 
     @Test
     fun `error message carries position`() {
-        val e = fail("program \"p\" {\n    x = 1;\n}")
+        val e = fail("program \"p\" ;\n    x = 1;\n")
         assertTrue(e.message!!.startsWith("2:"), "unexpected position: ${e.message}")
     }
 
     @Test
     fun `call disk statement`() {
-        assertDoesNotThrow { check("""program "p" { call "disk_a"; }""") }
+        assertDoesNotThrow { check("""program "p" ; call "disk_a"; """) }
+    }
+
+    @Test
+    fun `declaration order is import then trigger then defarg`() {
+        fail("""program "p" ; trigger redstone; import world;""")
+        fail("""program "p" ; defarg x: number; trigger redstone;""")
+        fail("""program "p" ; defarg x: number; import world;""")
+        assertDoesNotThrow {
+            check("""program "p" ; import world; trigger redstone; defarg x: number;""")
+        }
+    }
+
+    @Test
+    fun `trigger declaration rules`() {
+        fail("""program "p" ; trigger timer;""")
+        fail("""program "p" ; trigger timer(seconds = 20);""")
+        fail("""program "p" ; trigger timer(interval = "x");""")
+        fail("""program "p" ; trigger bogus;""")
+        fail("""program "p" ; trigger redstone; trigger timer(interval = 20);""")
+        assertDoesNotThrow { check("""program "p" ; trigger timer(interval = 20);""") }
+        assertDoesNotThrow { check("""program "p" ; trigger redstone;""") }
+        assertDoesNotThrow { check("""program "p" ; trigger event(kind = "block_break");""") }
+    }
+
+    @Test
+    fun `defarg introduces arguments as variables`() {
+        fail("""program "p" ; defarg x: number; defarg x: number;""")
+        fail("""program "p" ; defarg null: number;""")
+        assertDoesNotThrow {
+            check("""program "p" ; defarg amount: number; var y: number = amount + 1;""")
+        }
+    }
+
+    @Test
+    fun `event trigger seeds event arguments`() {
+        assertDoesNotThrow {
+            check("""program "p" ; trigger event(kind = "entity_click"); var p: entity = event_actor;""")
+        }
+        // イベント引数と同名の defarg は重複として拒否します。
+        fail("""program "p" ; trigger event(kind = "entity_click"); defarg event_actor: entity;""")
+        // イベント引数が無いトリガーでは未定義変数です。
+        fail("""program "p" ; var p: entity = event_actor;""")
+    }
+
+    @Test
+    fun `world use requires import world`() {
+        fail("""program "p" ; world.money = 1; """, mapOf("money" to ValueType.NUMBER))
+        fail("""program "p" ; var world.money: number = 1; """)
+        fail("""program "p" ; place_structure(structure = "a", at = ~0 ~0 ~0);""")
+        assertDoesNotThrow {
+            check("""program "p" ; import world; place_structure(structure = "a", at = ~0 ~0 ~0);""")
+        }
+    }
+
+    @Test
+    fun `null is rejected in value positions`() {
+        fail("""program "p" ; var x: number = null;""")
+        fail("""program "p" ; var s: string = null;""")
+        fail("""program "p" ; var b: boolean = null == null;""")
+    }
+
+    @Test
+    fun `null marks unset spec condition and name positions`() {
+        assertDoesNotThrow {
+            check(
+                """program "p" ;
+                    if (null) { }
+                    setblock(pos = null, block = block(id = "minecraft:stone"));
+                    var null: number = 0;
+                """,
+            )
+        }
     }
 }

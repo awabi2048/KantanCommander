@@ -6,17 +6,22 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.MyworldSpawnKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.redstoneSignalSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
+import me.awabi2048.kantancommander.model.TriggerClickSide
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.TriggerLeverState
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.variableScope
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -49,10 +54,21 @@ class DslPrintException(message: String) : Exception(message)
 class DslPrinter(
     private val diskNameResolver: (UUID) -> String? = { it.toString() },
 ) {
-    /** グラフを `program "<name>" { ... }` の完全な DSL テキストへ復元します。 */
-    fun print(graph: CommandGraph, name: String): String {
+    /**
+     * グラフと宣言部を `.kcp` の完全な DSL テキストへ復元します。
+     *
+     * 正規形は `program "name";` の宣言行に続き、`import world;`（本文が
+     * ワールドコンテキストを使う場合のみ）・`trigger ...;`（非既定の場合のみ）・
+     * `defarg`（引数宣言順）を置き、本文をトップレベルへ並べます。
+     */
+    fun print(
+        graph: CommandGraph,
+        name: String,
+        trigger: ScriptTrigger = ScriptTrigger(TriggerKind.REDSTONE),
+        arguments: List<DiskArgument> = emptyList(),
+    ): String {
         val printer = Printer(unfoldAll(graph))
-        return printer.printProgram(name)
+        return printer.printProgram(name, trigger, arguments)
     }
 
     /**
@@ -82,12 +98,56 @@ class DslPrinter(
         /** DSL へ出力済みの変数名です（var 宣言と再代入の切り分け）。 */
         val declared = mutableSetOf<String>()
 
-        fun printProgram(name: String): String {
-            out.append("program \"").append(escape(name)).append("\" {\n")
-            indent = 1
+        fun printProgram(name: String, trigger: ScriptTrigger, arguments: List<DiskArgument>): String {
+            // 本文を先に出力し、使用したコンテキストから import 宣言を導出します。
             emitBlock(graph.entryNodeId, null)
-            out.append("}\n")
+            val body = out.toString()
+            out.setLength(0)
+
+            out.append("program \"").append(escape(name)).append("\";\n")
+            val decls = StringBuilder()
+            if (WORLD_USE.containsMatchIn(body)) decls.append("import world;\n")
+            triggerDecl(trigger)?.let { decls.append(it).append('\n') }
+            arguments.forEach { arg ->
+                decls.append("defarg ").append(varNameText(arg.name))
+                    .append(": ").append(arg.type.name.lowercase()).append(";\n")
+            }
+            if (decls.isNotEmpty()) out.append(decls)
+            if (body.isNotEmpty()) out.append('\n')
+            out.append(body)
             return out.toString()
+        }
+
+        /** `trigger` 宣言の行です。既定の redstone は省略します。 */
+        private fun triggerDecl(trigger: ScriptTrigger): String? {
+            val t = trigger.normalized()
+            return when (t.kind) {
+                TriggerKind.REDSTONE -> null
+                TriggerKind.TIMER -> "trigger timer(interval = ${num(t.intervalSeconds)});"
+                TriggerKind.EVENT -> "trigger event(${eventTriggerArgs(t)});"
+            }
+        }
+
+        /** `trigger event(...)` の引数列です。種別と詳細条件を含みます。 */
+        private fun eventTriggerArgs(t: ScriptTrigger): String {
+            val event = t.event
+                ?: throw DslPrintException("イベント起動の種別が未設定です")
+            val c = t.conditions
+            val args = mutableListOf("kind = \"${event.name.lowercase()}\"")
+            c.actorTarget?.let { args += "actor = ${targetExpr(it)}" }
+            c.actorId?.let { args += "actor_id = \"$it\"" }
+            c.blockType?.let { args += "block = \"${escape(it)}\"" }
+            c.blockIdentity?.let { b ->
+                args += "block_world = \"${escape(b.world)}\""
+                args += "block_x = ${b.x}"
+                args += "block_y = ${b.y}"
+                args += "block_z = ${b.z}"
+            }
+            c.entityTarget?.let { args += "entity = ${targetExpr(it)}" }
+            c.entityId?.let { args += "entity_id = \"$it\"" }
+            c.clickSide?.let { args += "side = \"${it.name.lowercase()}\"" }
+            c.leverState?.let { args += "state = \"${it.name.lowercase()}\"" }
+            return args.joinToString(", ")
         }
 
         private fun line(text: String) {
@@ -163,9 +223,9 @@ class DslPrinter(
             when (op) {
                 VariableOperation.DELETE -> {
                     val target = when (scope) {
-                        VariableScope.EXECUTION -> dslName(name)
-                        VariableScope.WORLD -> "world.${dslName(name)}"
-                        VariableScope.ENTITY -> "${entityTargetText(n)}.vars.${dslName(name)}"
+                        VariableScope.EXECUTION -> varNameText(name)
+                        VariableScope.WORLD -> "world.${varNameText(name)}"
+                        VariableScope.ENTITY -> "${entityTargetText(n)}.vars.${varNameText(name)}"
                     }
                     line("del $target;")
                 }
@@ -173,7 +233,7 @@ class DslPrinter(
                     // 複写は参照代入と同義のため `dst = src` へ正規化します。
                     val src = n.string("source")
                     val srcText = when (scope) {
-                        VariableScope.WORLD -> "world.${dslName(src)}"
+                        VariableScope.WORLD -> "world.${varNameText(src)}"
                         VariableScope.EXECUTION -> valueName(src)
                         VariableScope.ENTITY ->
                             // エンティティ変数の複写元は同一対象のエンティティ変数であり、
@@ -185,7 +245,7 @@ class DslPrinter(
                 else -> when (scope) {
                     VariableScope.EXECUTION -> emitExecWrite(n, name, variableExpr(n))
                     VariableScope.WORLD -> {
-                        val dsl = "world.${dslName(name)}"
+                        val dsl = "world.${varNameText(name)}"
                         val calc = compoundAssign(n, name, scope)
                         when {
                             calc != null -> line("$dsl $calc;")
@@ -199,7 +259,7 @@ class DslPrinter(
                         if (n.string("changeMode") == VariableChangeMode.PROPERTY.name) {
                             unsupported("ENTITY 変数の PROPERTY 生成")
                         }
-                        line("${entityTargetText(n)}.vars.${dslName(name)} = ${variableExpr(n)};")
+                        line("${entityTargetText(n)}.vars.${varNameText(name)} = ${variableExpr(n)};")
                     }
                 }
             }
@@ -207,7 +267,7 @@ class DslPrinter(
 
         /** 実行内変数への書き込み（TEMP_SET または VARIABLE・EXECUTION）です。 */
         private fun emitExecWrite(n: CommandNode, name: String, expr: String) {
-            val dsl = dslName(name)
+            val dsl = varNameText(name)
             val calc = compoundAssign(n, name, VariableScope.EXECUTION)
             when {
                 calc != null && dsl in declared -> line("$dsl $calc;")
@@ -221,8 +281,8 @@ class DslPrinter(
         private fun emitVarAssign(n: CommandNode, scope: VariableScope, name: String, expr: String) {
             when (scope) {
                 VariableScope.EXECUTION -> emitExecWrite(n, name, expr)
-                VariableScope.WORLD -> line("world.${dslName(name)} = $expr;")
-                VariableScope.ENTITY -> line("${entityTargetText(n)}.vars.${dslName(name)} = $expr;")
+                VariableScope.WORLD -> line("world.${varNameText(name)} = $expr;")
+                VariableScope.ENTITY -> line("${entityTargetText(n)}.vars.${varNameText(name)} = $expr;")
             }
         }
 
@@ -617,7 +677,9 @@ class DslPrinter(
             if (end == null || end.type != CommandType.FOR_END) {
                 throw DslPrintException("FOR_START の対向ノードが FOR_END ではありません")
             }
-            val count = scalarText(start.string("count"))
+            // `repeat(null)` は回数未設定の FOR_START です。
+            val raw = start.string("count")
+            val count = if (raw.isBlank()) "null" else scalarText(raw)
             line("repeat($count) {")
             indent++
             val bodyEntry = start.trueNext
@@ -724,18 +786,14 @@ class DslPrinter(
                             else -> ""
                         }
                     } else n.string(rule.param!!)
-                    if (raw.isBlank()) {
-                        // 必須欄が空欄の旧データは空文字として出し、
-                        // 再コンパイル可能な DSL を保ちます。
-                        if (rule.required) "\"\"" else null
-                    } else quoteTemplate(raw)
+                    // 空欄は未設定であり、必須欄では末尾の `= null` 変換で表します。
+                    if (raw.isBlank()) null else quoteTemplate(raw)
                 }
                 ArgKind.LITERAL -> {
                     val v = n.string(rule.param!!)
                     val isDefault = v == n.type.defaults[rule.param]
-                    if (v.isBlank()) {
-                        if (rule.required) "\"\"" else null
-                    } else if (!rule.required && isDefault) null
+                    if (v.isBlank()) null
+                    else if (!rule.required && isDefault) null
                     else "\"${escape(v.lowercaseIfEnum(rule))}\""
                 }
                 ArgKind.SLOT -> n.string(rule.param!!).takeIf(String::isNotBlank)?.let { v ->
@@ -778,6 +836,8 @@ class DslPrinter(
                     }
                 }
             }
+            // 必須だが未設定の欄は `= null` で表します（GUI の半設定状態と等価）。
+            if (single == null && rule.required) return listOf("null")
             return listOfNotNull(single)
         }
 
@@ -848,6 +908,8 @@ class DslPrinter(
         private fun leafExpr(c: CommandNode): String {
             val inverted = c.boolean("inverted")
             val base = when (c.string("subject")) {
+                // 条件 subject 未設定は `null` 条件へ写像します。
+                "" -> "null"
                 ConditionSubject.VARIABLE.name -> {
                     val lhs = conditionLhs(c.string("variable"))
                     val op = c.string("operator", "==")
@@ -868,11 +930,8 @@ class DslPrinter(
                     return "${positionExpr(spec)}.block $op block(id = \"${escape(c.string("block"))}\")"
                 }
                 ConditionSubject.PLAYER.name -> playerCondText(c)
-                ConditionSubject.OTHER_ENTITY.name -> {
-                    val spec = c.targetSpec
-                        ?: throw DslPrintException("OTHER_ENTITY 判定の対象が未設定です")
-                    "exists(${condArgsText(c, spec)})"
-                }
+                ConditionSubject.OTHER_ENTITY.name ->
+                    "exists(${condArgsText(c, c.targetSpec)})"
                 ConditionSubject.CONTROL_BLOCK.name -> signalCondText(c)
                 else -> throw DslPrintException("DSL へ写像できない条件対象です: ${c.string("subject")}")
             }
@@ -881,9 +940,10 @@ class DslPrinter(
 
         /** `player(...)` のプレイヤー判定を復元します。対象＋sneaking/item 補足です。 */
         private fun playerCondText(c: CommandNode): String {
-            val spec = c.targetSpec
-                ?: throw DslPrintException("PLAYER 判定の対象が未設定です")
-            val args = mutableListOf(condTargetText(spec))
+            // 対象未設定は `target = null` として表します。
+            val args = mutableListOf(
+                c.targetSpec?.let(::condTargetText) ?: "target = null"
+            )
             c.string("sneaking").takeIf(String::isNotBlank)?.let {
                 args += "sneaking = $it"
             }
@@ -897,10 +957,10 @@ class DslPrinter(
 
         /**
          * `exists(...)` の引数列です。対象指定に加え、判定位置（`at`）が
-         * 設定されていれば末尾へ付けます。
+         * 設定されていれば末尾へ付けます。対象未設定は `target = null` です。
          */
-        private fun condArgsText(c: CommandNode, spec: TargetSpec): String {
-            val args = mutableListOf(condTargetText(spec))
+        private fun condArgsText(c: CommandNode, spec: TargetSpec?): String {
+            val args = mutableListOf(spec?.let(::condTargetText) ?: "target = null")
             c.executionPositionSpec?.let { args += "at = ${positionExpr(it)}" }
             return args.joinToString(", ")
         }
@@ -908,6 +968,8 @@ class DslPrinter(
         /** `signal(...)` の制御ブロック信号判定を復元します。 */
         private fun signalCondText(c: CommandNode): String {
             val raw = c.string("redstoneSignal").trim()
+            // 強度範囲の未設定は `signal(null)` で表します。
+            if (raw.isBlank()) return "signal(null)"
             val spec = c.redstoneSignalSpec()
                 ?: throw DslPrintException("CONTROL_BLOCK 判定の信号範囲が未設定です")
             return when {
@@ -921,6 +983,8 @@ class DslPrinter(
 
         /** 条件左辺の `%{x}%`（実行内変数）・plain 名（ワールド変数）を式へ戻します。 */
         private fun conditionLhs(raw: String): String {
+            // 変数名未設定の条件は `null` を左辺に置きます。
+            if (raw.isBlank()) return "null"
             if (TemporaryTemplate.isSingleReference(raw)) {
                 val name = TemporaryTemplate.references(raw).single()
                 return valueName(name)
@@ -1196,10 +1260,14 @@ class DslPrinter(
 
         /** モデル変数名を DSL 識別子へ逆写像します（`-`→`_`、`.`→`_`）。 */
         private fun dslName(model: String): String {
-            val dsl = model.replace('-', '_').replace('.', '_')
+            val dsl = DslNames.dslName(model)
             if (!NAME_PATTERN.matches(dsl)) unsupported("変数名 '$model'")
             return dsl
         }
+
+        /** 変数名を名前位置のテキストへ戻します。空名（未命名スロット）は `null` です。 */
+        private fun varNameText(model: String): String =
+            if (model.isBlank()) "null" else dslName(model)
 
         private fun typeName(raw: String): String = raw.lowercase()
 
@@ -1241,6 +1309,8 @@ class DslPrinter(
         val CALC_HEAD = Regex("^(?:%\\{([A-Za-z][A-Za-z0-9_.-]*)}%|\\\$\\{([A-Za-z][A-Za-z0-9_.-]*)})\\s*([+\\-*/])\\s*(.+)$")
         /** `!` のオペランドとして括弧不要な単純形（変数・プロパティ・リテラル）です。 */
         val SIMPLE_OPERAND = Regex("[!a-zA-Z0-9_.]+")
+        /** 本文中のワールドコンテキスト使用（`world.x` 参照・`place_structure`）を検出します。 */
+        val WORLD_USE = Regex("\\bworld\\.|\\bplace_structure\\(")
     }
 }
 

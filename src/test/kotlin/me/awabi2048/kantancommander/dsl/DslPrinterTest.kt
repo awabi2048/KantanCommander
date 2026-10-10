@@ -23,11 +23,19 @@ class DslPrinterTest {
     private fun compile(
         src: String,
         worldTypes: Map<String, ValueType> = emptyMap(),
-    ): CommandGraph = DslCompiler(worldTypes).compile(DslParser.parse(src))
+    ): CommandGraph = DslCompiler(worldTypes).compile(DslParser.parse(src)).graph
 
-    private fun assertValid(graph: CommandGraph) {
-        assertEquals(emptyList<String>(), GraphValidator.validate(graph), "構造検証")
-        val script = DiskScript(name = "t", owner = UUID.randomUUID(), graph = graph)
+    private fun assertValid(result: DslCompileResult) {
+        assertEquals(emptyList<String>(), GraphValidator.validate(result.graph), "構造検証")
+        // イベント引数・defarg は起動方法・引数宣言から実行開始時の定義として
+        // 導入されるため、検証へは宣言部込みの DiskScript を渡します。
+        val script = DiskScript(
+            name = "t",
+            owner = UUID.randomUUID(),
+            graph = result.graph,
+            trigger = result.trigger,
+            arguments = result.arguments,
+        )
         val errors = ExecutableScriptValidator.validate(script)
         assertEquals(emptyList<String>(), errors.map { "${it.code}:${it.message}" }, "実行検証")
     }
@@ -36,14 +44,24 @@ class DslPrinterTest {
      * 往復変換の検証です。DSL→モデル→DSL→モデル→DSL と変換し、
      * 1回目と2回目の印刷結果の一致（不動点）と、往路・復路グラフの
      * 意味構造の一致を確認します。両グラフはいずれも検証を通る必要があります。
+     * `checkExecutable` を偽にすると実行検証を省略し、未設定（null）を含む
+     * 「保存できるが実行できない」状態の往復を検証します。
      */
-    private fun roundTrip(src: String, worldTypes: Map<String, ValueType> = emptyMap()): String {
-        val g1 = compile(src, worldTypes)
-        assertValid(g1)
-        val text1 = DslPrinter().print(g1, "t")
-        val g2 = compile(text1, worldTypes)
-        assertValid(g2)
-        val text2 = DslPrinter().print(g2, "t")
+    private fun roundTrip(
+        src: String,
+        worldTypes: Map<String, ValueType> = emptyMap(),
+        checkExecutable: Boolean = true,
+    ): String {
+        val r1 = DslCompiler(worldTypes).compile(DslParser.parse(src))
+        val g1 = r1.graph
+        assertEquals(emptyList<String>(), GraphValidator.validate(g1), "構造検証")
+        if (checkExecutable) assertValid(r1)
+        val text1 = DslPrinter().print(g1, "t", r1.trigger, r1.arguments)
+        val r2 = DslCompiler(worldTypes).compile(DslParser.parse(text1))
+        val g2 = r2.graph
+        assertEquals(emptyList<String>(), GraphValidator.validate(g2), "構造検証")
+        if (checkExecutable) assertValid(r2)
+        val text2 = DslPrinter().print(g2, "t", r2.trigger, r2.arguments)
         assertEquals(text1, text2, "印刷テキストは不動点であるべきです")
         assertEquals(
             signatures(g1),
@@ -93,11 +111,11 @@ class DslPrinterTest {
     fun `直列文が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 x += 2;
                 wait(1);
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("var x: number = 1;"))
@@ -109,7 +127,7 @@ class DslPrinterTest {
     fun `if-else が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 if (x > 2) {
                     x = 10;
@@ -117,7 +135,7 @@ class DslPrinterTest {
                     x = 0;
                 }
                 wait(1);
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("if (x > 2) {"))
@@ -128,7 +146,7 @@ class DslPrinterTest {
     fun `else-if 連結が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 0;
                 if (x < 1) {
                     x = 1;
@@ -137,7 +155,7 @@ class DslPrinterTest {
                 } else {
                     x = 3;
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("} else if (x < 5) {"))
@@ -147,13 +165,13 @@ class DslPrinterTest {
     fun `and-or の条件が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 1;
                 var y: number = 2;
                 if (x > 0 && y > 0 || x < -5) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("if ("))
@@ -164,12 +182,12 @@ class DslPrinterTest {
     fun `否定条件が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var flag: boolean = true;
                 if (!flag) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("if (!flag) {"))
@@ -179,7 +197,7 @@ class DslPrinterTest {
     fun `repeat-break-continue が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 0;
                 repeat(5) {
                     if (x > 3) {
@@ -188,7 +206,7 @@ class DslPrinterTest {
                     x += 1;
                     continue;
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("repeat(5) {"))
@@ -200,10 +218,10 @@ class DslPrinterTest {
     fun `return が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 7;
                 return x + 1;
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("return x + 1;"))
@@ -213,10 +231,10 @@ class DslPrinterTest {
     fun `裸の return が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 wait(1);
                 return;
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("return;"))
@@ -226,10 +244,11 @@ class DslPrinterTest {
     fun `ワールド変数が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
+            import world;
                 var x: number = world.score + 1;
                 world.score = x;
-            }
+            
             """.trimIndent(),
             worldTypes = mapOf("score" to ValueType.NUMBER),
         )
@@ -241,12 +260,12 @@ class DslPrinterTest {
     fun `詳細値の条件が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var p: entity = target(kind = "nearest_player");
                 if (p.has_item(item(id = "minecraft:diamond"))) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("has_item"))
@@ -256,12 +275,12 @@ class DslPrinterTest {
     fun `ブロック条件が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var pos: location = location(x = 0, y = 64, z = 0);
                 if (pos.block == block(id = "minecraft:stone")) {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains(".block == block(id = \"minecraft:stone\")"))
@@ -271,10 +290,10 @@ class DslPrinterTest {
     fun `位置リテラルが往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var base: location = location(x = 100, y = 64, z = 0);
                 teleport(target = target(kind = "nearest_player"), to = base ~0 ~1 ~0);
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("~0"))
@@ -284,10 +303,10 @@ class DslPrinterTest {
     fun `文字列補間が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 5;
                 display_text(text = "count is ${'$'}{x}", target = target(kind = "all_players"));
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("count is \${x}"))
@@ -297,11 +316,11 @@ class DslPrinterTest {
     fun `命令の引数が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 give_item(target = target(kind = "nearest_player"), item = item(id = "minecraft:diamond"), count = 3);
                 play_sound(sound = "minecraft:entity.experience_orb.pickup", at = ~0 ~1 ~0);
                 summon(entity = "minecraft:zombie", at = ~0 ~0 ~0);
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("give_item("))
@@ -313,12 +332,12 @@ class DslPrinterTest {
     fun `gamemode 定数の比較が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var p: entity = target(kind = "nearest_player");
                 if (p.gamemode == "CREATIVE") {
                     wait(1);
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("\"CREATIVE\""))
@@ -328,12 +347,12 @@ class DslPrinterTest {
     fun `終端のみのループ本体と後続文が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 repeat(3) {
                     break;
                 }
                 wait(1);
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("repeat(3) {"))
@@ -345,7 +364,7 @@ class DslPrinterTest {
     fun `if 内の return と else が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 0;
                 if (x > 0) {
                     return;
@@ -353,7 +372,7 @@ class DslPrinterTest {
                     wait(1);
                 }
                 wait(2);
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("return;"))
@@ -364,7 +383,7 @@ class DslPrinterTest {
     fun `ループ内で全経路が終端の分岐が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var x: number = 0;
                 repeat(3) {
                     if (x > 0) {
@@ -374,7 +393,7 @@ class DslPrinterTest {
                     }
                 }
                 wait(1);
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("break;"))
@@ -386,7 +405,7 @@ class DslPrinterTest {
     fun `ネストした repeat と if が往復する`() {
         val text = roundTrip(
             """
-            program "t" {
+            program "t" ;
                 var i: number = 0;
                 repeat(3) {
                     repeat(2) {
@@ -395,10 +414,61 @@ class DslPrinterTest {
                         }
                     }
                 }
-            }
+            
             """.trimIndent(),
         )
         assertTrue(text.contains("repeat(3) {"))
         assertTrue(text.contains("repeat(2) {"))
+    }
+
+    @Test
+    fun `宣言部が往復する`() {
+        val text = roundTrip(
+            """
+            program "t" ;
+            import world;
+            trigger timer(interval = 20);
+            defarg amount: number;
+                world.score = amount;
+            
+            """.trimIndent(),
+            worldTypes = mapOf("score" to ValueType.NUMBER),
+        )
+        assertTrue(text.contains("import world;"))
+        assertTrue(text.contains("trigger timer(interval = 20);"))
+        assertTrue(text.contains("defarg amount: number;"))
+    }
+
+    @Test
+    fun `イベントトリガーとイベント引数が往復する`() {
+        val text = roundTrip(
+            """
+            program "t" ;
+            trigger event(kind = "entity_click");
+                var p: entity = event_actor;
+            
+            """.trimIndent(),
+        )
+        assertTrue(text.contains("trigger event(kind = \"entity_click\");"))
+        assertTrue(text.contains("event_actor"))
+    }
+
+    @Test
+    fun `null 未設定が往復する`() {
+        // 未設定を含むプログラムは「保存できるが実行できない」状態のため、
+        // 構造検証のみで往復を確認します。
+        val text = roundTrip(
+            """
+            program "t" ;
+                if (null) { wait(1); }
+                setblock(pos = null, block = block(id = "minecraft:stone"));
+                var null: number = 0;
+            
+            """.trimIndent(),
+            checkExecutable = false,
+        )
+        assertTrue(text.contains("if (null)"))
+        assertTrue(text.contains("pos = null"))
+        assertTrue(text.contains("var null: number"))
     }
 }

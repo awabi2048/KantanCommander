@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.dsl
 
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.effectiveTrigger
 import java.io.File
 import java.util.UUID
 
@@ -35,17 +36,26 @@ class DslIO(
      */
     fun importScript(text: String, owner: UUID): DiskScript {
         val program = DslParser.parse(text)
-        val graph = DslCompiler(worldTypes(), diskResolver).compile(program)
-        return DiskScript(name = program.name, owner = owner, graph = graph, dsl = text)
+        val result = DslCompiler(worldTypes(), diskResolver).compile(program)
+        return DiskScript(
+            name = program.name,
+            owner = owner,
+            graph = result.graph,
+            trigger = result.trigger,
+            arguments = result.arguments,
+            dsl = text,
+        )
     }
 
     /**
-     * スクリプトのグラフを正規形 DSL テキストへ復元します（読み取り専用）。
+     * スクリプトを正規形 DSL テキストへ復元します（読み取り専用）。
      *
      * @throws DslPrintException グラフが DSL で表現できない形を含む場合
      */
     fun exportScript(script: DiskScript): String =
-        DslPrinter(diskNameResolver).print(script.graph, script.name)
+        DslPrinter(diskNameResolver).print(
+            script.graph, script.name, script.effectiveTrigger(), script.arguments,
+        )
 
     /**
      * 正規形を再生成して `dsl` 欄を更新した複製を返します。

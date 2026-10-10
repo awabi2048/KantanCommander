@@ -13,6 +13,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.effectiveTrigger
 import java.io.File
 import java.nio.file.Files
 import java.util.UUID
@@ -169,8 +170,9 @@ class DslLegacyConversionTest {
         diskResolver: (String) -> DslDiskLink?,
         expectValid: Boolean,
     ) {
-        val text1 = DslPrinter(nameResolver).print(script.graph, script.name)
-        val g1 = DslCompiler(worldTypes, diskResolver).compile(DslParser.parse(text1))
+        val text1 = DslPrinter(nameResolver).print(script.graph, script.name, script.effectiveTrigger(), script.arguments)
+        val r1 = DslCompiler(worldTypes, diskResolver).compile(DslParser.parse(text1))
+        val g1 = r1.graph
         assertEquals(emptyList<String>(), GraphValidator.validate(g1), "再コンパイルの構造検証")
         val s1 = script.copy(id = UUID.randomUUID(), graph = g1)
         if (expectValid) {
@@ -180,7 +182,7 @@ class DslLegacyConversionTest {
                 "再コンパイルの実行検証",
             )
         }
-        val text2 = DslPrinter(nameResolver).print(g1, script.name)
+        val text2 = DslPrinter(nameResolver).print(g1, script.name, r1.trigger, r1.arguments)
         assertEquals(text1, text2, "印刷テキストは不動点であるべきです")
         // 多重集合比較: 欠落側と超過側だけを報告します。
         val expected = signatures(script.graph).groupingBy { it }.eachCount()
