@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.dsl
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphValidator
 import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
@@ -32,9 +33,9 @@ class DslPrinterTest {
     }
 
     /**
-     * 往復変換の不動点検証です。DSL→モデル→DSL→モデル→DSL と変換し、
-     * 1回目と2回目の印刷結果が一致することを確認します。
-     * 往路・復路のグラフはいずれも検証を通る必要があります。
+     * 往復変換の検証です。DSL→モデル→DSL→モデル→DSL と変換し、
+     * 1回目と2回目の印刷結果の一致（不動点）と、往路・復路グラフの
+     * 意味構造の一致を確認します。両グラフはいずれも検証を通る必要があります。
      */
     private fun roundTrip(src: String, worldTypes: Map<String, ValueType> = emptyMap()): String {
         val g1 = compile(src, worldTypes)
@@ -44,7 +45,48 @@ class DslPrinterTest {
         assertValid(g2)
         val text2 = DslPrinter().print(g2, "t")
         assertEquals(text1, text2, "印刷テキストは不動点であるべきです")
+        assertEquals(
+            signatures(g1),
+            signatures(g2),
+            "往路・復路でノードの意味内容が一致すべきです",
+        )
         return text1
+    }
+
+    /**
+     * グラフの意味内容シグネチャです。各ノードの型・パラメータ・構造値を
+     * 列挙し、数値文字列を正規化したうえで集合として比較します。
+     * 正規形へ印刷すると `else-if` 展開で共有末端が複製される場合があるため、
+     * 辺のトポロジや複数性ではなく「どの意味ノードが存在するか」を照合します。
+     */
+    private fun signatures(graph: CommandGraph): Set<String> =
+        graph.nodes.values.map(::nodeSignature).toSet()
+
+    private fun nodeSignature(n: CommandNode): String {
+        val params = n.params.toSortedMap().entries
+            .joinToString(",") { (k, v) -> "$k=${normalizeNumbers(v)}" }
+        val specs = listOfNotNull(
+            n.targetSpec, n.secondaryTargetSpec, n.destinationSpec, n.destinationTargetSpec,
+            n.destinationFacingSpec, n.conditionPositionSpec, n.blockPositionSpec,
+            n.blockFromSpec, n.blockToSpec, n.structurePlacePositionSpec,
+            n.groupPivotPositionSpec, n.soundPositionSpec, n.particlePositionSpec,
+            n.particleEndPositionSpec, n.fireworkPositionSpec, n.summonPositionSpec,
+            n.executionPositionSpec, n.temporaryEntityTargetSpec,
+            n.temporaryLocationPositionSpec, n.temporaryLocationFacingSpec,
+        ).joinToString(",") { normalizeNumbers(it.toString()) }
+        return "${n.type}|$params|$specs|${n.itemTempRef}|${n.blockTempRef}|${n.snapshot != null}|${n.foldedGraph != null}"
+    }
+
+    /** 数値トークンを `1.0`→`1` のように正規化します（保存形の揺れを吸収）。 */
+    private fun normalizeNumbers(text: String): String =
+        NUMBER_TOKEN.replace(text) { m ->
+            m.value.toDoubleOrNull()?.let { d ->
+                if (d % 1.0 == 0.0) d.toLong().toString() else d.toString()
+            } ?: m.value
+        }
+
+    private companion object {
+        val NUMBER_TOKEN = Regex("[+-]?\\d+\\.\\d+|[+-]?\\d+")
     }
 
     @Test
