@@ -1,0 +1,65 @@
+{
+  "program skeleton": {
+    "prefix": "program",
+    "body": [
+      "program \"${1:name}\";",
+      "",
+      "$0"
+    ],
+    "description": "プログラムの基本構造"
+  },
+  "program with trigger": {
+    "prefix": "program trigger",
+    "body": [
+      "program \"${1:name}\";",
+      "trigger timer(interval = ${2:1.0});",
+      "",
+      "$0"
+    ],
+    "description": "タイマー起動のプログラム"
+  },
+  "var declaration": {
+    "prefix": "var",
+    "body": "var ${1:name}: ${2|number,string,boolean,location,item,block,entity|} = ${0:null};",
+    "description": "変数宣言"
+  },
+  "world var declaration": {
+    "prefix": "var world",
+    "body": "var world.${1:name}: ${2|number,string,boolean,location,item,block,entity|} = ${0:null};",
+    "description": "ワールド変数の定義"
+  },
+  "if block": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "if 文"
+  },
+  "if else block": {
+    "prefix": "ife",
+    "body": [
+      "if (${1:condition}) {",
+      "    $2",
+      "} else {",
+      "    $0",
+      "}"
+    ],
+    "description": "if-else 文"
+  },
+  "repeat block": {
+    "prefix": "repeat",
+    "body": [
+      "repeat(${1:count}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "repeat ループ"
+  },
+  "call disk": {
+    "prefix": "call",
+    "body": "call \"${1:program_name}\";",
+    "description": "別プログラムの呼出し"
+  }
+}

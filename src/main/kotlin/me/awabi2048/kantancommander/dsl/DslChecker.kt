@@ -656,7 +656,7 @@ class DslChecker(
         return ValueType.LOCATION
     }
 
-    private data class ArgSpec(val type: ValueType, val required: Boolean)
+    internal data class ArgSpec(val type: ValueType, val required: Boolean)
 
     /**
      * DSL の変数名をモデルの変数名へ写像します。
@@ -691,27 +691,29 @@ class DslChecker(
     }
 
     companion object {
-        private val INTERP_TYPES = setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+        // 以下の語彙表はエディタ拡張機能のカタログ生成（generateDslCatalog）
+        // からも参照するため internal で公開します。
+        internal val INTERP_TYPES = setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
 
         // モデルの条件評価が等値比較できる型（VARIABLE 判定の対応型と一致）です。
-        private val COMPARABLE_TYPES = setOf(ValueType.NUMBER, ValueType.BOOLEAN, ValueType.STRING)
+        internal val COMPARABLE_TYPES = setOf(ValueType.NUMBER, ValueType.BOOLEAN, ValueType.STRING)
 
-        private val LOCATION_ARGS = mapOf(
+        internal val LOCATION_ARGS = mapOf(
             "x" to ArgSpec(ValueType.NUMBER, true),
             "y" to ArgSpec(ValueType.NUMBER, true),
             "z" to ArgSpec(ValueType.NUMBER, true),
             "yaw" to ArgSpec(ValueType.NUMBER, false),
             "pitch" to ArgSpec(ValueType.NUMBER, false),
         )
-        private val ITEM_ARGS = mapOf(
+        internal val ITEM_ARGS = mapOf(
             "id" to ArgSpec(ValueType.STRING, true),
             "amount" to ArgSpec(ValueType.NUMBER, false),
             "data" to ArgSpec(ValueType.STRING, false),
         )
-        private val BLOCK_ARGS = mapOf(
+        internal val BLOCK_ARGS = mapOf(
             "id" to ArgSpec(ValueType.STRING, true),
         )
-        private val TARGET_ARGS = mapOf(
+        internal val TARGET_ARGS = mapOf(
             "kind" to ArgSpec(ValueType.STRING, true),
             "type" to ArgSpec(ValueType.STRING, false),
             "within" to ArgSpec(ValueType.NUMBER, false),
@@ -725,29 +727,29 @@ class DslChecker(
             "dy" to ArgSpec(ValueType.NUMBER, false),
             "dz" to ArgSpec(ValueType.NUMBER, false),
         )
-        private val TARGET_KINDS = setOf(
+        internal val TARGET_KINDS = setOf(
             "nearest_player", "nearby_players", "all_players",
             "random_player", "nearest_entity", "nearby_entities",
         )
 
         // 条件呼出し（player/exists）が受け取る対象絞り込み引数です。target(...) と同一です。
-        private val TARGET_COND_ARGS = TARGET_ARGS.mapValues { it.value.copy(required = false) }
+        internal val TARGET_COND_ARGS = TARGET_ARGS.mapValues { it.value.copy(required = false) }
 
-        private val RANDOM_ARGS = mapOf(
+        internal val RANDOM_ARGS = mapOf(
             "min" to ArgSpec(ValueType.NUMBER, true),
             "max" to ArgSpec(ValueType.NUMBER, true),
         )
-        private val MYWORLD_ARGS = mapOf(
+        internal val MYWORLD_ARGS = mapOf(
             "kind" to ArgSpec(ValueType.STRING, false),
         )
 
-        private val GAMEMODE_NAMES = setOf("survival", "creative", "adventure", "spectator")
-        private val EVENT_KINDS = EventTriggerKind.entries.map { it.name.lowercase() }
-        private val TRIGGER_SIDES = setOf("left", "right")
-        private val TRIGGER_STATES = setOf("on", "off")
+        internal val GAMEMODE_NAMES = setOf("survival", "creative", "adventure", "spectator")
+        internal val EVENT_KINDS = EventTriggerKind.entries.map { it.name.lowercase() }
+        internal val TRIGGER_SIDES = setOf("left", "right")
+        internal val TRIGGER_STATES = setOf("on", "off")
 
-        private val namePattern = Regex("[a-z][a-z0-9_]*")
+        internal val namePattern = Regex("[a-z][a-z0-9_]*")
         /** 予約位置式・システム変数と衝突するため変数名として使えない識別子です。 */
-        private val RESERVED_NAMES = setOf("disk", "captured", "loop")
+        internal val RESERVED_NAMES = setOf("disk", "captured", "loop")
     }
 }

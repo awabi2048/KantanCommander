@@ -854,6 +854,9 @@ object EntityDataSchema {
     /** 安定IDから定義を返します。未知IDはnullであり、フォールバックで吸収しません。 */
     fun definition(id: String): EntityPropertyDefinition? = byId[id]
 
+    /** カタログ生成が全項目IDを列挙するための一覧です。 */
+    internal val allIds: Set<String> get() = byId.keys
+
     /**
      * 真偽値の次状態を返します。
      *

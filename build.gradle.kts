@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "me.awabi2048"
-version = "26.1011.3"
+version = "26.1011.4"
 
 repositories {
     mavenLocal()
@@ -48,6 +48,17 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// .kcp エディタ拡張機能へ供給する語彙カタログ（dsl-catalog.json）を
+// Kotlin 側の語彙正本から生成します。
+tasks.register<JavaExec>("generateDslCatalog") {
+    group = "documentation"
+    description = "editors/vscode-kcp/data/dsl-catalog.json を生成します"
+    dependsOn(tasks.compileTestKotlin)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("me.awabi2048.kantancommander.tools.DslCatalogGenerator")
+    args = listOf(layout.projectDirectory.file("editors/vscode-kcp/data/dsl-catalog.json").asFile.absolutePath)
 }
 
 // pom.xml の resources filtering 相当（${project.version} を展開）

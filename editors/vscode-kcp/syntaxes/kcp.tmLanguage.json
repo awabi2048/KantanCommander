@@ -1,0 +1,158 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Kantan Commander Program",
+  "scopeName": "source.kcp",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#calls" },
+    { "include": "#namespaces" },
+    { "include": "#variables" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.kcp",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.line.double-slash.kcp",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.kcp",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.kcp",
+          "match": "\\\\[\"\\\\n]"
+        },
+        {
+          "name": "invalid.illegal.escape.kcp",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.interpolation.kcp",
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.template-expression.begin.kcp" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.template-expression.end.kcp" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#strings" },
+            { "include": "#keywords" },
+            { "include": "#types" },
+            { "include": "#constants" },
+            { "include": "#numbers" },
+            { "include": "#calls" },
+            { "include": "#namespaces" },
+            { "include": "#variables" },
+            { "include": "#operators" }
+          ]
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "keyword.control.program.kcp",
+          "match": "\\bprogram\\b"
+        },
+        {
+          "name": "keyword.control.import.kcp",
+          "match": "\\bimport\\b"
+        },
+        {
+          "name": "keyword.control.trigger.kcp",
+          "match": "\\btrigger\\b"
+        },
+        {
+          "name": "keyword.other.defarg.kcp",
+          "match": "\\bdefarg\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.kcp",
+          "match": "\\b(if|else|repeat|break|continue|return)\\b"
+        },
+        {
+          "name": "keyword.other.kcp",
+          "match": "\\b(var|call|del)\\b"
+        },
+        {
+          "name": "constant.language.kcp",
+          "match": "\\b(null|true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "storage.type.kcp",
+      "match": "\\b(number|string|boolean|location|item|block|entity)\\b"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.position.kcp",
+          "match": "\\b(disk|captured)\\b"
+        },
+        {
+          "name": "variable.language.loop.kcp",
+          "match": "\\bloop\\.count\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.kcp",
+      "match": "\\b\\d+(\\.\\d+)?\\b"
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.kcp",
+          "match": "\\b(location|item|block|target|random|myworld_spawn|orientation|player|exists|signal|gamemode)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "entity.name.function.kcp",
+          "match": "\\b[a-z_][a-z0-9_]*\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "namespaces": {
+      "patterns": [
+        {
+          "name": "variable.language.world.kcp",
+          "match": "\\bworld\\.[a-z_][a-z0-9_]*"
+        },
+        {
+          "name": "keyword.other.vars-access.kcp",
+          "match": "\\.vars\\."
+        }
+      ]
+    },
+    "variables": {
+      "name": "variable.other.kcp",
+      "match": "\\b[a-z_][a-z0-9_]*\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.kcp",
+      "match": "(==|!=|<=|>=|&&|\\|\\||[-+*/%<>!]=?)"
+    }
+  }
+}

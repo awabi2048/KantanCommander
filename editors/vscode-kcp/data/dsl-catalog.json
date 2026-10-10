@@ -1,0 +1,1108 @@
+{
+  "keywords": [
+    "program",
+    "var",
+    "if",
+    "else",
+    "repeat",
+    "break",
+    "continue",
+    "return",
+    "call",
+    "world",
+    "del",
+    "import",
+    "trigger",
+    "defarg",
+    "null",
+    "true",
+    "false"
+  ],
+  "valueTypes": [
+    "number",
+    "string",
+    "boolean",
+    "location",
+    "item",
+    "block",
+    "entity"
+  ],
+  "specialPositions": [
+    "disk",
+    "captured"
+  ],
+  "reservedNames": [
+    "disk",
+    "captured",
+    "loop"
+  ],
+  "gamemodeConstants": [
+    "survival",
+    "creative",
+    "adventure",
+    "spectator"
+  ],
+  "targetKinds": [
+    "nearest_player",
+    "nearby_players",
+    "all_players",
+    "random_player",
+    "nearest_entity",
+    "nearby_entities"
+  ],
+  "triggerSides": [
+    "left",
+    "right"
+  ],
+  "triggerStates": [
+    "on",
+    "off"
+  ],
+  "eventKinds": [
+    "block_break",
+    "block_place",
+    "button_on",
+    "lever_click",
+    "pressure_plate_on",
+    "entity_click",
+    "block_click"
+  ],
+  "varNamePattern": "[a-z][a-z0-9_]*",
+  "maxCommandTimeSeconds": 86400.0,
+  "tickSeconds": 0.05,
+  "commands": {
+    "wait": {
+      "type": "WAIT",
+      "args": {
+        "seconds": {
+          "kind": "NUMBER",
+          "required": true
+        }
+      }
+    },
+    "teleport": {
+      "type": "TELEPORT",
+      "args": {
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        },
+        "to": {
+          "kind": "LOCATION",
+          "required": true
+        },
+        "facing": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "give_item": {
+      "type": "GIVE_ITEM",
+      "args": {
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        },
+        "item": {
+          "kind": "ITEM",
+          "required": true
+        },
+        "count": {
+          "kind": "NUMBER",
+          "required": false
+        }
+      }
+    },
+    "display_text": {
+      "type": "DISPLAY_TEXT",
+      "args": {
+        "text": {
+          "kind": "STRING",
+          "required": true
+        },
+        "mode": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "tellraw",
+            "title",
+            "subtitle",
+            "actionbar"
+          ]
+        },
+        "subtitle": {
+          "kind": "STRING",
+          "required": false
+        },
+        "fade_in": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "stay": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "fade_out": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "summon": {
+      "type": "SUMMON_ENTITY",
+      "args": {
+        "entity": {
+          "kind": "LITERAL",
+          "required": true
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "tags": {
+          "kind": "STRING",
+          "required": false
+        }
+      },
+      "extraParamPrefix": "summonData_"
+    },
+    "play_sound": {
+      "type": "PLAY_SOUND",
+      "args": {
+        "sound": {
+          "kind": "LITERAL",
+          "required": true
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "origin": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "target": {
+          "kind": "ENTITY",
+          "required": false
+        },
+        "volume": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "pitch": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "scope": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "position",
+            "world"
+          ]
+        },
+        "category": {
+          "kind": "LITERAL",
+          "required": false
+        },
+        "operation": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "play",
+            "stop"
+          ]
+        }
+      }
+    },
+    "entity_delete": {
+      "type": "ENTITY_DELETE",
+      "args": {
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        }
+      }
+    },
+    "apply_effect": {
+      "type": "APPLY_EFFECT",
+      "args": {
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        },
+        "effect": {
+          "kind": "LITERAL",
+          "required": true
+        },
+        "seconds": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "level": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "camera_shake": {
+      "type": "CAMERA_SHAKE",
+      "args": {
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        },
+        "intensity": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "seconds": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "type": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "positional",
+            "rotational"
+          ]
+        }
+      }
+    },
+    "entity_action": {
+      "type": "ENTITY_ACTION",
+      "args": {
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        },
+        "vehicle": {
+          "kind": "ENTITY",
+          "required": false
+        },
+        "action": {
+          "kind": "LITERAL",
+          "required": true,
+          "enumValues": [
+            "ride",
+            "dismount",
+            "motion"
+          ]
+        },
+        "motion_x": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "motion_y": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "motion_z": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "setblock": {
+      "type": "BLOCK_OPERATION",
+      "args": {
+        "pos": {
+          "kind": "LOCATION",
+          "required": true
+        },
+        "block": {
+          "kind": "BLOCK",
+          "required": true
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "fill": {
+      "type": "BLOCK_OPERATION",
+      "args": {
+        "from": {
+          "kind": "LOCATION",
+          "required": true
+        },
+        "to": {
+          "kind": "LOCATION",
+          "required": true
+        },
+        "block": {
+          "kind": "BLOCK",
+          "required": true
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "firework": {
+      "type": "FIREWORK_LAUNCH",
+      "args": {
+        "item": {
+          "kind": "LITERAL",
+          "required": false
+        },
+        "data": {
+          "kind": "STRING",
+          "required": false
+        },
+        "height": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "origin": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "particle": {
+      "type": "PARTICLE",
+      "args": {
+        "particle": {
+          "kind": "LITERAL",
+          "required": true
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "target": {
+          "kind": "ENTITY",
+          "required": false
+        },
+        "origin": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "count": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "speed": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "delta_x": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "delta_y": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "delta_z": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "data": {
+          "kind": "STRING",
+          "required": false
+        }
+      }
+    },
+    "particle_geometry": {
+      "type": "PARTICLE_GEOMETRY",
+      "args": {
+        "particle": {
+          "kind": "LITERAL",
+          "required": true
+        },
+        "shape": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "point_scatter",
+            "line",
+            "circle",
+            "arc",
+            "box",
+            "sphere",
+            "helix"
+          ]
+        },
+        "data": {
+          "kind": "STRING",
+          "required": false
+        },
+        "density": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "radius": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "height": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "turns": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "start_angle": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "end_angle": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "rotation": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "axis_yaw": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "axis_pitch": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "step": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "wireframe": {
+          "kind": "BOOLEAN",
+          "required": false
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "end_at": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "target": {
+          "kind": "ENTITY",
+          "required": false
+        },
+        "origin": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "place_item": {
+      "type": "PLACE_ITEM",
+      "args": {
+        "item": {
+          "kind": "ITEM",
+          "required": true
+        },
+        "destination": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "equipment",
+            "player_hotbar",
+            "player_inventory",
+            "item_frame",
+            "block_container"
+          ]
+        },
+        "slot": {
+          "kind": "SLOT",
+          "required": false
+        },
+        "count": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "overwrite": {
+          "kind": "BOOLEAN",
+          "required": false
+        },
+        "target": {
+          "kind": "ENTITY",
+          "required": false
+        },
+        "pos": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        }
+      }
+    },
+    "entity_operation": {
+      "type": "ENTITY_OPERATION",
+      "args": {
+        "target": {
+          "kind": "ENTITY",
+          "required": true
+        },
+        "property": {
+          "kind": "PATH_PROPERTY",
+          "required": false
+        },
+        "attribute": {
+          "kind": "PATH_ATTRIBUTE",
+          "required": false
+        },
+        "value": {
+          "kind": "STRING",
+          "required": false
+        },
+        "tag_add": {
+          "kind": "TAG_OP",
+          "required": false
+        },
+        "tag_remove": {
+          "kind": "TAG_OP",
+          "required": false
+        }
+      }
+    },
+    "place_structure": {
+      "type": "STRUCTURE_PLACE",
+      "args": {
+        "structure": {
+          "kind": "LITERAL",
+          "required": true
+        },
+        "at": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "rotation": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "none",
+            "clockwise_90",
+            "clockwise_180",
+            "counterclockwise_90"
+          ]
+        },
+        "mirror": {
+          "kind": "LITERAL",
+          "required": false,
+          "enumValues": [
+            "none",
+            "left_right",
+            "front_back"
+          ]
+        }
+      }
+    },
+    "entity_group": {
+      "type": "ENTITY_GROUP",
+      "args": {
+        "operation": {
+          "kind": "LITERAL",
+          "required": true,
+          "enumValues": [
+            "create",
+            "add",
+            "remove",
+            "delete",
+            "set_pivot",
+            "move",
+            "rotate",
+            "cleanup"
+          ]
+        },
+        "group": {
+          "kind": "STRING",
+          "required": false
+        },
+        "target": {
+          "kind": "ENTITY",
+          "required": false
+        },
+        "pivot": {
+          "kind": "LOCATION",
+          "required": false
+        },
+        "move_x": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "move_y": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "move_z": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "rotate_x": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "rotate_y": {
+          "kind": "NUMBER",
+          "required": false
+        },
+        "rotate_z": {
+          "kind": "NUMBER",
+          "required": false
+        }
+      }
+    }
+  },
+  "valueCalls": {
+    "location": {
+      "result": "location",
+      "args": {
+        "x": {
+          "type": "number",
+          "required": true
+        },
+        "y": {
+          "type": "number",
+          "required": true
+        },
+        "z": {
+          "type": "number",
+          "required": true
+        },
+        "yaw": {
+          "type": "number",
+          "required": false
+        },
+        "pitch": {
+          "type": "number",
+          "required": false
+        }
+      }
+    },
+    "item": {
+      "result": "item",
+      "args": {
+        "id": {
+          "type": "string",
+          "required": true
+        },
+        "amount": {
+          "type": "number",
+          "required": false
+        },
+        "data": {
+          "type": "string",
+          "required": false
+        }
+      }
+    },
+    "block": {
+      "result": "block",
+      "args": {
+        "id": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "target": {
+      "result": "entity",
+      "args": {
+        "kind": {
+          "type": "string",
+          "required": true
+        },
+        "type": {
+          "type": "string",
+          "required": false
+        },
+        "within": {
+          "type": "number",
+          "required": false
+        },
+        "farther": {
+          "type": "number",
+          "required": false
+        },
+        "limit": {
+          "type": "number",
+          "required": false
+        },
+        "sort": {
+          "type": "string",
+          "required": false
+        },
+        "gamemode": {
+          "type": "string",
+          "required": false
+        },
+        "tag": {
+          "type": "string",
+          "required": false
+        },
+        "name": {
+          "type": "string",
+          "required": false
+        },
+        "dx": {
+          "type": "number",
+          "required": false
+        },
+        "dy": {
+          "type": "number",
+          "required": false
+        },
+        "dz": {
+          "type": "number",
+          "required": false
+        }
+      }
+    },
+    "random": {
+      "result": "number",
+      "args": {
+        "min": {
+          "type": "number",
+          "required": true
+        },
+        "max": {
+          "type": "number",
+          "required": true
+        }
+      }
+    },
+    "myworld_spawn": {
+      "result": "location",
+      "args": {
+        "kind": {
+          "type": "string",
+          "required": false
+        }
+      }
+    },
+    "orientation": {
+      "result": "entity",
+      "args": {
+        "target": {
+          "type": "entity",
+          "required": true
+        }
+      }
+    },
+    "player": {
+      "result": "boolean",
+      "args": {
+        "kind": {
+          "type": "string",
+          "required": false
+        },
+        "type": {
+          "type": "string",
+          "required": false
+        },
+        "within": {
+          "type": "number",
+          "required": false
+        },
+        "farther": {
+          "type": "number",
+          "required": false
+        },
+        "limit": {
+          "type": "number",
+          "required": false
+        },
+        "sort": {
+          "type": "string",
+          "required": false
+        },
+        "gamemode": {
+          "type": "string",
+          "required": false
+        },
+        "tag": {
+          "type": "string",
+          "required": false
+        },
+        "name": {
+          "type": "string",
+          "required": false
+        },
+        "dx": {
+          "type": "number",
+          "required": false
+        },
+        "dy": {
+          "type": "number",
+          "required": false
+        },
+        "dz": {
+          "type": "number",
+          "required": false
+        }
+      }
+    },
+    "exists": {
+      "result": "boolean",
+      "args": {
+        "kind": {
+          "type": "string",
+          "required": false
+        },
+        "type": {
+          "type": "string",
+          "required": false
+        },
+        "within": {
+          "type": "number",
+          "required": false
+        },
+        "farther": {
+          "type": "number",
+          "required": false
+        },
+        "limit": {
+          "type": "number",
+          "required": false
+        },
+        "sort": {
+          "type": "string",
+          "required": false
+        },
+        "gamemode": {
+          "type": "string",
+          "required": false
+        },
+        "tag": {
+          "type": "string",
+          "required": false
+        },
+        "name": {
+          "type": "string",
+          "required": false
+        },
+        "dx": {
+          "type": "number",
+          "required": false
+        },
+        "dy": {
+          "type": "number",
+          "required": false
+        },
+        "dz": {
+          "type": "number",
+          "required": false
+        }
+      }
+    }
+  },
+  "eventArgs": {
+    "block_break": {
+      "event_actor": "entity",
+      "event_block": "block",
+      "event_position": "location"
+    },
+    "block_place": {
+      "event_actor": "entity",
+      "event_block": "block",
+      "event_position": "location"
+    },
+    "button_on": {
+      "event_block": "block",
+      "event_position": "location"
+    },
+    "lever_click": {
+      "event_block": "block",
+      "event_position": "location"
+    },
+    "pressure_plate_on": {
+      "event_block": "block",
+      "event_position": "location"
+    },
+    "entity_click": {
+      "event_actor": "entity",
+      "event_target": "entity"
+    },
+    "block_click": {
+      "event_actor": "entity",
+      "event_block": "block",
+      "event_position": "location"
+    }
+  },
+  "properties": {
+    "name": {
+      "sources": [
+        "entity"
+      ],
+      "result": "string"
+    },
+    "type": {
+      "sources": [
+        "entity",
+        "item",
+        "block"
+      ],
+      "result": "string"
+    },
+    "health": {
+      "sources": [
+        "entity"
+      ],
+      "result": "number"
+    },
+    "location": {
+      "sources": [
+        "entity"
+      ],
+      "result": "location"
+    },
+    "gamemode": {
+      "sources": [
+        "entity"
+      ],
+      "result": "string"
+    },
+    "distance": {
+      "sources": [
+        "entity",
+        "location"
+      ],
+      "result": "number",
+      "argType": "location"
+    },
+    "has_item": {
+      "sources": [
+        "entity"
+      ],
+      "result": "boolean",
+      "argType": "item"
+    },
+    "x": {
+      "sources": [
+        "location"
+      ],
+      "result": "number"
+    },
+    "y": {
+      "sources": [
+        "location"
+      ],
+      "result": "number"
+    },
+    "z": {
+      "sources": [
+        "location"
+      ],
+      "result": "number"
+    },
+    "yaw": {
+      "sources": [
+        "location"
+      ],
+      "result": "number"
+    },
+    "pitch": {
+      "sources": [
+        "location"
+      ],
+      "result": "number"
+    },
+    "block": {
+      "sources": [
+        "location"
+      ],
+      "result": "block"
+    },
+    "redstone_power": {
+      "sources": [
+        "location"
+      ],
+      "result": "number"
+    },
+    "amount": {
+      "sources": [
+        "item"
+      ],
+      "result": "number"
+    }
+  },
+  "entityData": {
+    "ai": "boolean",
+    "silent": "boolean",
+    "invulnerable": "boolean",
+    "gravity": "boolean",
+    "glowing": "boolean",
+    "persistent": "boolean",
+    "allow_flight": "boolean",
+    "custom_name": "text",
+    "armor_stand_arms": "boolean",
+    "armor_stand_small": "boolean",
+    "armor_stand_marker": "boolean",
+    "armor_stand_base_plate": "boolean",
+    "rabbit_type": "enum",
+    "ageable_baby": "boolean",
+    "sheep_color": "enum",
+    "sheep_sheared": "boolean",
+    "slime_size": "integer",
+    "creeper_powered": "boolean",
+    "sittable_sitting": "boolean",
+    "collar_color": "enum",
+    "cat_type": "enum",
+    "axolotl_variant": "enum",
+    "fox_type": "enum",
+    "frog_variant": "enum",
+    "villager_profession": "enum",
+    "zombie_baby": "boolean",
+    "pig_saddle": "boolean",
+    "puffer_state": "enum",
+    "villager_type": "enum",
+    "mooshroom_variant": "enum",
+    "horse_color": "enum",
+    "horse_style": "enum",
+    "llama_color": "enum",
+    "parrot_variant": "enum",
+    "shulker_color": "enum",
+    "boat_type": "enum",
+    "bee_nectar": "boolean",
+    "bee_anger": "integer",
+    "mannequin_profile_name": "text",
+    "mannequin_description": "text",
+    "mannequin_immovable": "boolean",
+    "mannequin_main_hand": "enum",
+    "mannequin_pose": "enum",
+    "mannequin_skin_cape": "boolean",
+    "mannequin_skin_jacket": "boolean",
+    "mannequin_skin_left_sleeve": "boolean",
+    "mannequin_skin_right_sleeve": "boolean",
+    "mannequin_skin_left_pants": "boolean",
+    "mannequin_skin_right_pants": "boolean",
+    "mannequin_skin_hat": "boolean"
+  }
+}

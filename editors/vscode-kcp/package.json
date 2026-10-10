@@ -1,0 +1,59 @@
+{
+  "name": "vscode-kcp",
+  "displayName": "Kantan Commander DSL",
+  "description": "かんたんコマンダーの .kcp プログラム向け言語サポート（ハイライト・診断・補完・定義ジャンプ）",
+  "version": "0.1.0",
+  "publisher": "awabi2048",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:kcp"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "kcp",
+        "aliases": [
+          "Kantan Commander Program",
+          "kcp"
+        ],
+        "extensions": [
+          ".kcp"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "kcp",
+        "scopeName": "source.kcp",
+        "path": "./syntaxes/kcp.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "kcp",
+        "path": "./snippets/kcp.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "test": "tsc -p . && node --test \"test/*.test.js\"",
+    "vsix": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.27.0",
+    "typescript": "^5.4.0"
+  }
+}
