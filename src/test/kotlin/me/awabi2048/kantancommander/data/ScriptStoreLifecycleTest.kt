@@ -100,7 +100,7 @@ class ScriptStoreLifecycleTest {
         val script = store.create(player, "dangling")
         store.recordHistory(player, script.id)
         // 外部改変で正本だけを消します。
-        File(dir, "${script.id}.json").delete()
+        File(dir, "${script.id}.kcp").delete()
 
         val reopened = ScriptStore(dir, Logger.getAnonymousLogger())
 

@@ -419,6 +419,8 @@ class KantanCommanderPlugin : JavaPlugin() {
             dataFolder.resolve("structured-disks"),
             logger,
             graphLimits,
+            // `.kcp` のコンパイルでワールド変数の型定義を供給します。
+            worldTypes = { variables.allDefinitionTypes() },
             mutationGuard = { scriptId, _, operation ->
                 if (::testExecution.isInitialized) {
                     testExecution.assertMutationAllowed(scriptId, operation)

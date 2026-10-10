@@ -4,11 +4,20 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.dsl.DslCompiler
+import me.awabi2048.kantancommander.dsl.DslDefarg
+import me.awabi2048.kantancommander.dsl.DslDiskLink
+import me.awabi2048.kantancommander.dsl.DslNames
+import me.awabi2048.kantancommander.dsl.DslParser
+import me.awabi2048.kantancommander.dsl.DslPrinter
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
@@ -39,6 +48,11 @@ class ScriptStore(
     private val dir: File,
     private val logger: Logger,
     private val limits: GraphLimits = GraphLimits(),
+    /**
+     * DSL コンパイル時のワールド変数名→型の供給です。
+     * プラグイン側は [WorldVariableStore.allDefinitionTypes] を渡します。
+     */
+    private val worldTypes: () -> Map<String, ValueType> = { emptyMap() },
     /** テスト実行中の通常の編集経路を遮断する共有ガードです。 */
     private val mutationGuard: (UUID, UUID?, ScriptMutationOperation) -> Unit = { _, _, _ -> },
     /** ロックを意図的に越えた管理経路を、実行中テストへ通知する共有境界です。 */
@@ -92,10 +106,19 @@ class ScriptStore(
     /** 関係JSONを複数の保存処理から同時に更新しても、片方の履歴を失わないためのロックです。 */
     private val relationLock = ReentrantLock()
 
+    /**
+     * コンパイル中の script の宣言部スタックです。
+     * `call` が自分自身・相互参照するプログラムへ向く場合、対象のコンパイルが
+     * まだ終わっていないため、宣言部（名前・引数）だけの暫定リンクで受理します。
+     */
+    private data class PendingDecl(val id: UUID, val name: String, val arguments: List<DiskArgument>)
+    private val compiling = ThreadLocal.withInitial { mutableListOf<PendingDecl>() }
+
     init {
         dir.mkdirs()
         loadRelations()
         migrateLegacyListedPrograms()
+        migrateLegacyJsonPrograms()
     }
 
     fun create(playerId: UUID, name: String): DiskScript =
@@ -245,11 +268,25 @@ class ScriptStore(
         }
         // 保存成功ごとに単調増加させ、入力画面開始時の正本世代と比較できるようにします。
         script.revision = (previous?.revision ?: script.revision).inc()
-        atomicWrite(file(script.id), gson.toJson(script))
+        // `.kcp`（純粋DSLテキスト）が正本です。折り畳みはGUIの表示状態なので
+        // 展開してから正規形へ印刷し、コメントは文へ所属する形で保持します。
+        val canonical = canonicalized(script)
+        val text = canonicalText(canonical)
+        val target = file(script.id)
+        // 内容が変わらない保存ではファイルを書き換えません。外部エディタ由来の
+        // 改行・時刻を保ち、mtime を基準とするツールとの無用な差分を防ぎます。
+        if (!target.isFile || target.readText(Charsets.UTF_8) != text) {
+            atomicWrite(target, text)
+        }
+        // 同名の旧JSONが残っていれば、移行済み入力として整理します。
+        legacyJsonFile(script.id).takeIf { it.isFile }?.let(::archiveLegacyJson)
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
         rejectedFiles.remove(script.id)
-        cache[script.id] = script.deepCopy()
+        cache[script.id] = canonical.deepCopy().also { it.revision = script.revision }
         editorId?.let { recordHistory(it, script.id) }
+        if (previous != null && previous.name != script.name) {
+            propagateDiskRename(script.id)
+        }
     }
 
     fun delete(id: UUID) = withScriptLock(id) {
@@ -280,9 +317,11 @@ class ScriptStore(
             writeRelationsLocked()
         }
         if (isInHistory) return
-        val target = file(id)
-        if (target.exists() && !target.delete()) {
-            throw IllegalStateException("プログラムディスクを削除できません: ${target.absolutePath}")
+        // `.kcp` 正本と残存する旧JSONの両方を消します。
+        listOf(file(id), legacyJsonFile(id)).filter { it.exists() }.forEach { target ->
+            if (!target.delete()) {
+                throw IllegalStateException("プログラムディスクを削除できません: ${target.absolutePath}")
+            }
         }
         cache.remove(id)
         rejectedFiles.remove(id)
@@ -291,16 +330,21 @@ class ScriptStore(
         }
     }
 
-    fun listAll(): List<DiskScript> =
-        dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
-            ?.mapNotNull { file ->
-                val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()
-                    ?: return@mapNotNull null
-                cached(id)?.deepCopy()?.to(file.lastModified())
-            }
-            ?.sortedBy(Pair<DiskScript, Long>::second)
-            ?.map(Pair<DiskScript, Long>::first)
-            ?: emptyList()
+    fun listAll(): List<DiskScript> {
+        // `.kcp` を正本として先に処理し、同一IDの旧JSONは重複として扱いません。
+        val files = dir.listFiles { file ->
+            file.isFile && (file.extension.equals("kcp", true) || file.extension.equals("json", true))
+        }.orEmpty().sortedBy { it.extension.equals("json", true) }
+        val seen = mutableSetOf<UUID>()
+        return files.mapNotNull { file ->
+            val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()
+                ?: return@mapNotNull null
+            if (!seen.add(id)) return@mapNotNull null
+            cached(id)?.deepCopy()?.to(sourceFile(id)?.lastModified() ?: file.lastModified())
+        }
+            .sortedBy(Pair<DiskScript, Long>::second)
+            .map(Pair<DiskScript, Long>::first)
+    }
 
     /** 旧API名。実体は新しいライブラリ関係を参照します。 */
     fun listOwned(owner: UUID): List<DiskScript> = listLibrary(owner)
@@ -365,18 +409,21 @@ class ScriptStore(
         val referenced = libraryPrograms.values.flatten().toSet() +
             historyPrograms.values.flatten().toSet()
         var removed = 0
-        dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
+        dir.listFiles { file ->
+            file.isFile && (file.extension.equals("kcp", true) || file.extension.equals("json", true))
+        }
             ?.mapNotNull { file ->
                 runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()?.to(file)
             }
-            ?.filter { (id, _) -> id !in referenced && !isPlacedScript(id) }
-            ?.forEach { (id, file) ->
-                if (file.delete()) {
+            ?.groupBy(Pair<UUID, File>::first)
+            ?.filterKeys { id -> id !in referenced && !isPlacedScript(id) }
+            ?.forEach { (id, files) ->
+                if (files.map(Pair<UUID, File>::second).all { it.delete() }) {
                     cache.remove(id)
                     rejectedFiles.remove(id)
                     removed++
                 } else {
-                    logger.log(Level.WARNING, "orphanプログラムの削除に失敗しました: file=${file.path}")
+                    logger.log(Level.WARNING, "orphanプログラムの削除に失敗しました: script=$id")
                 }
             }
         removed
@@ -393,10 +440,11 @@ class ScriptStore(
             historyPrograms.values.any { id in it } ||
             isPlacedScript(id)
         if (referenced) return
-        val target = file(id)
-        if (target.isFile && !target.delete()) {
-            logger.log(Level.WARNING, "orphanプログラムの削除に失敗しました: file=${target.path}")
-            return
+        listOf(file(id), legacyJsonFile(id)).filter { it.isFile }.forEach { target ->
+            if (!target.delete()) {
+                logger.log(Level.WARNING, "orphanプログラムの削除に失敗しました: file=${target.path}")
+                return
+            }
         }
         cache.remove(id)
         rejectedFiles.remove(id)
@@ -432,7 +480,7 @@ class ScriptStore(
     private fun pruneDanglingRelations() {
         var repaired = false
         (libraryPrograms.values + historyPrograms.values).forEach { ids ->
-            if (ids.removeIf { !file(it).isFile }) repaired = true
+            if (ids.removeIf { sourceFile(it) == null }) repaired = true
         }
         libraryPrograms.entries.removeIf { it.value.isEmpty() }
         historyPrograms.entries.removeIf { it.value.isEmpty() }
@@ -511,8 +559,7 @@ class ScriptStore(
 
     private fun cached(id: UUID): DiskScript? {
         cache[id]?.let { return it }
-        val target = file(id)
-        if (!target.isFile) {
+        val target = sourceFile(id) ?: run {
             rejectedFiles.remove(id)
             return null
         }
@@ -521,9 +568,9 @@ class ScriptStore(
             if (rejected == fingerprint) return null
             rejectedFiles.remove(id, rejected)
         }
-        val loaded = read(target) ?: run {
-            // 隔離に失敗した場合だけ元ファイルが残ります。次回以降は同じファイルの
-            // 更新を検知するまで、読み込み・隔離・警告を繰り返しません。
+        val loaded = read(target, id) ?: run {
+            // 隔離・残置されたままのファイルはここに残ります。次回以降は同じ
+            // ファイルの更新を検知するまで、読み込み・警告を繰り返しません。
             if (target.isFile) {
                 rejectedFiles[id] = RejectedFileFingerprint.from(target)
             } else {
@@ -541,14 +588,231 @@ class ScriptStore(
         graph = graph.deepCopy(),
     )
 
-    private fun file(id: UUID) = dir.resolve("$id.json")
+    /** `.kcp`（純粋DSLテキスト）の正本ファイルです。 */
+    private fun file(id: UUID) = dir.resolve("$id.kcp")
+
+    /** 旧形式（`.json`）の移行専用入力ファイルです。 */
+    private fun legacyJsonFile(id: UUID) = dir.resolve("$id.json")
+
+    /** 読み込み元です。同一IDに双方があれば `.kcp` を優先します。 */
+    private fun sourceFile(id: UUID): File? =
+        file(id).takeIf { it.isFile } ?: legacyJsonFile(id).takeIf { it.isFile }
+
+    /**
+     * 保存・移行共通の正規化です。折り畳みノードはDSLで表現できないため
+     * 展開し、起動方法は保存時と同じ規則で正規化します。引数の
+     * 呼出し側（copyForItem 等）のモデルは変更しません。
+     */
+    private fun canonicalized(script: DiskScript): DiskScript =
+        script.deepCopy().also { canonical ->
+            unfoldAll(canonical.graph)
+            canonical.trigger = canonical.trigger.normalized()
+        }
+
+    /** 正規形 `.kcp` テキストを生成します。 */
+    private fun canonicalText(canonical: DiskScript): String =
+        DslPrinter(::diskName).print(
+            canonical.graph, canonical.name, canonical.effectiveTrigger(), canonical.arguments,
+        )
+
+    /**
+     * グラフ内の折り畳みノードを展開します。折り畳みはGUIの表示状態であり、
+     * 展開は意味を変えません。展開不能なノードが残る場合は例外とし、
+     * 不完全な DSL を保存しません。
+     */
+    private fun unfoldAll(graph: CommandGraph) {
+        repeat(FOLD_UNROLL_LIMIT) {
+            val folded = graph.nodes.values.firstOrNull(FoldedGraphs::isFolded) ?: return
+            require(GraphEditor.unfold(graph, folded.id)) {
+                "折り畳みノードを展開できません: ${folded.id}"
+            }
+        }
+        require(graph.nodes.values.none(FoldedGraphs::isFolded)) {
+            "折り畳みノードの展開が収束しません"
+        }
+    }
+
+    /**
+     * 起動時の移行です。旧 `.json` を `.kcp` へ一度だけ変換します。
+     * 変換成功した旧JSONは `converted-json/` へ退避し、変換できないものは
+     * 次回起動まで残します（`call` 参照解決のため既存読込・隔離経路を通します）。
+     */
+    private fun migrateLegacyJsonPrograms() {
+        dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
+            ?.forEach { file ->
+                val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()
+                    ?: return@forEach
+                if (this.file(id).isFile) {
+                    // `.kcp` 正本が既にある旧JSONは残置物として整理します。
+                    archiveLegacyJson(file)
+                    return@forEach
+                }
+                val script = cached(id) ?: return@forEach
+                val canonical = runCatching { canonicalized(script) }.getOrNull()
+                val text = canonical?.let { runCatching { canonicalText(it) }.getOrNull() }
+                if (text == null) {
+                    logger.warning(
+                        ".kcp への変換に失敗したため旧JSONを残します: ${file.absolutePath}"
+                    )
+                    return@forEach
+                }
+                runCatching { atomicWrite(this.file(id), text) }
+                    .onSuccess {
+                        archiveLegacyJson(file)
+                        // 読込済みキャッシュをDSL正本の内容（展開・正規化済み）へ揃えます。
+                        cache[id] = canonical
+                    }
+                    .onFailure { failure ->
+                        logger.log(
+                            Level.WARNING,
+                            ".kcp への書き込みに失敗したため旧JSONを残します: ${file.absolutePath}",
+                            failure,
+                        )
+                    }
+            }
+    }
+
+    /** 変換済みの旧JSONを `converted-json/` へ退避します。 */
+    private fun archiveLegacyJson(file: File) {
+        val archive = dir.resolve(CONVERTED_DIR_NAME)
+        if (!archive.isDirectory && !archive.mkdirs() && !archive.isDirectory) {
+            logger.warning("旧JSONの退避先を準備できないため残します: ${file.absolutePath}")
+            return
+        }
+        val target = uniqueQuarantineTarget(archive, file, fileTag = "json")
+        runCatching { Files.move(file.toPath(), target.toPath()) }
+            .onFailure { failure ->
+                logger.log(
+                    Level.WARNING,
+                    "旧JSONを退避できないため残します: ${file.absolutePath}",
+                    failure,
+                )
+            }
+    }
+
+    /**
+     * ディスク名の変更を、`call "name"` で参照する全プログラムの `.kcp` 正本へ
+     * 伝播します。DSL テキストはディスク名を正本として参照するため、保存済み
+     * テキストだけを最新名へ書き換えます（グラフ・revision は変わりません）。
+     */
+    private fun propagateDiskRename(renamedId: UUID) {
+        listAll().filter { candidate ->
+            candidate.id != renamedId && candidate.graph.nodes.values.any {
+                it.type == CommandType.DISK_CALL &&
+                    it.string("diskId") == renamedId.toString()
+            }
+        }.forEach { caller ->
+            withScriptLock(caller.id) {
+                val text = runCatching { canonicalText(canonicalized(caller)) }
+                    .getOrNull() ?: return@withScriptLock
+                val target = file(caller.id)
+                if (target.isFile && target.readText(Charsets.UTF_8) == text) return@withScriptLock
+                atomicWrite(target, text)
+            }
+        }
+    }
+
+    /**
+     * `call "<name>"` の対象ディスクを名前または UUID で解決します。
+     * スナップショットには解決済み正本のグラフをそのまま使います。
+     */
+    private fun resolveDiskLink(name: String): DslDiskLink? {
+        val byUuid = runCatching { UUID.fromString(name) }.getOrNull()
+        // コンパイル中の自己・相互参照は宣言部だけの暫定リンクで受理します。
+        // 実行は diskId 参照で行われるため、空のスナップショットで意味は保てます。
+        compiling.get().firstOrNull { it.name == name || it.id == byUuid }?.let {
+            return DslDiskLink(it.id, CommandGraph(), it.arguments)
+        }
+        // 名前参照は一意の場合だけ受理します。重複名の `call` は UUID 表記が
+        // 書かれている前提であり、ここで任意解決すると誤った対象へ結び付きます。
+        val target = if (byUuid != null) {
+            cached(byUuid)
+        } else {
+            listAll().filter { it.name == name }.singleOrNull()
+        } ?: return null
+        compiling.get().firstOrNull { it.id == target.id }?.let {
+            return DslDiskLink(it.id, CommandGraph(), it.arguments)
+        }
+        return DslDiskLink(target.id, target.graph, target.arguments)
+    }
+
+    /**
+     * DISK_CALL の diskId を現在のプログラム名へ逆引きします（DSL 印刷用）。
+     * 名前が一意でない対象は UUID 表記を返し、復元時の identity を保ちます。
+     */
+    private fun diskName(id: UUID): String? {
+        val name = cached(id)?.name
+            ?: compiling.get().firstOrNull { it.id == id }?.name
+            ?: return id.toString()
+        val unique = listAll().count { it.name == name } <= 1
+        return if (unique) name else id.toString()
+    }
+
+    /** `program` の `defarg` 宣言をモデルの引数定義へ写像します。 */
+    private fun declaredArguments(program: me.awabi2048.kantancommander.dsl.DslProgram): List<DiskArgument> =
+        program.decls.filterIsInstance<DslDefarg>()
+            .map { DiskArgument(name = DslNames.modelName(it.name), type = it.type) }
 
     /** issue #16: 原子書込は共通基盤へ委譲します。失敗意味は従来どおりです。 */
     private fun atomicWrite(target: File, content: String) {
         AtomicFileWriter.write(target, content, "プログラムディスク")
     }
 
-    private fun read(file: File): DiskScript? = try {
+    /**
+     * ファイルを拡張子で読み分けます。`.kcp`（純粋DSLテキスト）が正本、
+     * `.json` は v15-v18 の移行専用入力です。
+     */
+    private fun read(file: File, id: UUID): DiskScript? =
+        if (file.extension.equals("kcp", true)) readDsl(file, id) else readJson(file)
+
+    /**
+     * `.kcp` テキストを解析・検証・低級化してモデルへ復元します。
+     *
+     * `.kcp` はユーザーが外部エディタで直接編集する正本であるため、読み込め
+     * ないファイルは隔離せず警告を残してその場に置きます（修正→再読込で
+     * 復旧します）。
+     */
+    private fun readDsl(file: File, id: UUID): DiskScript? = try {
+        val program = DslParser.parse(file.readText(Charsets.UTF_8))
+        // コンパイル中の自己・相互 call が宣言部を参照できるよう登録します。
+        val pending = PendingDecl(id, program.name, declaredArguments(program))
+        compiling.get() += pending
+        val script = try {
+            val compiled = DslCompiler(worldTypes(), ::resolveDiskLink).compile(program)
+            DiskScript(
+                id = id,
+                name = program.name,
+                graph = compiled.graph,
+                trigger = compiled.trigger,
+                arguments = compiled.arguments,
+            )
+        } finally {
+            compiling.get().remove(pending)
+        }
+        // 構造そのものの違反は破損データとして未ロードとします。
+        val structuralViolations = validateRecursively(script.graph, UNBOUNDED_LIMITS)
+        require(structuralViolations.isEmpty()) { structuralViolations.joinToString("; ") }
+        // config上限だけを超えるデータは、リロードでの上限引き下げ時に
+        // 既存データを失わせないため、警告のみで読み込みを続行する。
+        val limitViolations = validateRecursively(script.graph, limits)
+        if (limitViolations.isNotEmpty()) {
+            logger.warning(
+                "設定上限を超える保存済みプログラムを読み込みました（隔離していません）: " +
+                    "${file.absolutePath} (${limitViolations.joinToString("; ")})"
+            )
+        }
+        script
+    } catch (error: Exception) {
+        logger.log(
+            Level.WARNING,
+            "プログラムを読み込めません（修正して再読込してください）: ${file.absolutePath}",
+            error,
+        )
+        null
+    }
+
+    /** `.json`（v15-v18）を移行込みで読み込みます。受付対象外・破損は隔離します。 */
+    private fun readJson(file: File): DiskScript? = try {
         val source = JsonParser.parseString(file.readText(Charsets.UTF_8)).asJsonObject
         val sourceVersion = source["formatVersion"]
             ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
@@ -893,6 +1157,12 @@ class ScriptStore(
     private companion object {
         /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
         private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
+
+        /** 変換済みの旧JSONを退避するディレクトリ名です。 */
+        private const val CONVERTED_DIR_NAME = "converted-json"
+
+        /** 折り畳み展開の反復上限です。入れ子の折り畳みを逐段展開するための安全弁です。 */
+        private const val FOLD_UNROLL_LIMIT = 10_000
 
         /**
          * #30移行で除去する散布系キーです。旧GEOMETRY→新PARTICLE_GEOMETRY時に除去します。

@@ -109,7 +109,8 @@ class ScriptStoreTest {
     }
 
     @Test
-    fun `folded for round trips with its inner graph and copies stay independent`() {
+    fun `folded for is unrolled at save and inner structure is preserved`() {
+        // 折り畳みはGUIの表示状態であり、`.kcp` 正本では展開した構造を保存します。
         val store = ScriptStore(temp.resolve("folded"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "test")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
@@ -120,16 +121,17 @@ class ScriptStoreTest {
         store.save(script)
 
         val loaded = requireNotNull(store.load(script.id))
-        val folded = loaded.graph.nodes.getValue(start.id)
-        assertEquals(CommandType.FOLDED_FOR, folded.type)
-        val inner = requireNotNull(folded.foldedGraph)
-        assertEquals(setOf(start.id, body.id, end), inner.nodes.keys)
-        // 折り畳み自体は実行内容のため、ディスク内容ありと判定する。
+        val startNode = loaded.graph.nodes.getValue(start.id)
+        assertEquals(CommandType.FOR_START, startNode.type)
+        // 展開後も内部ノード（本体・終端）が残り、実行意味を保持します。
+        assertTrue(body.id in loaded.graph.nodes)
+        assertTrue(end in loaded.graph.nodes)
+        assertEquals(CommandType.FOR_END, loaded.graph.nodes.getValue(end).type)
         assertTrue(loaded.hasDiskContent())
 
         val copy = requireNotNull(store.copyForPlacement(loaded))
-        copy.graph.nodes.getValue(start.id).foldedGraph?.nodes?.getValue(body.id)?.params?.set("text", "changed")
-        assertEquals("", loaded.graph.nodes.getValue(start.id).foldedGraph?.nodes?.getValue(body.id)?.string("text"))
+        copy.graph.nodes.getValue(body.id).params.set("text", "changed")
+        assertEquals("", loaded.graph.nodes.getValue(body.id).string("text"))
     }
 
     @Test
@@ -192,6 +194,161 @@ class ScriptStoreTest {
         assertNull(store.load(scriptId))
         assertFalse(dir.resolve("$scriptId.json").exists())
         assertEquals(1, requireNotNull(dir.resolve("incompatible").listFiles()).size)
+    }
+
+    @Test
+    fun `kcp canonical text is written and reloaded`() {
+        // `.kcp`（純粋DSLテキスト）が保存の正本です。
+        val dir = temp.resolve("kcp-round-trip").also(File::mkdirs)
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "kcp-sample")
+        val node = CommandType.DISPLAY_TEXT.newNode()
+        node.params["text"] = "hello"
+        script.graph = CommandGraph(node.id, linkedMapOf(node.id to node))
+        store.save(script)
+
+        val file = dir.resolve("${script.id}.kcp")
+        assertTrue(file.isFile)
+        val text = file.readText(Charsets.UTF_8)
+        assertTrue(text.contains("program \"kcp-sample\""))
+        assertFalse(dir.resolve("${script.id}.json").exists())
+
+        // 再オープンしても同じ内容で復元されます。
+        // DSL 正本は構造を保持し、内部ノードIDは再コンパイルで再採番されます。
+        val reopened = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(reopened.load(script.id))
+        assertEquals("kcp-sample", loaded.name)
+        assertEquals("hello", loaded.graph.nodes.values.single().string("text"))
+    }
+
+    @Test
+    fun `legacy json converts to kcp once at startup`() {
+        // 旧JSONは初回起動時に .kcp へ変換し、原本は converted-json/ へ退避します。
+        val dir = temp.resolve("kcp-convert").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 17,
+              "id": "$scriptId",
+              "name": "legacy-to-kcp",
+              "timer": {"enabled": true, "intervalSeconds": 5.0},
+              "graph": {
+                "entryNodeId": "$nodeId",
+                "nodes": {
+                  "$nodeId": {
+                    "id": "$nodeId",
+                    "type": "WAIT",
+                    "params": {"seconds": "1"}
+                  }
+                }
+              },
+              "revision": 0
+            }
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+
+        ScriptStore(dir, Logger.getAnonymousLogger())
+        val file = dir.resolve("$scriptId.kcp")
+        assertTrue(file.isFile)
+        val text = file.readText(Charsets.UTF_8)
+        assertTrue(text.contains("program \"legacy-to-kcp\""))
+        assertTrue(text.contains("trigger timer(interval ="), text)
+        assertFalse(dir.resolve("$scriptId.json").exists())
+        assertEquals(1, requireNotNull(dir.resolve("converted-json").listFiles()).size)
+
+        // 変換済みの .kcp から読み込めます。
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        assertEquals(TriggerKind.TIMER, loaded.trigger.kind)
+        assertEquals(5.0, loaded.trigger.intervalSeconds)
+    }
+
+    @Test
+    fun `unchanged save does not rewrite the kcp file`() {
+        val dir = temp.resolve("kcp-unchanged").also(File::mkdirs)
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "unchanged")
+        val node = CommandType.DISPLAY_TEXT.newNode()
+        script.graph = CommandGraph(node.id, linkedMapOf(node.id to node))
+        store.save(script)
+
+        val file = dir.resolve("${script.id}.kcp")
+        val written = file.readBytes()
+        val stamp = file.lastModified()
+        // 内容が変わらない保存はファイルを書き換えません。
+        store.save(requireNotNull(store.load(script.id)))
+        assertEquals(stamp, file.lastModified())
+        assertTrue(file.readBytes().contentEquals(written))
+    }
+
+    @Test
+    fun `broken kcp stays in place with a warning`() {
+        // .kcp はユーザーが外部編集する正本です。壊れたファイルは隔離せず
+        // その場に残し、警告だけを残して未ロードとします。
+        val dir = temp.resolve("kcp-broken").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val file = dir.resolve("$scriptId.kcp")
+        file.writeText("program \"broken\";\nif ( ", Charsets.UTF_8)
+        val (logger, handler) = recordingLogger()
+
+        val store = ScriptStore(dir, logger)
+        assertNull(store.load(scriptId))
+        assertTrue(store.listAll().isEmpty())
+        assertTrue(file.isFile)
+        assertTrue(handler.warningCount() >= 1)
+        assertFalse(dir.resolve("corrupt").exists() && dir.resolve("corrupt").list().orEmpty().isNotEmpty())
+
+        // 修正して再読込すれば復旧します。
+        file.writeText("program \"fixed\";\nwait(1);\n", Charsets.UTF_8)
+        val loaded = requireNotNull(store.load(scriptId))
+        assertEquals("fixed", loaded.name)
+    }
+
+    @Test
+    fun `renaming a called program rewrites caller kcp text`() {
+        // call はディスク名を正本として参照するため、改名を呼出し側へ伝播します。
+        val dir = temp.resolve("kcp-rename").also(File::mkdirs)
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val callee = store.create(UUID.randomUUID(), "callee")
+        val caller = store.create(UUID.randomUUID(), "caller")
+        val call = CommandType.DISK_CALL.newNode()
+        call.params["diskId"] = callee.id.toString()
+        caller.graph = CommandGraph(call.id, linkedMapOf(call.id to call))
+        store.save(caller)
+
+        val renamed = requireNotNull(store.load(callee.id)).apply { name = "renamed-callee" }
+        store.save(renamed)
+
+        val callerText = dir.resolve("${caller.id}.kcp").readText(Charsets.UTF_8)
+        assertTrue(callerText.contains("call \"renamed-callee\""), callerText)
+    }
+
+    @Test
+    fun `call to a duplicated program name resolves by uuid`() {
+        // 重複名の対象は `call "<uuid>"` で印刷され、復元時も同じ対象へ解決します。
+        val dir = temp.resolve("kcp-dup-names").also(File::mkdirs)
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val first = store.create(UUID.randomUUID(), "dup")
+        store.create(UUID.randomUUID(), "dup")
+        val caller = store.create(UUID.randomUUID(), "caller")
+        val call = CommandType.DISK_CALL.newNode()
+        call.params["diskId"] = first.id.toString()
+        caller.graph = CommandGraph(call.id, linkedMapOf(call.id to call))
+        store.save(caller)
+
+        val text = dir.resolve("${caller.id}.kcp").readText(Charsets.UTF_8)
+        assertTrue(text.contains("call \"${first.id}\""), text)
+
+        val reopened = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(reopened.load(caller.id))
+        // DSL 正本の復元ではノードIDが再採番されるため、構造から対象を取り出します。
+        assertEquals(
+            first.id.toString(),
+            loaded.graph.nodes.values.single().string("diskId"),
+        )
     }
 
     @Test
