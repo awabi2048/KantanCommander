@@ -3,17 +3,22 @@ package me.awabi2048.kantancommander.dsl
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.MyworldSpawnKind
+import me.awabi2048.kantancommander.model.SystemVariableNames
+import me.awabi2048.kantancommander.model.redstoneSignalSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.variableScope
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
@@ -46,8 +51,27 @@ class DslPrinter(
 ) {
     /** グラフを `program "<name>" { ... }` の完全な DSL テキストへ復元します。 */
     fun print(graph: CommandGraph, name: String): String {
-        val printer = Printer(graph)
+        val printer = Printer(unfoldAll(graph))
         return printer.printProgram(name)
+    }
+
+    /**
+     * 折り畳みノード（FOLDED_IF/FOLDED_FOR）を全展開した複製を返します。
+     * 元グラフは変更せず、折り畳みを含まない入力はそのまま返します。
+     */
+    private fun unfoldAll(graph: CommandGraph): CommandGraph {
+        fun isFolded(n: CommandNode) =
+            n.type == CommandType.FOLDED_IF || n.type == CommandType.FOLDED_FOR
+        if (graph.nodes.values.none(::isFolded)) return graph
+        val copy = graph.deepCopy()
+        var guard = copy.nodes.size + 8
+        while (true) {
+            if (guard-- <= 0) throw DslPrintException("折り畳み展開が上限を超えました")
+            val folded = copy.nodes.values.firstOrNull(::isFolded) ?: return copy
+            if (!me.awabi2048.kantancommander.data.GraphEditor.unfold(copy, folded.id)) {
+                throw DslPrintException("折り畳みノードを展開できません: ${folded.id}")
+            }
+        }
     }
 
     private inner class Printer(val graph: CommandGraph) {
@@ -76,16 +100,19 @@ class DslPrinter(
         // ---- ブロック走査 ----
 
         /**
-         * `entry` から `boundary`（含まない）までの文を出力します。
-         * MERGE は合流の構造要素として透過し、FOR_END は呼び出し側が
-         * boundary へ指定しているためここでは現れない想定です。
+         * `entry` から `boundary`（含まない）までの文を出力し、走査が
+         * 停止した位置のノード ID を返します。
+         * MERGE は合流の構造要素として透過します。FOR_END は `endAtForEnd`
+         * が真のとき領域の自然な終端として停止して返し、偽のときは
+         * 対応ループの外側への出現としてエラーにします。
          */
-        private fun emitBlock(entry: UUID?, boundary: UUID?) {
+        private fun emitBlock(entry: UUID?, boundary: UUID?, endAtForEnd: Boolean = false): UUID? {
             var cur = entry
             var guard = graph.nodes.size + 8
             while (cur != null && cur != boundary) {
                 if (guard-- <= 0) throw DslPrintException("ノード走査が上限を超えました（循環の可能性）")
                 val n = graph.nodes[cur] ?: throw DslPrintException("不明なノード参照です: $cur")
+                if (n.type == CommandType.FOR_END && endAtForEnd) return cur
                 cur = when (n.type) {
                     CommandType.MERGE -> n.next
                     CommandType.FOR_END -> throw DslPrintException("FOR_END が対応ループの外側に現れました")
@@ -105,6 +132,7 @@ class DslPrinter(
                     else -> { emitCommand(n); n.next }
                 }
             }
+            return cur
         }
 
         // ---- 変数（TEMP_SET / VARIABLE） ----
@@ -117,43 +145,111 @@ class DslPrinter(
                 tempDefs[name] = expr
                 return
             }
+            emitExecWrite(n, name, expr)
+        }
+
+        /**
+         * VARIABLE ノードの復元です。scope・operation の全組合せを DSL 表層へ写像します。
+         * - EXECUTION: TEMP_SET と同じ変数表層（`var`/`x =`/`x op=`）
+         * - WORLD: `world.x` 参照・`var world.x` 宣言・`world.x op=` 複合代入
+         * - ENTITY: `<対象>.vars.<name> = ...`（DSL は entity 変数の書込みのみ表現）
+         * - DELETE: `del <対象>;`
+         */
+        private fun emitVariable(n: CommandNode) {
+            val scope = n.variableScope()
+            val name = n.string("name")
+            val op = VariableOperation.entries.firstOrNull { it.name == n.string("operation") }
+            if (op == null) unsupported("VARIABLE の操作 '${n.string("operation")}'")
+            when (op) {
+                VariableOperation.DELETE -> {
+                    val target = when (scope) {
+                        VariableScope.EXECUTION -> dslName(name)
+                        VariableScope.WORLD -> "world.${dslName(name)}"
+                        VariableScope.ENTITY -> "${entityTargetText(n)}.vars.${dslName(name)}"
+                    }
+                    line("del $target;")
+                }
+                VariableOperation.COPY -> {
+                    // 複写は参照代入と同義のため `dst = src` へ正規化します。
+                    val src = n.string("source")
+                    val srcText = when (scope) {
+                        VariableScope.WORLD -> "world.${dslName(src)}"
+                        VariableScope.EXECUTION -> valueName(src)
+                        VariableScope.ENTITY ->
+                            // エンティティ変数の複写元は同一対象のエンティティ変数であり、
+                            // DSL は entity 変数の読出しを表現できません。
+                            unsupported("ENTITY 変数の COPY")
+                    }
+                    emitVarAssign(n, scope, name, srcText)
+                }
+                else -> when (scope) {
+                    VariableScope.EXECUTION -> emitExecWrite(n, name, variableExpr(n))
+                    VariableScope.WORLD -> {
+                        val dsl = "world.${dslName(name)}"
+                        val calc = compoundAssign(n, name, scope)
+                        when {
+                            calc != null -> line("$dsl $calc;")
+                            op == VariableOperation.DEFINE ->
+                                line("var $dsl: ${typeName(n.string("type"))} = ${variableExpr(n)};")
+                            else -> line("$dsl = ${variableExpr(n)};")
+                        }
+                    }
+                    VariableScope.ENTITY -> {
+                        // PROPERTY の参照元は同一対象の entity 変数であり DSL では表現不能。
+                        if (n.string("changeMode") == VariableChangeMode.PROPERTY.name) {
+                            unsupported("ENTITY 変数の PROPERTY 生成")
+                        }
+                        line("${entityTargetText(n)}.vars.${dslName(name)} = ${variableExpr(n)};")
+                    }
+                }
+            }
+        }
+
+        /** 実行内変数への書き込み（TEMP_SET または VARIABLE・EXECUTION）です。 */
+        private fun emitExecWrite(n: CommandNode, name: String, expr: String) {
             val dsl = dslName(name)
-            val calc = compoundAssign(n, name)
+            val calc = compoundAssign(n, name, VariableScope.EXECUTION)
             when {
                 calc != null && dsl in declared -> line("$dsl $calc;")
-                declared.add(dsl) -> line("var $dsl: ${typeName(n.string("tempType"))} = $expr;")
+                declared.add(dsl) ->
+                    line("var $dsl: ${typeName(varTypeName(n))} = $expr;")
                 else -> line("$dsl = $expr;")
             }
         }
 
-        private fun emitVariable(n: CommandNode) {
-            val scope = VariableScope.parse(n.string("scope")) ?: VariableScope.WORLD
-            if (scope != VariableScope.WORLD) unsupported("VARIABLE の範囲 '$scope'")
-            if (n.string("operation") != VariableOperation.SET.name) {
-                unsupported("VARIABLE の操作 '${n.string("operation")}'")
+        /** VARIABLE の COPY/SET を scope に応じた代入文へ写します。 */
+        private fun emitVarAssign(n: CommandNode, scope: VariableScope, name: String, expr: String) {
+            when (scope) {
+                VariableScope.EXECUTION -> emitExecWrite(n, name, expr)
+                VariableScope.WORLD -> line("world.${dslName(name)} = $expr;")
+                VariableScope.ENTITY -> line("${entityTargetText(n)}.vars.${dslName(name)} = $expr;")
             }
-            val name = n.string("name")
-            val dsl = "world.${dslName(name)}"
-            val calc = compoundAssign(n, name)
-            if (calc != null) {
-                line("$dsl $calc;")
-            } else {
-                line("$dsl = ${variableExpr(n)};")
-            }
+        }
+
+        /** ノードの宣言型名です。TEMP_SET は `tempType`、VARIABLE は `type` 欄です。 */
+        private fun varTypeName(n: CommandNode): String =
+            if (n.type == CommandType.TEMP_SET) n.string("tempType") else n.string("type")
+
+        /** ENTITY scope の対象指定を対象式テキストへ戻します。 */
+        private fun entityTargetText(n: CommandNode): String {
+            // VARIABLE のエンティティ変数対象は targetSpec 欄です。
+            val spec = n.targetSpec
+                ?: unsupported("ENTITY 変数の対象が未設定です")
+            return targetExpr(spec)
         }
 
         /**
          * CALCULATE の `<self> <op> <rhs>` 形を複合代入 `x <op>= rhs` へ畳み込みます。
          * 左辺の参照がこのノードの変数名と一致しない場合は null（通常代入）です。
          */
-        private fun compoundAssign(n: CommandNode, name: String): String? {
+        private fun compoundAssign(n: CommandNode, name: String, scope: VariableScope): String? {
             if (n.string("changeMode") != VariableChangeMode.CALCULATE.name) return null
             val m = CALC_HEAD.matchEntire(n.string("value")) ?: return null
             val execName = m.groupValues[1]
             val worldName = m.groupValues[2]
             val op = m.groupValues[3]
             val rhs = m.groupValues[4]
-            val isSelf = if (n.type == CommandType.TEMP_SET) execName == name else worldName == name
+            val isSelf = if (scope == VariableScope.EXECUTION) execName == name else worldName == name
             if (!isSelf) return null
             return "$op= ${expandRefs(rhs)}"
         }
@@ -170,9 +266,19 @@ class DslPrinter(
                     val arg = n.string("propertyArg").takeIf(String::isNotBlank)
                     if (arg != null) "$src.$prop(${valueName(arg)})" else "$src.$prop"
                 }
-                VariableChangeMode.CALCULATE.name -> expandRefs(n.string("value"))
+                VariableChangeMode.CALCULATE.name ->
+                    // 式欄が純数値のときは他のスカラ経路と同じく正規形へ揃えます。
+                    expandRefs(n.string("value")).let { it.toDoubleOrNull()?.let(::num) ?: it }
+                VariableChangeMode.RANDOM.name -> randomExpr(n.string("range"))
                 else -> assignExpr(n, typeName)
             }
+        }
+
+        /** `range` 欄の `a..b` を `random(min = a, max = b)` へ復元します。 */
+        private fun randomExpr(range: String): String {
+            val r = CommandValueRules.parseNumericRange(range)
+                ?: unsupported("range '$range'")
+            return "random(min = ${num(r.min)}, max = ${num(r.max)})"
         }
 
         /** ASSIGN の値（型別の構造値またはテンプレート文字列）を式へ復元します。 */
@@ -216,33 +322,80 @@ class DslPrinter(
         private fun emitIfTail(expr: String, thenEntry: UUID?, elseEntry: UUID?, elseIf: Boolean): UUID? {
             val join = resolveJoin(thenEntry, elseEntry)
             val keyword = if (elseIf) "} else if" else "if"
+            // 枝の出口 null は「その極性でプログラムを終了」という意味です。
+            // DSL では明示の `return;` へ写像するため、合流直行の空枝とは区別します。
+            val thenHalt = thenEntry == null
+            val elseHalt = elseEntry == null
             // ループ本体内では空の枝が FOR_END を直接指すことがあります。
             // これは分岐先がループ境界そのものであり、中身のない枝として扱います。
-            val thenEmpty = thenEntry == null || thenEntry == join || graph.nodes[thenEntry]?.type == CommandType.FOR_END
-            val elseEmpty = elseEntry == null || elseEntry == join || graph.nodes[elseEntry]?.type == CommandType.FOR_END
+            val thenEmpty = !thenHalt &&
+                (thenEntry == join || graph.nodes[thenEntry]?.type == CommandType.FOR_END)
+            val elseEmpty = !elseHalt &&
+                (elseEntry == join || graph.nodes[elseEntry]?.type == CommandType.FOR_END)
+            // 両枝に内容があり条件が全体否定なら、正準形として枝を入れ替えて
+            // 先頭の `!` を外します（`if (!e) {A} else {B}` ≡ `if (e) {B} else {A}`）。
+            var outExpr = expr
+            var outThen = thenEntry
+            var outElse = elseEntry
+            var outThenHalt = thenHalt
+            var outElseHalt = elseHalt
+            if (!thenEmpty && !elseEmpty) {
+                stripLeadingNot(expr)?.let {
+                    outExpr = it
+                    outThen = elseEntry
+                    outElse = thenEntry
+                    outThenHalt = elseHalt
+                    outElseHalt = thenHalt
+                }
+            }
             if (thenEmpty) {
-                // then が空なら else を本体へ反転します。
-                if (!elseEmpty) {
-                    val inv = invertExpr(expr)
-                    line("$keyword ($inv) {")
-                    indent++
-                    emitBlock(elseEntry, join)
-                    indent--
-                    line("}")
-                } else {
-                    line("$keyword ($expr) {")
-                    line("}")
+                // then が空なら else を本体へ反転します。else が終了なら
+                // `if (!e) { return }`（以後の文は到達しない）へ畳み込みます。
+                when {
+                    outElseHalt -> {
+                        val inv = invertExpr(outExpr)
+                        line("$keyword ($inv) {")
+                        indent++
+                        line("return;")
+                        indent--
+                        line("}")
+                    }
+                    !elseEmpty -> {
+                        val inv = invertExpr(outExpr)
+                        line("$keyword ($inv) {")
+                        indent++
+                        emitBlock(outElse, join)
+                        indent--
+                        line("}")
+                    }
+                    else -> {
+                        line("$keyword ($outExpr) {")
+                        line("}")
+                    }
                 }
                 return join
             }
-            line("$keyword ($expr) {")
+            line("$keyword ($outExpr) {")
             indent++
-            emitBlock(thenEntry, join)
+            // 片側が終了する形では合流が存在しないため、then 側は領域の
+            // 自然な終端（FOR_END／プログラム終端）までを出力します。
+            var stop = join
+            if (outThenHalt) line("return;")
+            else if (join == null) stop = emitBlock(outThen, null, endAtForEnd = true)
+            else emitBlock(outThen, join)
             indent--
+            if (outElseHalt) {
+                line("} else {")
+                indent++
+                line("return;")
+                indent--
+                line("}")
+                return stop
+            }
             if (!elseEmpty) {
                 // else 節が if 文1つだけなら `else if` へ畳み込みます。
                 // 先頭が実体化用の一時変数なら条件の直前準備なので読み飛ばします。
-                val firstElse = firstRealNode(elseEntry)
+                val firstElse = firstRealNode(outElse)
                 if (firstElse != null && firstElse.type == CommandType.CONDITION) {
                     val innerRegion = analyzeRegion(firstElse)
                     val innerJoin = resolveJoin(innerRegion.thenEntry, innerRegion.elseEntry)
@@ -253,13 +406,53 @@ class DslPrinter(
                 }
                 line("} else {")
                 indent++
-                emitBlock(elseEntry, join)
+                emitBlock(outElse, join)
                 indent--
                 line("}")
             } else {
                 line("}")
             }
             return join
+        }
+
+        /**
+         * 式全体を覆う先頭の否定 `!` を取り除きます。
+         * `!x`・`!f(…)`・`!(式)` の形だけを対象とし、部分否定や
+         * 二項演算の片側だけに掛かる `!` は対象外です。
+         */
+        private fun stripLeadingNot(expr: String): String? {
+            if (!expr.startsWith("!")) return null
+            val rest = expr.substring(1)
+            val open = rest.indexOf('(')
+            return when {
+                open >= 0 && rest.endsWith(")") && parensCover(rest.substring(open)) ->
+                    if (open == 0) rest.substring(1, rest.length - 1) else rest
+                open < 0 && SIMPLE_OPERAND.matches(rest) -> rest
+                else -> null
+            }
+        }
+
+        /** 先頭の `(` が末尾の `)` と対になり文字列全体を覆うかを判定します。 */
+        private fun parensCover(s: String): Boolean {
+            var depth = 0
+            var inString = false
+            var i = 0
+            while (i < s.length) {
+                val c = s[i]
+                if (inString) {
+                    if (c == '\\') i++
+                    else if (c == '"') inString = false
+                } else when (c) {
+                    '"' -> inString = true
+                    '(' -> depth++
+                    ')' -> {
+                        depth--
+                        if (depth <= 0 && i != s.lastIndex) return false
+                    }
+                }
+                i++
+            }
+            return depth == 0 && s.startsWith("(")
         }
 
         /**
@@ -439,12 +632,19 @@ class DslPrinter(
         private fun emitReturn(n: CommandNode) {
             val source = n.string("source")
             if (source.isBlank()) {
-                line("return;")
+                // 変数参照の無い return はリテラル戻り値か、値なし終了です。
+                val literal = n.string("value")
+                if (literal.isBlank()) line("return;")
+                else if (me.awabi2048.kantancommander.model.inferLiteralType(literal) == ValueType.NUMBER) {
+                    line("return ${scalarText(literal)};")
+                } else {
+                    line("return ${quoteTemplate(literal)};")
+                }
                 return
             }
             val scope = VariableScope.parse(n.string("sourceScope")) ?: VariableScope.EXECUTION
             val expr = when (scope) {
-                VariableScope.WORLD -> "world.${dslName(source)}"
+                VariableScope.WORLD -> worldRef(source)
                 else -> valueName(source)
             }
             line("return $expr;")
@@ -477,8 +677,19 @@ class DslPrinter(
             }
             val args = mutableListOf<String>()
             for ((argName, rule) in spec.args) {
-                val text = renderArg(n, argName, rule) ?: continue
-                args += "$argName = $text"
+                for (text in renderArg(n, argName, rule)) {
+                    args += "$argName = $text"
+                }
+            }
+            // `summon(entity=..., <項目>=<値>)` の型付きデータ欄を引数として復元します。
+            spec.extraParamPrefix?.let { prefix ->
+                for ((key, raw) in n.params.toSortedMap()) {
+                    if (!key.startsWith(prefix)) continue
+                    val id = key.removePrefix(prefix)
+                    val kind = me.awabi2048.kantancommander.model.EntityDataSchema.definition(id)
+                        ?.valueKind
+                    args += "$id = ${summonValueText(raw, kind)}"
+                }
             }
             // 唯一の必須引数だけなら位置引数へ正規化します（wait(1) 等）。
             val required = spec.args.entries.singleOrNull { it.value.required }
@@ -490,85 +701,222 @@ class DslPrinter(
             line("$rendered;")
         }
 
-        /** 命令の1引数をノード欄・構造値から読み、DSL の引数テキストへ戻します。 */
-        private fun renderArg(n: CommandNode, argName: String, rule: ArgRule): String? = when (rule.kind) {
-            ArgKind.NUMBER -> n.string(rule.param!!).takeIf(String::isNotBlank)?.let { v ->
-                // 数値欄の保存形は `1.0` のように浮動小数表記を含むため、
-                // 純数値は正規化して canonical 形へ揃えます。
-                val expanded = expandRefs(v)
-                expanded.toDoubleOrNull()?.let(::num) ?: expanded
-            }
-            ArgKind.BOOLEAN -> n.string(rule.param!!).takeIf(String::isNotBlank)?.let(::scalarText)
-            ArgKind.STRING -> n.string(rule.param!!).takeIf(String::isNotBlank)?.let(::quoteTemplate)
-            ArgKind.LITERAL -> {
-                val v = n.string(rule.param!!)
-                val isDefault = v == n.type.defaults[rule.param]
-                if (v.isBlank() || (!rule.required && isDefault)) null else "\"${escape(v)}\""
-            }
-            ArgKind.ENTITY -> specOf(n, rule.slot!!)?.let { (it as? TargetSpec)?.let(::targetExpr) }
-            ArgKind.LOCATION -> when (rule.slot) {
-                ArgSlot.DEST_FACING -> n.destinationFacingSpec?.let(::facingExpr)
-                else -> (specOf(n, rule.slot!!) as? PositionSpec)?.let(::positionExpr)
-            }
-            ArgKind.ITEM -> {
-                val ref = n.itemTempRef
-                if (ref != null) valueName(ref)
-                else {
-                    val id = n.string("item")
-                    if (id.isBlank() && !rule.required) null
-                    else itemCtor(id, n.string("itemData").ifBlank { null })
+        /**
+         * 命令の1引数をノード欄・構造値から読み、DSL の引数テキストへ戻します。
+         * 戻り値は0個以上です（TAG_OP は複数エントリを1引数ずつ返します）。
+         */
+        private fun renderArg(n: CommandNode, argName: String, rule: ArgRule): List<String> {
+            val single: String? = when (rule.kind) {
+                ArgKind.NUMBER -> n.string(rule.param!!).takeIf(String::isNotBlank)?.let { v ->
+                    // 数値欄の保存形は `1.0` のように浮動小数表記を含むため、
+                    // 純数値は正規化して canonical 形へ揃えます。
+                    val expanded = expandRefs(v)
+                    expanded.toDoubleOrNull()?.let(::num) ?: expanded
+                }
+                ArgKind.BOOLEAN -> n.string(rule.param!!).takeIf(String::isNotBlank)?.let(::scalarText)
+                ArgKind.STRING -> {
+                    // `__dslValue` は entity_operation の value の仮想欄です。
+                    // 実保存先はパス種別で propertyValue／attributeValue に分かれます。
+                    val raw = if (rule.param == "__dslValue") {
+                        when {
+                            n.string("entityDataPath").startsWith("property:") -> n.string("propertyValue")
+                            n.string("entityDataPath").startsWith("attribute:") -> n.string("attributeValue")
+                            else -> ""
+                        }
+                    } else n.string(rule.param!!)
+                    if (raw.isBlank()) {
+                        // 必須欄が空欄の旧データは空文字として出し、
+                        // 再コンパイル可能な DSL を保ちます。
+                        if (rule.required) "\"\"" else null
+                    } else quoteTemplate(raw)
+                }
+                ArgKind.LITERAL -> {
+                    val v = n.string(rule.param!!)
+                    val isDefault = v == n.type.defaults[rule.param]
+                    if (v.isBlank()) {
+                        if (rule.required) "\"\"" else null
+                    } else if (!rule.required && isDefault) null
+                    else "\"${escape(v.lowercaseIfEnum(rule))}\""
+                }
+                ArgKind.SLOT -> n.string(rule.param!!).takeIf(String::isNotBlank)?.let { v ->
+                    // slot 欄は数値（40）と名前付きスロット（HAND 等）の両方を取ります。
+                    if (v.toIntOrNull() != null) v else "\"${escape(v.lowercase())}\""
+                }
+                ArgKind.PATH_PROPERTY ->
+                    n.string("entityDataPath").removePrefix("property:")
+                        .takeIf { n.string("entityDataPath").startsWith("property:") }
+                        ?.let { "\"${escape(it)}\"" }
+                ArgKind.PATH_ATTRIBUTE ->
+                    n.string("entityDataPath").removePrefix("attribute:")
+                        .takeIf { n.string("entityDataPath").startsWith("attribute:") }
+                        ?.let { "\"${escape(it)}\"" }
+                ArgKind.TAG_OP -> return tagOpValues(n, rule.param!!).map { "\"${escape(it)}\"" }
+                ArgKind.ENTITY -> specOf(n, rule.slot!!)
+                    ?.let { (it as? TargetSpec)?.let(::targetExpr) }
+                ArgKind.LOCATION -> when (rule.slot) {
+                    ArgSlot.DEST_FACING -> n.destinationFacingSpec?.let(::facingExpr)
+                    ArgSlot.DESTINATION -> n.destinationTargetSpec?.let(::targetExpr)
+                        ?: (n.destinationSpec)?.let(::positionExpr)
+                    else -> (specOf(n, rule.slot!!) as? PositionSpec)?.let(::positionExpr)
+                }
+                ArgKind.ITEM -> {
+                    val ref = n.itemTempRef
+                    if (ref != null) valueName(ref)
+                    else {
+                        val id = n.string("item")
+                        if (id.isBlank() && !rule.required) null
+                        else itemCtor(id, n.string("itemData").ifBlank { null })
+                    }
+                }
+                ArgKind.BLOCK -> {
+                    val ref = n.blockTempRef
+                    if (ref != null) valueName(ref)
+                    else {
+                        val id = n.string("block")
+                        if (id.isBlank() && !rule.required) null
+                        else "block(id = \"${escape(id)}\")"
+                    }
                 }
             }
-            ArgKind.BLOCK -> {
-                val ref = n.blockTempRef
-                if (ref != null) valueName(ref)
-                else {
-                    val id = n.string("block")
-                    if (id.isBlank() && !rule.required) null
-                    else "block(id = \"${escape(id)}\")"
+            return listOfNotNull(single)
+        }
+
+        /**
+         * LITERAL 値の正規化です。enumValues／uppercase 指定のある欄はモデル側で
+         * 大文字保存されるため DSL 表記（小文字）へ戻します。
+         */
+        private fun String.lowercaseIfEnum(rule: ArgRule): String =
+            if (rule.uppercase || rule.enumValues != null) lowercase() else this
+
+        /**
+         * `tagEntries`（`add=a;remove=b` 形）から `op` に合致するタグ値を列挙します。
+         * `tag` パス指定時の未分類形式（`tagEntries` が `=` を含まない）は
+         * `tag_add` として扱います（旧保存形式）。
+         */
+        private fun tagOpValues(n: CommandNode, op: String): List<String> {
+            val raw = n.string("tagEntries")
+            if (raw.isBlank()) return emptyList()
+            val entries = raw.split(";").map(String::trim).filter(String::isNotEmpty)
+            return entries.mapNotNull { entry ->
+                val eq = entry.indexOf('=')
+                if (eq < 0) {
+                    // `tag` パスのみの旧形（値がタグ名そのもの）。
+                    if (op == "add") entry else null
+                } else {
+                    val (k, v) = entry.substring(0, eq) to entry.substring(eq + 1)
+                    if (k == op) v else null
                 }
             }
         }
+
+        /** `summonData_<id>` の値を引数リテラルへ戻します。 */
+        private fun summonValueText(raw: String, kind: me.awabi2048.kantancommander.model.EntityPropertyValueKind?): String =
+            when (kind) {
+                me.awabi2048.kantancommander.model.EntityPropertyValueKind.BOOLEAN ->
+                    raw.lowercase().let { if (it == "true" || it == "false") it else "\"${escape(raw)}\"" }
+                me.awabi2048.kantancommander.model.EntityPropertyValueKind.INTEGER ->
+                    raw.toDoubleOrNull()?.let(::num) ?: "\"${escape(raw)}\""
+                else -> "\"${escape(raw)}\""
+            }
 
         private fun specOf(n: CommandNode, slot: ArgSlot): Any? = when (slot) {
             ArgSlot.TARGET -> n.targetSpec
             ArgSlot.SECONDARY_TARGET -> n.secondaryTargetSpec
             ArgSlot.DESTINATION -> n.destinationSpec
+            ArgSlot.DEST_TARGET -> n.destinationTargetSpec
             ArgSlot.DEST_FACING -> n.destinationFacingSpec
+            ArgSlot.COND_POS -> n.conditionPositionSpec
             ArgSlot.EXEC_POS -> n.executionPositionSpec
             ArgSlot.SOUND_POS -> n.soundPositionSpec
             ArgSlot.SUMMON_POS -> n.summonPositionSpec
             ArgSlot.PARTICLE_POS -> n.particlePositionSpec
+            ArgSlot.PARTICLE_END -> n.particleEndPositionSpec
             ArgSlot.BLOCK_POS -> n.blockPositionSpec
             ArgSlot.BLOCK_FROM -> n.blockFromSpec
             ArgSlot.BLOCK_TO -> n.blockToSpec
             ArgSlot.FIREWORK_POS -> n.fireworkPositionSpec
+            ArgSlot.STRUCTURE_POS -> n.structurePlacePositionSpec
+            ArgSlot.GROUP_PIVOT -> n.groupPivotPositionSpec
         }
 
         // ---- 式の葉の復元 ----
 
-        /** CONDITION の葉を `<lhs> <op> <rhs>` の式テキストへ復元します。 */
-        private fun leafExpr(c: CommandNode): String = when (c.string("subject")) {
-            ConditionSubject.VARIABLE.name -> {
-                val lhs = conditionLhs(c.string("variable"))
-                val op = c.string("operator", "==")
-                val rhs = conditionValue(c.string("value"))
-                // `X == true` は `X`、`X != true` は `!X` に正規化します。
-                when {
-                    rhs == "true" && op == "==" -> lhs
-                    rhs == "true" && op == "!=" -> "!$lhs"
-                    rhs == "false" && op == "==" -> "!$lhs"
-                    rhs == "false" && op == "!=" -> lhs
-                    else -> "$lhs $op $rhs"
+        /**
+         * CONDITION の葉を DSL 式へ復元します。
+         * `inverted` 欄は式側の否定へ畳み込みます（BLOCK は `!=`、それ以外は `!` 前置）。
+         */
+        private fun leafExpr(c: CommandNode): String {
+            val inverted = c.boolean("inverted")
+            val base = when (c.string("subject")) {
+                ConditionSubject.VARIABLE.name -> {
+                    val lhs = conditionLhs(c.string("variable"))
+                    val op = c.string("operator", "==")
+                    val rhs = conditionValue(c.string("value"))
+                    // `X == true` は `X`、`X != true` は `!X` に正規化します。
+                    when {
+                        rhs == "true" && op == "==" -> lhs
+                        rhs == "true" && op == "!=" -> "!$lhs"
+                        rhs == "false" && op == "==" -> "!$lhs"
+                        rhs == "false" && op == "!=" -> lhs
+                        else -> "$lhs $op $rhs"
+                    }
                 }
+                ConditionSubject.BLOCK.name -> {
+                    val spec = c.conditionPositionSpec
+                        ?: throw DslPrintException("BLOCK 判定の位置が未設定です")
+                    val op = if (inverted) "!=" else "=="
+                    return "${positionExpr(spec)}.block $op block(id = \"${escape(c.string("block"))}\")"
+                }
+                ConditionSubject.PLAYER.name -> playerCondText(c)
+                ConditionSubject.OTHER_ENTITY.name -> {
+                    val spec = c.targetSpec
+                        ?: throw DslPrintException("OTHER_ENTITY 判定の対象が未設定です")
+                    "exists(${condArgsText(c, spec)})"
+                }
+                ConditionSubject.CONTROL_BLOCK.name -> signalCondText(c)
+                else -> throw DslPrintException("DSL へ写像できない条件対象です: ${c.string("subject")}")
             }
-            ConditionSubject.BLOCK.name -> {
-                val spec = c.conditionPositionSpec
-                    ?: throw DslPrintException("BLOCK 判定の位置が未設定です")
-                val op = if (c.boolean("inverted")) "!=" else "=="
-                "${positionExpr(spec)}.block $op block(id = \"${escape(c.string("block"))}\")"
+            return if (inverted) invertLeaf(base) else base
+        }
+
+        /** `player(...)` のプレイヤー判定を復元します。対象＋sneaking/item 補足です。 */
+        private fun playerCondText(c: CommandNode): String {
+            val spec = c.targetSpec
+                ?: throw DslPrintException("PLAYER 判定の対象が未設定です")
+            val args = mutableListOf(condTargetText(spec))
+            c.string("sneaking").takeIf(String::isNotBlank)?.let {
+                args += "sneaking = $it"
             }
-            else -> throw DslPrintException("DSL へ写像できない条件対象です: ${c.string("subject")}")
+            val item = c.string("item")
+            if (item.isNotBlank()) {
+                args += "item = ${itemCtor(item, c.string("itemData").ifBlank { null })}"
+            }
+            c.executionPositionSpec?.let { args += "at = ${positionExpr(it)}" }
+            return "player(${args.joinToString(", ")})"
+        }
+
+        /**
+         * `exists(...)` の引数列です。対象指定に加え、判定位置（`at`）が
+         * 設定されていれば末尾へ付けます。
+         */
+        private fun condArgsText(c: CommandNode, spec: TargetSpec): String {
+            val args = mutableListOf(condTargetText(spec))
+            c.executionPositionSpec?.let { args += "at = ${positionExpr(it)}" }
+            return args.joinToString(", ")
+        }
+
+        /** `signal(...)` の制御ブロック信号判定を復元します。 */
+        private fun signalCondText(c: CommandNode): String {
+            val raw = c.string("redstoneSignal").trim()
+            val spec = c.redstoneSignalSpec()
+                ?: throw DslPrintException("CONTROL_BLOCK 判定の信号範囲が未設定です")
+            return when {
+                spec.first == spec.last && !raw.contains("..") -> "signal(${spec.first})"
+                spec.first == 0 && raw.startsWith("..") -> "signal(max = ${spec.last})"
+                spec.last == CommandValueRules.SIGNAL_STRENGTH_MAX && raw.endsWith("..") ->
+                    "signal(min = ${spec.first})"
+                else -> "signal(min = ${spec.first}, max = ${spec.last})"
+            }
         }
 
         /** 条件左辺の `%{x}%`（実行内変数）・plain 名（ワールド変数）を式へ戻します。 */
@@ -577,7 +925,7 @@ class DslPrinter(
                 val name = TemporaryTemplate.references(raw).single()
                 return valueName(name)
             }
-            return "world.${dslName(raw)}"
+            return worldRef(raw)
         }
 
         /** 条件右辺の値欄を式テキストへ戻します。文字列等値は引用符を付与します。 */
@@ -664,19 +1012,57 @@ class DslPrinter(
             PositionKind.COORDINATES -> {
                 val relative = listOf(spec.semanticsX, spec.semanticsY, spec.semanticsZ)
                     .any { it != CoordinateSemantics.ABSOLUTE }
-                if (!relative && spec.yaw == null && spec.pitch == null) {
-                    "location(x = ${num(spec.x)}, y = ${num(spec.y)}, z = ${num(spec.z)})"
-                } else if (!relative) {
-                    "location(x = ${num(spec.x)}, y = ${num(spec.y)}, z = ${num(spec.z)}, yaw = ${num(spec.yaw)}, pitch = ${num(spec.pitch)})"
-                } else {
-                    "${component(spec.x, spec.semanticsX)} ${component(spec.y, spec.semanticsY)} ${component(spec.z, spec.semanticsZ)}"
+                val relRot = spec.semanticsYaw != CoordinateSemantics.ABSOLUTE ||
+                    spec.semanticsPitch != CoordinateSemantics.ABSOLUTE
+                val hasRot = spec.yaw != null || spec.pitch != null
+                when {
+                    !relative && !hasRot ->
+                        "location(x = ${num(spec.x)}, y = ${num(spec.y)}, z = ${num(spec.z)})"
+                    !relative && !relRot ->
+                        "location(x = ${num(spec.x)}, y = ${num(spec.y)}, z = ${num(spec.z)}, yaw = ${num(spec.yaw)}, pitch = ${num(spec.pitch)})"
+                    hasRot -> {
+                        // 相対成分と角度の混在は位置リテラルで表せないため、
+                        // 各成分を `~`/`^` 付き引数として location(...) へ展開します。
+                        listOf(
+                            "x = ${component(spec.x, spec.semanticsX)}",
+                            "y = ${component(spec.y, spec.semanticsY)}",
+                            "z = ${component(spec.z, spec.semanticsZ)}",
+                            "yaw = ${component(spec.yaw, spec.semanticsYaw)}",
+                            "pitch = ${component(spec.pitch, spec.semanticsPitch)}",
+                        ).joinToString(", ", prefix = "location(", postfix = ")")
+                    }
+                    else ->
+                        "${component(spec.x, spec.semanticsX)} ${component(spec.y, spec.semanticsY)} ${component(spec.z, spec.semanticsZ)}"
                 }
             }
-            else -> unsupported("位置種別 ${spec.kind}")
+            PositionKind.DISK -> specialPositionExpr("disk", spec)
+            PositionKind.CAPTURED -> specialPositionExpr("captured", spec)
+            PositionKind.MYWORLD_SPAWN -> when (spec.myworldSpawn ?: MyworldSpawnKind.MEMBER) {
+                MyworldSpawnKind.MEMBER -> "myworld_spawn()"
+                MyworldSpawnKind.GUEST -> "myworld_spawn(kind = \"guest\")"
+            }
+            PositionKind.TARGET -> {
+                val target = spec.target ?: unsupported("対象位置の指定が未設定です")
+                if (target.kind == TargetKind.TEMPORARY) {
+                    unsupported("対象位置の変数参照")
+                }
+                "target(${targetArgs(target).joinToString(", ")})"
+            }
+        }
+
+        /**
+         * `disk`/`captured` の特殊位置を復元します。成分を持つ場合は
+         * 位置リテラル形（`captured ~1 ~0 ~0`）へ、角度成分は表層に無いため拒否します。
+         */
+        private fun specialPositionExpr(name: String, spec: PositionSpec): String {
+            if (spec.yaw != null || spec.pitch != null) unsupported("$name の角度成分")
+            val hasComponents = spec.x != null || spec.y != null || spec.z != null
+            if (!hasComponents) return name
+            return "$name ${component(spec.x, spec.semanticsX)} ${component(spec.y, spec.semanticsY)} ${component(spec.z, spec.semanticsZ)}"
         }
 
         /** 位置リテラルの1成分を `~`/`^`/絶対値へ復元します。 */
-        private fun component(value: Double?, semantics: CoordinateSemantics): String {
+        private fun component(value: Number?, semantics: CoordinateSemantics): String {
             val v = num(value)
             return when (semantics) {
                 CoordinateSemantics.ABSOLUTE -> v
@@ -688,6 +1074,11 @@ class DslPrinter(
         /** TargetSpec を `target(...)`・変数参照へ復元します。 */
         private fun targetExpr(spec: TargetSpec): String {
             if (spec.kind == TargetKind.TEMPORARY) return valueName(spec.tempName ?: "")
+            return "target(${targetArgs(spec).joinToString(", ")})"
+        }
+
+        /** TargetSpec の絞り込み引数列です（kind 以降、宣言順）。 */
+        private fun targetArgs(spec: TargetSpec): List<String> {
             val kind = when (spec.kind) {
                 TargetKind.NEAREST_PLAYER -> "nearest_player"
                 TargetKind.NEARBY_PLAYERS -> "nearby_players"
@@ -705,24 +1096,49 @@ class DslPrinter(
             spec.sort?.let {
                 val s = when (it) {
                     TargetSort.NEAREST -> "nearest"; TargetSort.FURTHEST -> "furthest"
-                    TargetSort.RANDOM -> "random"; else -> null
-                } ?: unsupported("対象整列 $it")
+                    TargetSort.RANDOM -> "random"
+                }
                 args += "sort = \"$s\""
             }
-            spec.gameMode?.let { args += "gamemode = \"${escape(it)}\"" }
+            spec.gameMode?.let { args += "gamemode = \"${escape(it).lowercase()}\"" }
             spec.tag?.let { args += "tag = \"${escape(it)}\"" }
             spec.name?.let { args += "name = \"${escape(it)}\"" }
             spec.dx?.let { args += "dx = ${num(it)}" }
             spec.dy?.let { args += "dy = ${num(it)}" }
             spec.dz?.let { args += "dz = ${num(it)}" }
-            return "target(${args.joinToString(", ")})"
+            return args
         }
 
-        /** FacingSpec を `location(yaw = ..., pitch = ...)` 等へ復元します。 */
+        /**
+         * 条件呼出し（player/exists）の対象引数を復元します。
+         * TEMPORARY 参照は `target = <name>`、それ以外は target と同じ絞り込み引数です。
+         */
+        private fun condTargetText(spec: TargetSpec): String =
+            if (spec.kind == TargetKind.TEMPORARY) {
+                "target = ${valueName(spec.tempName ?: "")}"
+            } else {
+                targetArgs(spec).joinToString(", ")
+            }
+
+        /**
+         * FacingSpec を向き式へ復元します。
+         * `location(yaw,pitch)`（ROTATION）・`location(x,y,z)`（座標注視）・
+         * `target(...)`（対象注視）・`orientation(...)`（向き複写）・変数参照です。
+         */
         private fun facingExpr(spec: FacingSpec): String = when (spec.kind) {
-            FacingKind.ROTATION -> "location(yaw = ${num(spec.yaw)}, pitch = ${num(spec.pitch)})"
+            FacingKind.ROTATION -> "location(yaw = ${component(spec.yaw, spec.semanticsYaw)}, pitch = ${component(spec.pitch, spec.semanticsPitch)})"
+            FacingKind.COORDINATES ->
+                "location(x = ${num(spec.x)}, y = ${num(spec.y)}, z = ${num(spec.z)})"
             FacingKind.TEMPORARY -> valueName(spec.tempName ?: "")
-            else -> unsupported("向き種別 ${spec.kind}")
+            FacingKind.TARGET -> facingTargetExpr(spec, "target")
+            FacingKind.COPY_ORIENTATION -> facingTargetExpr(spec, "orientation")
+        }
+
+        /** TARGET／COPY_ORIENTATION の対象を式へ戻します。変数参照は表層に無いため拒否します。 */
+        private fun facingTargetExpr(spec: FacingSpec, ctor: String): String {
+            val target = spec.target ?: unsupported("向き対象が未設定です")
+            if (target.kind == TargetKind.TEMPORARY) unsupported("向き対象の変数参照")
+            return "$ctor(${targetArgs(target).joinToString(", ")})"
         }
 
         // ---- テキスト復元ユーティリティ ----
@@ -734,9 +1150,14 @@ class DslPrinter(
         private fun expandRefs(raw: String): String {
             var text = raw
             text = EXEC_REF.replace(text) { m -> valueName(m.groupValues[1]) }
-            text = WORLD_REF.replace(text) { m -> "world.${dslName(m.groupValues[1])}" }
+            text = WORLD_REF.replace(text) { m -> worldRef(m.groupValues[1]) }
             return text
         }
+
+        /** `${name}` 参照の DSL 表記です。システム変数は `loop.count` へ写像します。 */
+        private fun worldRef(name: String): String =
+            if (name == SystemVariableNames.CURRENT_LOOP_COUNT) "loop.count"
+            else "world.${dslName(name)}"
 
         /** 変数名を DSL の識別子へ戻します（`dsl.tmpN` は定義式へ展開）。 */
         private fun valueName(name: String): String =
@@ -745,7 +1166,9 @@ class DslPrinter(
             } else dslName(name)
 
         /** 数値・真偽値・参照のスカラーテキストを式へ戻します。 */
-        private fun scalarText(raw: String): String = expandRefs(raw)
+        // 文字列として保存された数値リテラルは正規形へ揃えます（`0.0`→`0`）。
+        private fun scalarText(raw: String): String =
+            expandRefs(raw).let { it.toDoubleOrNull()?.let(::num) ?: it }
 
         /** 文字列テンプレートを `"…${expr}…"` の補間リテラルへ戻します。 */
         /**
@@ -759,7 +1182,7 @@ class DslPrinter(
                 for (ch in raw.substring(i, m.range.first)) sb.append(escapeChar(ch))
                 val execName = m.groupValues[1]
                 val expr = if (execName.isNotEmpty()) valueName(execName)
-                else "world.${dslName(m.groupValues[2])}"
+                else worldRef(m.groupValues[2])
                 sb.append("\${").append(expr).append('}')
                 i = m.range.last + 1
             }

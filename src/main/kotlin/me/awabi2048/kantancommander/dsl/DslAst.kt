@@ -30,18 +30,24 @@ data class DslProgram(
 
 sealed interface DslStmt : DslNode
 
-/** `var name: type = expr;` です。型注記は必須です。 */
+/**
+ * `var name: type = expr;` / `var world.name: type = expr;` です。型注記は必須です。
+ * world=true はワールド変数の新規定義（VARIABLE・DEFINE）へ写像します。
+ */
 data class DslVarDecl(
     val name: String,
     val type: ValueType,
     val value: DslExpr,
+    val world: Boolean = false,
     override val pos: DslPos,
 ) : DslStmt
 
-/** 代入先です。実行内変数とワールド変数を区別します。 */
+/** 代入先です。実行内変数・ワールド変数・エンティティ変数を区別します。 */
 sealed interface DslAssignTarget : DslNode {
     data class Variable(val name: String, override val pos: DslPos) : DslAssignTarget
     data class WorldVariable(val name: String, override val pos: DslPos) : DslAssignTarget
+    /** `expr.vars.name` のエンティティ変数です。expr は entity 型の対象式です。 */
+    data class EntityVariable(val entity: DslExpr, val name: String, override val pos: DslPos) : DslAssignTarget
 }
 
 enum class DslAssignOp { ASSIGN, ADD, SUB, MUL, DIV, MOD }
@@ -91,6 +97,9 @@ data class DslCallStmt(
 /** `call "disk_id";` です。 */
 data class DslCallDisk(val diskId: DslStringLiteral, override val pos: DslPos) : DslStmt
 
+/** `del x;` / `del world.x;` / `del e.vars.n;` の変数削除文です。 */
+data class DslDelete(val target: DslAssignTarget, override val pos: DslPos) : DslStmt
+
 // ---- 式 ----
 
 sealed interface DslExpr : DslNode
@@ -137,6 +146,16 @@ data class DslPropertyRead(
     override val pos: DslPos,
 ) : DslExpr
 
+/**
+ * 実行コンテキストが供給する予約位置式です。`disk` は起動した制御ブロックの
+ * 位置（PositionKind.DISK）、`captured` は捕捉済み位置（PositionKind.CAPTURED）
+ * へ写像します。型はいずれも location です。
+ */
+data class DslSpecialPosition(val name: String, override val pos: DslPos) : DslExpr
+
+/** `loop.count` です。内側ループの現在回数（CURRENT_LOOP_COUNT）を表します。 */
+data class DslLoopCount(override val pos: DslPos) : DslExpr
+
 /** `location(...)` `item(...)` `target(...)` 等の名前付き引数呼出し式です。 */
 data class DslCallExpr(val name: String, val args: List<DslArg>, override val pos: DslPos) : DslExpr
 
@@ -150,5 +169,16 @@ data class DslPositionComponent(val semantics: CoordinateSemantics, val value: D
 data class DslPositionLiteral(
     val base: DslExpr?,
     val components: List<DslPositionComponent>,
+    override val pos: DslPos,
+) : DslExpr
+
+/**
+ * `~12`・`^0` のような接頭辞付き数値の単一成分です。位置リテラルとは別物で、
+ * `location(x = ~1, yaw = ~90)` のように引数値としてのみ使えます
+ * （向きの相対角度など、成分ごとの座標セマンティクスを表します）。
+ */
+data class DslComponentExpr(
+    val semantics: CoordinateSemantics,
+    val value: Double,
     override val pos: DslPos,
 ) : DslExpr

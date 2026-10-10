@@ -6,7 +6,7 @@ class DslParseException(message: String, val pos: DslPos) : Exception("${pos}: $
 enum class DslTokenKind {
     IDENT, NUMBER,
     STRING_START, STRING_TEXT, STRING_END, INTERP_START, INTERP_END,
-    PROGRAM, VAR, IF, ELSE, REPEAT, BREAK, CONTINUE, RETURN, CALL, WORLD, TRUE, FALSE,
+    PROGRAM, VAR, IF, ELSE, REPEAT, BREAK, CONTINUE, RETURN, CALL, WORLD, TRUE, FALSE, DEL,
     LBRACE, RBRACE, LPAREN, RPAREN, COMMA, SEMICOLON, COLON, DOT,
     ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, PERCENT_ASSIGN,
     EQ, NE, LT, LE, GT, GE, AND, OR, NOT,
@@ -219,6 +219,7 @@ class DslLexer(private val text: String) {
         "return" to DslTokenKind.RETURN,
         "call" to DslTokenKind.CALL,
         "world" to DslTokenKind.WORLD,
+        "del" to DslTokenKind.DEL,
         "true" to DslTokenKind.TRUE,
         "false" to DslTokenKind.FALSE,
     )

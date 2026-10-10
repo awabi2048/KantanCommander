@@ -26,7 +26,21 @@ class DslChecker(
 ) {
     /** 実行内変数の型表です。ブロックはスコープを分けず、実行内変数は平坦です。 */
     private val vars = LinkedHashMap<String, ValueType>()
+    /** スクリプト内で `var world.x` として新規定義したワールド変数の型表です。 */
+    private val worldVars = LinkedHashMap<String, ValueType>()
+    /** `del world.x` で削除済みとなったワールド変数名（モデル名）です。 */
+    private val worldDeleted = mutableSetOf<String>()
     private var loopDepth = 0
+
+    /**
+     * ワールド変数名（DSL名）の現在の型です。スクリプト内定義・外部定義の順に
+     * 解決し、`del world.x` で削除済みの名前は未定義として扱います。
+     */
+    private fun worldType(dslName: String): ValueType? {
+        val key = modelName(dslName)
+        if (key in worldDeleted) return null
+        return worldVars[key] ?: worldTypes[key]
+    }
 
     private fun error(pos: DslPos, message: String): Nothing = throw DslCheckException(message, pos)
 
@@ -59,8 +73,22 @@ class DslChecker(
                 if (actual != stmt.type) {
                     error(stmt.value.pos, "変数 '${stmt.name}' は ${stmt.type.dslName()} 型ですが、${actual.dslName()} 型の値は代入できません")
                 }
-                if (stmt.name in vars) error(stmt.pos, "変数 '${stmt.name}' は既に定義されています")
-                vars[stmt.name] = stmt.type
+                if (stmt.world) {
+                    // `var world.x` は新規定義（DEFINE）です。同一プログラム内の
+                    // 重複宣言は拒否しますが、外部定義表（ワールドの変数定義）に
+                    // 既にある名前は許容します。実行時の DEFINE は定義済みの変数を
+                    // 上書きしない no-op であるため、宣言は「その変数が存在する」
+                    // 表明として機能します。
+                    val key = modelName(stmt.name)
+                    if (key in worldVars) {
+                        error(stmt.pos, "ワールド変数 '${stmt.name}' は既に定義されています")
+                    }
+                    worldVars[key] = stmt.type
+                    worldDeleted.remove(key)
+                } else {
+                    if (stmt.name in vars) error(stmt.pos, "変数 '${stmt.name}' は既に定義されています")
+                    vars[stmt.name] = stmt.type
+                }
             }
             is DslAssign -> {
                 val targetType = when (val t = stmt.target) {
@@ -71,22 +99,60 @@ class DslChecker(
                     }
                     is DslAssignTarget.WorldVariable -> {
                         checkVarName(t.name, t.pos)
-                        worldTypes[modelName(t.name)]
+                        worldType(t.name)
                             ?: error(t.pos, "未定義のワールド変数 '${t.name}' です")
+                    }
+                    is DslAssignTarget.EntityVariable -> {
+                        checkVarName(t.name, t.pos)
+                        val entityType = checkExpr(t.entity)
+                        if (entityType != ValueType.ENTITY) {
+                            error(t.entity.pos, "エンティティ変数の対象は entity 型が必要です（${entityType.dslName()} 型）")
+                        }
+                        // エンティティ変数は定義表を持たず、書き込み型は値側の型です。
+                        null
                     }
                 }
                 val valueType = checkExpr(stmt.value)
                 if (stmt.op == DslAssignOp.ASSIGN) {
-                    if (valueType != targetType) {
+                    if (targetType != null && valueType != targetType) {
                         error(stmt.value.pos, "${targetType.dslName()} 型の変数へ ${valueType.dslName()} 型の値は代入できません")
                     }
                 } else {
+                    if (stmt.target is DslAssignTarget.EntityVariable) {
+                        // エンティティ変数は読み出し経路を持たず、自己参照の複合代入は表現不能です。
+                        error(stmt.pos, "エンティティ変数への複合代入はモデルが未対応のため使えません")
+                    }
                     if (targetType != ValueType.NUMBER || valueType != ValueType.NUMBER) {
                         error(stmt.pos, "複合代入は number 型同士でのみ使えます")
                     }
                     // モデルの数値式言語は剰余を持たないため、%= は写像不能です。
                     if (stmt.op == DslAssignOp.MOD) {
                         error(stmt.pos, "剰余代入（%=）はモデルが未対応のため使えません")
+                    }
+                }
+            }
+            is DslDelete -> {
+                when (val t = stmt.target) {
+                    is DslAssignTarget.Variable -> {
+                        checkVarName(t.name, t.pos)
+                        if (vars.remove(t.name) == null) {
+                            error(t.pos, "未定義の変数 '${t.name}' は削除できません")
+                        }
+                    }
+                    is DslAssignTarget.WorldVariable -> {
+                        checkVarName(t.name, t.pos)
+                        if (worldType(t.name) == null) {
+                            error(t.pos, "未定義のワールド変数 '${t.name}' は削除できません")
+                        }
+                        worldVars.remove(modelName(t.name))
+                        worldDeleted += modelName(t.name)
+                    }
+                    is DslAssignTarget.EntityVariable -> {
+                        checkVarName(t.name, t.pos)
+                        val entityType = checkExpr(t.entity)
+                        if (entityType != ValueType.ENTITY) {
+                            error(t.entity.pos, "エンティティ変数の対象は entity 型が必要です（${entityType.dslName()} 型）")
+                        }
                     }
                 }
             }
@@ -163,7 +229,7 @@ class DslChecker(
         is DslVarRef -> vars[expr.name] ?: error(expr.pos, "未定義の変数 '${expr.name}' です")
         is DslWorldRef -> {
             checkVarName(expr.name, expr.pos)
-            worldTypes[modelName(expr.name)]
+            worldType(expr.name)
                 ?: error(expr.pos, "未定義のワールド変数 '${expr.name}' です")
         }
         is DslConst -> when (expr.group) {
@@ -186,6 +252,16 @@ class DslChecker(
         is DslPropertyRead -> checkPropertyRead(expr)
         is DslCallExpr -> checkCallExpr(expr)
         is DslPositionLiteral -> checkPositionLiteral(expr)
+        is DslSpecialPosition -> ValueType.LOCATION
+        // `~`/`^` 接頭辞の単一成分（`~12`）は location() 等の引数内でのみ
+        // 意味を持ちます。型上は number として扱い、コンパイラが用途ごとに
+        // 座標セマンティクスへ写像します。
+        is DslComponentExpr -> ValueType.NUMBER
+        is DslLoopCount -> {
+            // CURRENT_LOOP_COUNT はループ外で未解決になるため、DSL では repeat 内に限定します。
+            if (loopDepth == 0) error(expr.pos, "loop.count は repeat の内側でのみ使えます")
+            ValueType.NUMBER
+        }
     }
 
     private fun checkBinary(expr: DslBinary): ValueType {
@@ -242,11 +318,120 @@ class DslChecker(
     }
 
     private fun checkCallExpr(expr: DslCallExpr): ValueType = when (expr.name) {
-        "location" -> { checkConstructor(expr, LOCATION_ARGS); ValueType.LOCATION }
+        "location" -> {
+            // yaw/pitch だけの指定は向き（ROTATION）の省略形です。
+            // 座標成分が1つでもあれば通常の位置指定として x/y/z を必須にします。
+            val names = expr.args.mapNotNull { it.name }.toSet()
+            val rotationOnly = names.isNotEmpty() && "x" !in names && "y" !in names && "z" !in names
+            checkConstructor(expr, LOCATION_ARGS, relaxRequired = rotationOnly)
+            ValueType.LOCATION
+        }
         "item" -> { checkConstructor(expr, ITEM_ARGS); ValueType.ITEM }
         "block" -> { checkConstructor(expr, BLOCK_ARGS); ValueType.BLOCK }
         "target" -> checkTarget(expr)
+        "player" -> { checkTargetCondCall(expr, playerExtras = true); ValueType.BOOLEAN }
+        "exists" -> { checkTargetCondCall(expr, playerExtras = false); ValueType.BOOLEAN }
+        "signal" -> { checkSignalCall(expr); ValueType.BOOLEAN }
+        "random" -> { checkRandomCall(expr); ValueType.NUMBER }
+        "myworld_spawn" -> { checkConstructor(expr, MYWORLD_ARGS); ValueType.LOCATION }
+        "orientation" -> { checkOrientation(expr); ValueType.ENTITY }
         else -> error(expr.pos, "不明な呼出し '${expr.name}' です")
+    }
+
+    /**
+     * `player(...)`・`exists(...)` の対象部を検証します。
+     * `target = <entity式>` で直接指定するか、`kind = "..."` 以下の target と
+     * 同じ引数で絞り込みます。player は補足条件（sneaking／item）も取ります。
+     */
+    private fun checkTargetCondCall(expr: DslCallExpr, playerExtras: Boolean) {
+        val direct = expr.args.firstOrNull { it.name == "target" }
+        if (direct != null) {
+            val type = checkExpr(direct.value)
+            if (type != ValueType.ENTITY) {
+                error(direct.pos, "target は entity 型が必要です（${type.dslName()} 型）")
+            }
+        }
+        val seen = mutableSetOf<String>()
+        expr.args.forEach { arg ->
+            if (arg.name == null) error(arg.pos, "条件呼出しの引数は名前付きが必須です")
+            if (!seen.add(arg.name)) error(arg.pos, "引数 '${arg.name}' が重複しています")
+            when {
+                arg.name == "target" -> Unit // 上で型検証済み
+                // `at` は判定位置（conditionPositionSpec）です。
+                arg.name == "at" -> {
+                    if (checkExpr(arg.value) != ValueType.LOCATION) {
+                        error(arg.pos, "引数 'at' は location 型が必要です")
+                    }
+                }
+                arg.name in TARGET_COND_ARGS -> {
+                    val spec = TARGET_COND_ARGS.getValue(arg.name)
+                    val type = checkExpr(arg.value)
+                    if (type != spec.type) error(arg.pos, "引数 '${arg.name}' は ${spec.type.dslName()} 型が必要です")
+                    if (!isCompileTimeLiteral(arg.value)) {
+                        error(arg.value.pos, "'${expr.name}' の対象引数はリテラルのみ使用できます")
+                    }
+                }
+                playerExtras && arg.name == "sneaking" -> {
+                    if (checkExpr(arg.value) != ValueType.BOOLEAN) error(arg.pos, "引数 'sneaking' は boolean 型が必要です")
+                    if (arg.value !is DslBooleanLiteral) error(arg.value.pos, "sneaking は true/false リテラルのみ使用できます")
+                }
+                playerExtras && arg.name == "item" -> {
+                    if (checkExpr(arg.value) != ValueType.ITEM) error(arg.pos, "引数 'item' は item 型が必要です")
+                }
+                else -> error(arg.pos, "不明な引数名 '${arg.name}' です")
+            }
+        }
+        if (direct != null) {
+            // target= と kind 引数群の併用は対象指定が二重になるため拒否します。
+            val others = expr.args.filter { it.name != "target" && it.name in TARGET_COND_ARGS }
+            if (others.isNotEmpty()) error(others.first().pos, "target と kind 系引数は併用できません")
+        } else if (expr.args.none { it.name == "kind" }) {
+            // モデルの PLAYER／OTHER_ENTITY 判定は対象指定を必須とします。
+            error(expr.pos, "'${expr.name}' には対象指定（kind = ... または target = ...）が必要です")
+        }
+    }
+
+    /** `signal(4)`・`signal(min = a, max = b)` の信号強度条件を検証します。 */
+    private fun checkSignalCall(expr: DslCallExpr) {
+        val positional = expr.args.filter { it.name == null }
+        val named = expr.args.filter { it.name != null }
+        if (positional.isNotEmpty() && named.isNotEmpty()) {
+            error(expr.pos, "signal は位置引数か min/max 引数のどちらか一方で指定してください")
+        }
+        val bounds = if (positional.isNotEmpty()) {
+            if (positional.size != 1) error(expr.pos, "signal の位置引数は1個だけです")
+            listOf(positional.single())
+        } else {
+            named.forEach {
+                if (it.name != "min" && it.name != "max") error(it.pos, "signal の引数名は min/max です")
+            }
+            if (named.map { it.name }.distinct().size != named.size) error(expr.pos, "signal の引数が重複しています")
+            named
+        }
+        if (bounds.isEmpty()) error(expr.pos, "signal には強度または min/max の指定が必要です")
+        bounds.forEach { arg ->
+            val type = checkExpr(arg.value)
+            if (type != ValueType.NUMBER) error(arg.pos, "signal の強度は number 型が必要です")
+            val v = (arg.value as? DslNumberLiteral)?.value
+                ?: error(arg.value.pos, "signal の強度は数値リテラルで指定してください")
+            if (v < 0 || v > 15 || v % 1.0 != 0.0) error(arg.value.pos, "signal の強度は 0..15 の整数が必要です")
+        }
+    }
+
+    /** `random(min = a, max = b)` の乱数生成を検証します。範囲はリテラル必須です。 */
+    private fun checkRandomCall(expr: DslCallExpr) {
+        checkConstructor(expr, RANDOM_ARGS)
+    }
+
+    /** `orientation(<entity式>)` の向き複写を検証します。 */
+    private fun checkOrientation(expr: DslCallExpr) {
+        val arg = expr.args.singleOrNull()
+            ?: error(expr.pos, "orientation は引数を1個だけ取ります")
+        if (arg.name != null && arg.name != "target") {
+            error(arg.pos, "orientation の引数名は target です")
+        }
+        val type = checkExpr(arg.value)
+        if (type != ValueType.ENTITY) error(arg.pos, "orientation の対象は entity 型が必要です")
     }
 
     /**
@@ -256,7 +441,11 @@ class DslChecker(
      * location/item/block/target の引数はモデルの構造指定（PositionSpec/TargetSpec/
      * TypedValue）へ直接写像するため、実行時式は展開できずリテラルだけを受理します。
      */
-    private fun checkConstructor(expr: DslCallExpr, spec: Map<String, ArgSpec>) {
+    private fun checkConstructor(
+        expr: DslCallExpr,
+        spec: Map<String, ArgSpec>,
+        relaxRequired: Boolean = false,
+    ) {
         val seen = mutableSetOf<String>()
         expr.args.forEach { arg ->
             if (arg.name == null) error(arg.pos, "コンストラクタの引数は名前付きが必須です")
@@ -270,8 +459,10 @@ class DslChecker(
                 error(arg.value.pos, "'${expr.name}' の引数はリテラルのみ使用できます")
             }
         }
-        spec.filter { it.value.required && it.key !in seen }.keys.firstOrNull()?.let {
-            error(expr.pos, "必須の引数 '$it' がありません")
+        if (!relaxRequired) {
+            spec.filter { it.value.required && it.key !in seen }.keys.firstOrNull()?.let {
+                error(expr.pos, "必須の引数 '$it' がありません")
+            }
         }
         // item の個数はモデルの TypedValue 組立が読まないため、表層でも拒否します。
         if (expr.name == "item" && "amount" in seen) {
@@ -281,7 +472,7 @@ class DslChecker(
 
     /** コンパイル時定数となる式（数値・非補間文字列・真偽値・名前空間定数）です。 */
     private fun isCompileTimeLiteral(expr: DslExpr): Boolean = when (expr) {
-        is DslNumberLiteral, is DslBooleanLiteral, is DslConst -> true
+        is DslNumberLiteral, is DslBooleanLiteral, is DslConst, is DslComponentExpr -> true
         is DslStringLiteral -> expr.plainText() != null
         is DslUnary -> expr.op == DslUnaryOp.NEG && expr.operand is DslNumberLiteral
         else -> false
@@ -327,6 +518,9 @@ class DslChecker(
     private fun checkVarName(name: String, pos: DslPos) {
         if (!namePattern.matches(name)) {
             error(pos, "変数名 '${name}' は小文字の snake_case（[a-z][a-z0-9_]*）で指定してください")
+        }
+        if (name in RESERVED_NAMES) {
+            error(pos, "'${name}' は予約された名前のため変数名として使えません")
         }
     }
 
@@ -379,8 +573,21 @@ class DslChecker(
             "random_player", "nearest_entity", "nearby_entities",
         )
 
+        // 条件呼出し（player/exists）が受け取る対象絞り込み引数です。target(...) と同一です。
+        private val TARGET_COND_ARGS = TARGET_ARGS.mapValues { it.value.copy(required = false) }
+
+        private val RANDOM_ARGS = mapOf(
+            "min" to ArgSpec(ValueType.NUMBER, true),
+            "max" to ArgSpec(ValueType.NUMBER, true),
+        )
+        private val MYWORLD_ARGS = mapOf(
+            "kind" to ArgSpec(ValueType.STRING, false),
+        )
+
         private val GAMEMODE_NAMES = setOf("survival", "creative", "adventure", "spectator")
 
         private val namePattern = Regex("[a-z][a-z0-9_]*")
+        /** 予約位置式・システム変数と衝突するため変数名として使えない識別子です。 */
+        private val RESERVED_NAMES = setOf("disk", "captured", "loop")
     }
 }

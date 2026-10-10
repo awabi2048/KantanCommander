@@ -10,6 +10,7 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -173,16 +174,23 @@ class DslCompiler(
             is DslReturn -> lowerReturn(stmt)
             is DslCallStmt -> lowerCall(stmt)
             is DslCallDisk -> lowerCallDisk(stmt)
+            is DslDelete -> lowerDelete(stmt)
         }
 
         // ---- 変数宣言・代入 ----
 
-        /** 値生成ノードを組み立てます。TEMP_SET は実行内、VARIABLE(WORLD) はワールド内変数です。 */
+        /**
+         * 値生成ノードを組み立てます。TEMP_SET は実行内、VARIABLE はワールド・
+         * エンティティ変数です。`operation` は VARIABLE のみ有効で、既定は
+         * SET（再設定）です。`entityTarget` は ENTITY scope の対象指定です。
+         */
         private fun varNode(
             scope: VariableScope,
             name: String,
             type: ValueType,
             plan: ValuePlan,
+            operation: VariableOperation = VariableOperation.SET,
+            entityTarget: TargetSpec? = null,
         ): CommandNode {
             val node = if (scope == VariableScope.EXECUTION) node(CommandType.TEMP_SET) else node(CommandType.VARIABLE)
             if (scope == VariableScope.EXECUTION) {
@@ -192,8 +200,9 @@ class DslCompiler(
                 node.params["scope"] = scope.name
                 node.params["name"] = modelName(name)
                 node.params["type"] = type.name
-                node.params["operation"] = VariableOperation.SET.name
+                node.params["operation"] = operation.name
             }
+            if (entityTarget != null) node.targetSpec = entityTarget
             when (plan) {
                 is ValuePlan.AssignText -> {
                     node.params["changeMode"] = VariableChangeMode.ASSIGN.name
@@ -208,6 +217,10 @@ class DslCompiler(
                     node.params["propertySource"] = plan.source
                     node.params["property"] = plan.property
                     if (plan.arg != null) node.params["propertyArg"] = plan.arg
+                }
+                is ValuePlan.RandomRange -> {
+                    node.params["changeMode"] = VariableChangeMode.RANDOM.name
+                    node.params["range"] = plan.range
                 }
                 is ValuePlan.LocationValue -> {
                     node.params["changeMode"] = VariableChangeMode.ASSIGN.name
@@ -246,17 +259,59 @@ class DslCompiler(
         }
 
         private fun lowerVarDecl(stmt: DslVarDecl): StmtChain =
-            lowerVarWrite(VariableScope.EXECUTION, stmt.name, stmt.type, stmt.value)
+            if (stmt.world) {
+                // ワールド変数の初期宣言は DEFINE を使います（旧保存データの規約と同一）。
+                lowerVarWrite(VariableScope.WORLD, stmt.name, stmt.type, stmt.value,
+                    operation = VariableOperation.DEFINE)
+            } else {
+                lowerVarWrite(VariableScope.EXECUTION, stmt.name, stmt.type, stmt.value)
+            }
 
         private fun lowerAssign(stmt: DslAssign): StmtChain {
-            val (scope, name) = when (val t = stmt.target) {
-                is DslAssignTarget.Variable -> VariableScope.EXECUTION to t.name
-                is DslAssignTarget.WorldVariable -> VariableScope.WORLD to t.name
+            return when (val t = stmt.target) {
+                is DslAssignTarget.Variable -> when (stmt.op) {
+                    DslAssignOp.ASSIGN -> lowerVarWrite(VariableScope.EXECUTION, t.name, exprTypes.getValue(stmt.value), stmt.value)
+                    else -> lowerCompoundAssign(VariableScope.EXECUTION, t.name, stmt)
+                }
+                is DslAssignTarget.WorldVariable -> when (stmt.op) {
+                    // ワールド変数の代入は CHANGE（変更）として記録します。旧保存データと同じ規約です。
+                    DslAssignOp.ASSIGN -> lowerVarWrite(VariableScope.WORLD, t.name, exprTypes.getValue(stmt.value), stmt.value,
+                        operation = VariableOperation.CHANGE)
+                    else -> lowerCompoundAssign(VariableScope.WORLD, t.name, stmt)
+                }
+                is DslAssignTarget.EntityVariable -> {
+                    if (stmt.op != DslAssignOp.ASSIGN) {
+                        error(stmt.pos, "エンティティ変数は = 代入のみ使用できます")
+                    }
+                    lowerVarWrite(VariableScope.ENTITY, t.name, exprTypes.getValue(stmt.value), stmt.value,
+                        entityTarget = targetSpecOf(t.entity))
+                }
             }
-            return when (stmt.op) {
-                DslAssignOp.ASSIGN -> lowerVarWrite(scope, name, exprTypes.getValue(stmt.value), stmt.value)
-                else -> lowerCompoundAssign(scope, name, stmt)
+        }
+
+        /**
+         * `del` による変数削除です。scope・対象に応じて VARIABLE(DELETE) を発行します。
+         * エンティティ変数は対象指定 `targetSpec` をノードへ載せます。
+         */
+        private fun lowerDelete(stmt: DslDelete): StmtChain {
+            val node = node(CommandType.VARIABLE)
+            node.params["operation"] = VariableOperation.DELETE.name
+            when (val target = stmt.target) {
+                is DslAssignTarget.Variable -> {
+                    node.params["scope"] = VariableScope.EXECUTION.name
+                    node.params["name"] = modelName(target.name)
+                }
+                is DslAssignTarget.WorldVariable -> {
+                    node.params["scope"] = VariableScope.WORLD.name
+                    node.params["name"] = modelName(target.name)
+                }
+                is DslAssignTarget.EntityVariable -> {
+                    node.params["scope"] = VariableScope.ENTITY.name
+                    node.params["name"] = modelName(target.name)
+                    node.targetSpec = targetSpecOf(target.entity)
+                }
             }
+            return stmtChain(node)
         }
 
         /** 複合代入 `x += e` です。数値変数の加減乗除を CALCULATE へ写像します。 */
@@ -267,6 +322,7 @@ class DslCompiler(
             val node = varNode(
                 scope, name, ValueType.NUMBER,
                 ValuePlan.Calculate("$ref ${compoundSymbol(stmt.op)} $operand"),
+                operation = VariableOperation.CHANGE,
             )
             return stmtChain(*(pre + node).toTypedArray())
         }
@@ -275,10 +331,17 @@ class DslCompiler(
          * 変数への書き込み（var 宣言・単純代入）です。
          * 式の形に応じて ASSIGN／CALCULATE／PROPERTY・型別 spec のいずれかへ写像します。
          */
-        private fun lowerVarWrite(scope: VariableScope, name: String, type: ValueType, expr: DslExpr): StmtChain {
+        private fun lowerVarWrite(
+            scope: VariableScope,
+            name: String,
+            type: ValueType,
+            expr: DslExpr,
+            operation: VariableOperation = VariableOperation.SET,
+            entityTarget: TargetSpec? = null,
+        ): StmtChain {
             val pre = mutableListOf<CommandNode>()
             val plan = valuePlan(expr, type, pre)
-            val node = varNode(scope, name, type, plan)
+            val node = varNode(scope, name, type, plan, operation, entityTarget)
             return stmtChain(*(pre + node).toTypedArray())
         }
 
@@ -342,9 +405,26 @@ class DslCompiler(
                 }
                 "block" -> ValuePlan.BlockValue(literalStringArg(expr, "id"), null)
                 "location" -> ValuePlan.LocationValue(positionSpecOf(expr, pre))
-                "target" -> ValuePlan.EntityValue(targetSpecOf(expr))
+                "target" -> if (expected == ValueType.LOCATION) {
+                    // 対象の現在位置を参照する位置値です（PositionKind.TARGET）。
+                    ValuePlan.LocationValue(PositionSpec(PositionKind.TARGET, target = targetSpecOf(expr)))
+                } else {
+                    ValuePlan.EntityValue(targetSpecOf(expr))
+                }
+                "random" -> {
+                    if (expected != ValueType.NUMBER) {
+                        error(expr.pos, "random(...) は number 型へだけ代入できます")
+                    }
+                    val min = literalNumberArg(expr, "min")
+                    val max = literalNumberArg(expr, "max")
+                    ValuePlan.RandomRange("${fmt(min)}..${fmt(max)}")
+                }
+                "myworld_spawn" -> ValuePlan.LocationValue(positionSpecOf(expr, pre))
                 else -> error(expr.pos, "'${expr.name}' の値は代入できません")
             }
+            is DslSpecialPosition -> ValuePlan.LocationValue(specialPositionSpec(expr))
+            is DslLoopCount -> ValuePlan.AssignText(
+                "\${" + SystemVariableNames.CURRENT_LOOP_COUNT + "}")
             is DslPositionLiteral -> ValuePlan.LocationValue(positionSpecOf(expr, pre))
             else -> error(expr.pos, "この式は代入できません")
         }
@@ -369,6 +449,8 @@ class DslCompiler(
         private fun operandRef(expr: DslExpr, pre: MutableList<CommandNode>): String = when (expr) {
             is DslVarRef -> execRef(expr.name)
             is DslWorldRef -> worldRef(expr.name)
+            is DslLoopCount ->
+                "\${" + SystemVariableNames.CURRENT_LOOP_COUNT + "}"
             is DslNumberLiteral -> {
                 val temp = freshTemp()
                 pre += varNode(VariableScope.EXECUTION, temp, ValueType.NUMBER, ValuePlan.AssignText(fmt(expr.value)))
@@ -418,6 +500,8 @@ class DslCompiler(
                 pre += varNode(VariableScope.EXECUTION, temp, expected, plan)
                 "%{$temp}%"
             }
+            is DslLoopCount ->
+                "\${" + SystemVariableNames.CURRENT_LOOP_COUNT + "}"
             else -> error(expr.pos, "この式はここでは使えません")
         }
 
@@ -529,7 +613,81 @@ class DslCompiler(
             }
             is DslVarRef, is DslWorldRef, is DslBooleanLiteral, is DslPropertyRead ->
                 variableCondition(expr, DslBooleanLiteral(true, expr.pos), ValueType.BOOLEAN, DslBinaryOp.EQ, pre)
+            is DslCallExpr -> when (expr.name) {
+                "player" -> playerCondition(expr, pre)
+                "exists" -> {
+                    // 対象存在判定です。PLAYER との違いは補足条件を持たない点だけです。
+                    val node = node(CommandType.CONDITION)
+                    node.params["subject"] = ConditionSubject.OTHER_ENTITY.name
+                    node.targetSpec = condTargetSpec(expr)
+                    // `at` は判定位置です。実行位置 spec は対象解決の起点として使われます。
+                    expr.args.firstOrNull { it.name == "at" }?.let {
+                        node.executionPositionSpec = positionSpecOf(it.value, pre)
+                    }
+                    node
+                }
+                "signal" -> {
+                    // 制御ブロックの入力信号強度判定です。`signal(4)`・
+                    // `signal(min = 1, max = 15)` を `redstoneSignal` 範囲記法へ変換します。
+                    val node = node(CommandType.CONDITION)
+                    node.params["subject"] = ConditionSubject.CONTROL_BLOCK.name
+                    node.params["redstoneSignal"] = signalRangeText(expr)
+                    node
+                }
+                else -> error(expr.pos, "'${expr.name}' は条件として使えません")
+            }
             else -> error(expr.pos, "この式は条件として使えません")
+        }
+
+        /**
+         * `player(...)` のプレイヤー判定です。対象指定に加えて sneaking・
+         * item の補足条件を持ちます。
+         */
+        private fun playerCondition(expr: DslCallExpr, pre: MutableList<CommandNode>): CommandNode {
+            val node = node(CommandType.CONDITION)
+            node.params["subject"] = ConditionSubject.PLAYER.name
+            node.targetSpec = condTargetSpec(expr)
+            expr.args.forEach { arg ->
+                when (arg.name) {
+                    "at" -> node.executionPositionSpec = positionSpecOf(arg.value, pre)
+                    "sneaking" -> node.params["sneaking"] = (arg.value as? DslBooleanLiteral)?.value?.toString()
+                        ?: error(arg.pos, "sneaking は true/false リテラルで指定してください")
+                    "item" -> {
+                        // PLAYER 判定のアイテム条件は material リテラルのみ受理します
+                        // （検証層も同じ規約）。itemTempRef 参照は使いません。
+                        val (id, data, ref) = itemValue(arg.value, mutableListOf())
+                        if (ref != null) error(arg.pos, "player の item は item(...) リテラルで指定してください")
+                        node.params["item"] = id ?: ""
+                        node.params["itemData"] = data ?: ""
+                    }
+                    else -> Unit // kind 系の対象引数は condTargetSpec が処理済みです。
+                }
+            }
+            return node
+        }
+
+        /**
+         * 条件呼出し（player/exists）から対象指定を構築します。
+         * `target = <entity式>` の直接指定または `kind = ...` 以下の絞り込みです。
+         */
+        private fun condTargetSpec(expr: DslCallExpr): TargetSpec {
+            val direct = expr.args.firstOrNull { it.name == "target" }
+            if (direct != null) return targetSpecOf(direct.value)
+            return targetSpecFromArgs(expr.args, expr.pos)
+        }
+
+        /** `signal(...)` の強度範囲を `4`・`1..15`・`3..`・`..2` の範囲記法へ変換します。 */
+        private fun signalRangeText(expr: DslCallExpr): String {
+            val positional = expr.args.filter { it.name == null }
+            if (positional.isNotEmpty()) return literalNumber(positional.single().value).toInt().toString()
+            val min = expr.args.firstOrNull { it.name == "min" }?.let { literalNumber(it.value).toInt() }
+            val max = expr.args.firstOrNull { it.name == "max" }?.let { literalNumber(it.value).toInt() }
+            return when {
+                min != null && max != null -> "$min..$max"
+                min != null -> "$min.."
+                max != null -> "..$max"
+                else -> error(expr.pos, "signal には強度または min/max の指定が必要です")
+            }
         }
 
         /** VARIABLE 判定の CONDITION ノードを生成します。 */
@@ -666,15 +824,70 @@ class DslCompiler(
             val seen = mutableSetOf<String>()
             args.forEach { arg ->
                 val rule = spec.args[arg.name]
-                    ?: error(arg.pos, "'${stmt.name}' に引数 '${arg.name}' はありません")
-                if (!seen.add(arg.name!!)) error(arg.pos, "引数 '${arg.name}' が重複しています")
-                applyArg(node, arg, rule, pre)
+                // tag_add／tag_remove は1引数ごとに1タグを追記するため重複指定を認めます。
+                if (rule?.kind != ArgKind.TAG_OP && !seen.add(arg.name!!)) {
+                    error(arg.pos, "引数 '${arg.name}' が重複しています")
+                }
+                if (rule != null) {
+                    applyArg(node, arg, rule, pre)
+                } else if (spec.extraParamPrefix != null) {
+                    applyExtraParam(node, spec, arg, pre)
+                } else {
+                    error(arg.pos, "'${stmt.name}' に引数 '${arg.name}' はありません")
+                }
             }
             spec.args.filter { it.value.required && it.key !in seen }.keys.firstOrNull()?.let {
                 error(stmt.pos, "'${stmt.name}' には必須の引数 '$it' がありません")
             }
             spec.fixedParams.forEach { (key, value) -> node.params[key] = value }
+            finishEntityOperation(node, stmt)
             return stmtChain(*(pre + node).toTypedArray())
+        }
+
+        /**
+         * `summon(entity = ..., <prop> = <値>)` の型付きデータ引数です。
+         * 引数名は EntityDataSchema の項目ID（`ai`・`custom_name` 等）に限り、
+         * `summonData_<id>` 欄へ文字列化して書き込みます。
+         */
+        private fun applyExtraParam(node: CommandNode, spec: CommandSpec, arg: DslArg, pre: MutableList<CommandNode>) {
+            val prefix = spec.extraParamPrefix ?: return
+            val id = arg.name!!
+            val definition = me.awabi2048.kantancommander.model.EntityDataSchema.definition(id)
+                ?: error(arg.pos, "'summon' に項目 '${id}' はありません")
+            val text = when (definition.valueKind) {
+                me.awabi2048.kantancommander.model.EntityPropertyValueKind.BOOLEAN ->
+                    scalarText(arg.value, ValueType.BOOLEAN, pre)
+                me.awabi2048.kantancommander.model.EntityPropertyValueKind.INTEGER ->
+                    scalarText(arg.value, ValueType.NUMBER, pre)
+                me.awabi2048.kantancommander.model.EntityPropertyValueKind.ENUM,
+                me.awabi2048.kantancommander.model.EntityPropertyValueKind.TEXT,
+                -> scalarText(arg.value, ValueType.STRING, pre)
+            }
+            node.params["$prefix$id"] = text
+        }
+
+        /**
+         * ENTITY_OPERATION の `value` 引数をパス種別ごとの欄へ振り分けます。
+         * `property:<id>` → `propertyValue`、`attribute:<id>` → `attributeValue`。
+         * パスが tag／未設定のときの `value` 指定はエラーです。
+         */
+        private fun finishEntityOperation(node: CommandNode, stmt: DslCallStmt) {
+            if (node.type != CommandType.ENTITY_OPERATION) return
+            val path = node.params["entityDataPath"] ?: ""
+            if (path.isBlank()) {
+                // パス未設定は旧GUIの半設定状態をそのまま写します。
+                // 実行側では未解決として扱われ、value 指定だけは拒否します。
+                if (node.params.remove("__dslValue") != null) {
+                    error(stmt.pos, "entity_operation の value は property/attribute の指定時のみ使用できます")
+                }
+                return
+            }
+            val pending = node.params.remove("__dslValue") ?: return
+            when {
+                path.startsWith("property:") -> node.params["propertyValue"] = pending
+                path.startsWith("attribute:") -> node.params["attributeValue"] = pending
+                else -> error(stmt.pos, "entity_operation の value は property/attribute の指定時のみ使用できます")
+            }
         }
 
         /** 1引数をルールに従ってノード欄・構造値・実体化ノードへ写像します。 */
@@ -693,11 +906,33 @@ class DslCompiler(
                     if (rule.enumValues != null && text !in rule.enumValues) {
                         error(arg.pos, "引数 '${arg.name}' は ${rule.enumValues.joinToString("/")} のいずれかです")
                     }
-                    node.params[rule.param!!] = text
+                    node.params[rule.param!!] = if (rule.uppercase) text.uppercase() else text
+                }
+                ArgKind.SLOT -> node.params[rule.param!!] = when (val v = arg.value) {
+                    is DslNumberLiteral -> v.value.toInt().toString()
+                    is DslStringLiteral -> v.plainText()?.uppercase()
+                        ?: error(arg.pos, "slot は文字列リテラルで指定してください")
+                    else -> error(arg.pos, "slot は文字列または数値リテラルで指定してください")
+                }
+                ArgKind.PATH_PROPERTY ->
+                    node.params["entityDataPath"] = "property:" + literalString(arg.value, "property")
+                ArgKind.PATH_ATTRIBUTE ->
+                    node.params["entityDataPath"] = "attribute:" + literalString(arg.value, "attribute")
+                ArgKind.TAG_OP -> {
+                    // タグ操作はパス種別として tag を選択した状態と同義です。
+                    node.params["entityDataPath"] = "tag"
+                    val entry = rule.param!! + "=" + literalString(arg.value, arg.name!!)
+                    val existing = node.params["tagEntries"]
+                    node.params["tagEntries"] =
+                        if (existing.isNullOrBlank()) entry else "$existing;$entry"
                 }
                 ArgKind.ENTITY -> assignSpec(node, rule.slot!!, targetSpecOf(arg.value))
                 ArgKind.LOCATION -> if (rule.slot == ArgSlot.DEST_FACING) {
                     node.destinationFacingSpec = facingSpecOf(arg.value, pre)
+                } else if (rule.slot == ArgSlot.DESTINATION && isEntityPositionArg(arg.value)) {
+                    // TELEPORT の移動先は位置式と対象式で別欄を持ちます。
+                    // `to = target(...)`／entity 変数は destinationTargetSpec です。
+                    node.destinationTargetSpec = targetSpecOf(arg.value)
                 } else {
                     assignSpec(node, rule.slot!!, positionSpecOf(arg.value, pre))
                 }
@@ -722,17 +957,29 @@ class DslCompiler(
                 ArgSlot.TARGET -> node.targetSpec = spec as TargetSpec
                 ArgSlot.SECONDARY_TARGET -> node.secondaryTargetSpec = spec as TargetSpec
                 ArgSlot.DESTINATION -> node.destinationSpec = spec as PositionSpec
+                ArgSlot.DEST_TARGET -> node.destinationTargetSpec = spec as TargetSpec
                 ArgSlot.DEST_FACING -> node.destinationFacingSpec = spec as FacingSpec
+                ArgSlot.COND_POS -> node.conditionPositionSpec = spec as PositionSpec
                 ArgSlot.EXEC_POS -> node.executionPositionSpec = spec as PositionSpec
                 ArgSlot.SOUND_POS -> node.soundPositionSpec = spec as PositionSpec
                 ArgSlot.SUMMON_POS -> node.summonPositionSpec = spec as PositionSpec
                 ArgSlot.PARTICLE_POS -> node.particlePositionSpec = spec as PositionSpec
+                ArgSlot.PARTICLE_END -> node.particleEndPositionSpec = spec as PositionSpec
                 ArgSlot.BLOCK_POS -> node.blockPositionSpec = spec as PositionSpec
                 ArgSlot.BLOCK_FROM -> node.blockFromSpec = spec as PositionSpec
                 ArgSlot.BLOCK_TO -> node.blockToSpec = spec as PositionSpec
                 ArgSlot.FIREWORK_POS -> node.fireworkPositionSpec = spec as PositionSpec
+                ArgSlot.STRUCTURE_POS -> node.structurePlacePositionSpec = spec as PositionSpec
+                ArgSlot.GROUP_PIVOT -> node.groupPivotPositionSpec = spec as PositionSpec
             }
         }
+
+        /**
+         * teleport の `to` が対象式（`target(...)` か entity 型変数）かを返します。
+         * 対象式は `destinationSpec`（位置）ではなく `destinationTargetSpec` へ写像します。
+         */
+        private fun isEntityPositionArg(expr: DslExpr): Boolean =
+            exprTypes[expr] == ValueType.ENTITY
 
         // ---- 構造値（位置・対象・向き） ----
 
@@ -745,7 +992,8 @@ class DslCompiler(
                 val kind = when (expr.base) {
                     null -> PositionKind.COORDINATES
                     is DslVarRef -> PositionKind.TEMPORARY
-                    else -> error(expr.base!!.pos, "位置リテラルの基準は変数のみ指定できます")
+                    is DslSpecialPosition -> specialPositionKind(expr.base)
+                    else -> error(expr.base!!.pos, "位置リテラルの基準は変数・disk・captured のみ指定できます")
                 }
                 val tempName = (expr.base as? DslVarRef)?.name?.let(::modelName)
                 PositionSpec(
@@ -759,18 +1007,38 @@ class DslCompiler(
                     semanticsZ = expr.components[2].semantics,
                 )
             }
-            is DslCallExpr -> if (expr.name == "location") {
-                PositionSpec(
-                    kind = PositionKind.COORDINATES,
-                    x = literalNumberArg(expr, "x"),
-                    y = literalNumberArg(expr, "y"),
-                    z = literalNumberArg(expr, "z"),
-                    yaw = expr.args.firstOrNull { it.name == "yaw" }?.let { literalNumber(it.value) }?.toFloat(),
-                    pitch = expr.args.firstOrNull { it.name == "pitch" }?.let { literalNumber(it.value) }?.toFloat(),
+            is DslCallExpr -> when (expr.name) {
+                "location" -> {
+                    val cx = componentArg(expr, "x")
+                    val cy = componentArg(expr, "y")
+                    val cz = componentArg(expr, "z")
+                    val cyaw = componentArg(expr, "yaw")
+                    val cpitch = componentArg(expr, "pitch")
+                    PositionSpec(
+                        kind = PositionKind.COORDINATES,
+                        x = cx?.first, y = cy?.first, z = cz?.first,
+                        yaw = cyaw?.first?.toFloat(), pitch = cpitch?.first?.toFloat(),
+                        semanticsX = cx?.second ?: CoordinateSemantics.ABSOLUTE,
+                        semanticsY = cy?.second ?: CoordinateSemantics.ABSOLUTE,
+                        semanticsZ = cz?.second ?: CoordinateSemantics.ABSOLUTE,
+                        semanticsYaw = cyaw?.second ?: CoordinateSemantics.ABSOLUTE,
+                        semanticsPitch = cpitch?.second ?: CoordinateSemantics.ABSOLUTE,
+                    )
+                }
+                "target" -> PositionSpec(PositionKind.TARGET, target = targetSpecOf(expr))
+                "myworld_spawn" -> PositionSpec(
+                    kind = PositionKind.MYWORLD_SPAWN,
+                    myworldSpawn = when (
+                        expr.args.firstOrNull { it.name == "kind" }?.let { literalString(it.value, "kind") }
+                    ) {
+                        null, "member" -> me.awabi2048.kantancommander.model.MyworldSpawnKind.MEMBER
+                        "guest" -> me.awabi2048.kantancommander.model.MyworldSpawnKind.GUEST
+                        else -> error(expr.pos, "myworld_spawn の kind は member/guest のいずれかです")
+                    },
                 )
-            } else {
-                error(expr.pos, "'${expr.name}' は位置として使えません")
+                else -> error(expr.pos, "'${expr.name}' は位置として使えません")
             }
+            is DslSpecialPosition -> specialPositionSpec(expr)
             is DslVarRef -> PositionSpec(PositionKind.TEMPORARY, tempName = modelName(expr.name))
             is DslWorldRef -> error(expr.pos, "ワールド変数の位置は位置式へ使えません")
             else -> {
@@ -781,60 +1049,124 @@ class DslCompiler(
             }
         }
 
+        /** `disk`・`captured` などの予約位置式の種別です。 */
+        private fun specialPositionKind(expr: DslSpecialPosition): PositionKind = when (expr.name) {
+            "disk" -> PositionKind.DISK
+            "captured" -> PositionKind.CAPTURED
+            else -> error(expr.pos, "不明な位置式 '${expr.name}' です")
+        }
+
+        private fun specialPositionSpec(expr: DslSpecialPosition): PositionSpec =
+            PositionSpec(specialPositionKind(expr))
+
         /** `target(...)` または変数参照を TargetSpec へ写像します。 */
         private fun targetSpecOf(expr: DslExpr): TargetSpec = when (expr) {
             is DslVarRef -> TargetSpec(TargetKind.TEMPORARY, tempName = modelName(expr.name))
-            is DslCallExpr -> if (expr.name == "target") {
-                TargetSpec(
-                    kind = when (literalStringArg(expr, "kind")) {
-                        "nearest_player" -> TargetKind.NEAREST_PLAYER
-                        "nearby_players" -> TargetKind.NEARBY_PLAYERS
-                        "all_players" -> TargetKind.ALL_PLAYERS
-                        "random_player" -> TargetKind.RANDOM_PLAYER
-                        "nearest_entity" -> TargetKind.NEAREST_ENTITY
-                        "nearby_entities" -> TargetKind.NEARBY_ENTITIES
-                        else -> error(expr.pos, "target の kind が不明です")
-                    },
-                    entityType = expr.args.firstOrNull { it.name == "type" }?.let { literalString(it.value, "type") },
-                    maximumDistance = expr.args.firstOrNull { it.name == "within" }?.let { literalNumber(it.value) },
-                    minimumDistance = expr.args.firstOrNull { it.name == "farther" }?.let { literalNumber(it.value) },
-                    limit = expr.args.firstOrNull { it.name == "limit" }?.let { literalNumber(it.value).toInt() },
-                    sort = expr.args.firstOrNull { it.name == "sort" }?.let {
-                        when (literalString(it.value, "sort")) {
-                            "nearest" -> TargetSort.NEAREST
-                            "furthest" -> TargetSort.FURTHEST
-                            "random" -> TargetSort.RANDOM
-                            else -> error(it.pos, "sort は nearest/furthest/random のいずれかです")
-                        }
-                    },
-                    gameMode = expr.args.firstOrNull { it.name == "gamemode" }?.let { gamemodeConst(it.value) },
-                    tag = expr.args.firstOrNull { it.name == "tag" }?.let { literalString(it.value, "tag") },
-                    name = expr.args.firstOrNull { it.name == "name" }?.let { literalString(it.value, "name") },
-                    dx = expr.args.firstOrNull { it.name == "dx" }?.let { literalNumber(it.value) },
-                    dy = expr.args.firstOrNull { it.name == "dy" }?.let { literalNumber(it.value) },
-                    dz = expr.args.firstOrNull { it.name == "dz" }?.let { literalNumber(it.value) },
-                )
-            } else {
-                error(expr.pos, "'${expr.name}' は対象として使えません")
+            is DslCallExpr -> when (expr.name) {
+                "target" -> targetSpecFromArgs(expr.args, expr.pos)
+                else -> error(expr.pos, "'${expr.name}' は対象として使えません")
             }
             else -> error(expr.pos, "対象は target(...) または entity 型変数で指定してください")
         }
 
-        /** `facing` 引数（向き指定）を FacingSpec へ写像します。 */
+        /**
+         * `target(...)`・`player(...)`・`exists(...)` 共通の引数群から
+         * TargetSpec を構築します。`target =` 引数は呼出し側が個別に処理するため
+         * ここでは kind 系の絞り込みだけを読みます。
+         */
+        private fun targetSpecFromArgs(args: List<DslArg>, pos: DslPos): TargetSpec =
+            TargetSpec(
+                kind = when (
+                    args.firstOrNull { it.name == "kind" }?.let { literalString(it.value, "kind") }
+                        ?: error(pos, "対象には kind = ... の指定が必要です")
+                ) {
+                    "nearest_player" -> TargetKind.NEAREST_PLAYER
+                    "nearby_players" -> TargetKind.NEARBY_PLAYERS
+                    "all_players" -> TargetKind.ALL_PLAYERS
+                    "random_player" -> TargetKind.RANDOM_PLAYER
+                    "nearest_entity" -> TargetKind.NEAREST_ENTITY
+                    "nearby_entities" -> TargetKind.NEARBY_ENTITIES
+                    else -> error(pos, "target の kind が不明です")
+                },
+                entityType = args.firstOrNull { it.name == "type" }?.let { literalString(it.value, "type") },
+                maximumDistance = args.firstOrNull { it.name == "within" }?.let { literalNumber(it.value) },
+                minimumDistance = args.firstOrNull { it.name == "farther" }?.let { literalNumber(it.value) },
+                limit = args.firstOrNull { it.name == "limit" }?.let { literalNumber(it.value).toInt() },
+                sort = args.firstOrNull { it.name == "sort" }?.let {
+                    when (literalString(it.value, "sort")) {
+                        "nearest" -> TargetSort.NEAREST
+                        "furthest" -> TargetSort.FURTHEST
+                        "random" -> TargetSort.RANDOM
+                        else -> error(it.pos, "sort は nearest/furthest/random のいずれかです")
+                    }
+                },
+                gameMode = args.firstOrNull { it.name == "gamemode" }?.let { gamemodeConst(it.value) },
+                tag = args.firstOrNull { it.name == "tag" }?.let { literalString(it.value, "tag") },
+                name = args.firstOrNull { it.name == "name" }?.let { literalString(it.value, "name") },
+                dx = args.firstOrNull { it.name == "dx" }?.let { literalNumber(it.value) },
+                dy = args.firstOrNull { it.name == "dy" }?.let { literalNumber(it.value) },
+                dz = args.firstOrNull { it.name == "dz" }?.let { literalNumber(it.value) },
+            )
+
+        /**
+         * `facing` 引数（向き指定）を FacingSpec へ写像します。
+         * - `location(x=..,y=..,z=..)`: 座標点への注視（COORDINATES）
+         * - `location(yaw=..,pitch=..)`: 角度指定（ROTATION、省略成分は 0）
+         * - `target(...)`: 対象への注視（TARGET）
+         * - `orientation(...)`: 対象と同じ向き（COPY_ORIENTATION）
+         * - location 型変数: TEMPORARY 参照
+         */
         private fun facingSpecOf(expr: DslExpr, pre: MutableList<CommandNode>): FacingSpec = when (expr) {
-            is DslCallExpr -> if (expr.name == "location") {
-                // ROTATION は有限値必須のため、省略成分は 0 へ正規化します。
-                FacingSpec(
-                    kind = FacingKind.ROTATION,
-                    yaw = expr.args.firstOrNull { it.name == "yaw" }?.let { literalNumber(it.value) }?.toFloat() ?: 0f,
-                    pitch = expr.args.firstOrNull { it.name == "pitch" }?.let { literalNumber(it.value) }?.toFloat() ?: 0f,
-                )
-            } else {
-                error(expr.pos, "facing は location(...) で指定してください")
+            is DslCallExpr -> when (expr.name) {
+                "location" -> {
+                    val pointArgs = expr.args.filter { it.name in setOf("x", "y", "z") }
+                    if (pointArgs.isNotEmpty()) {
+                        // 座標点の注視です。ROTATION との混在（x と yaw の併用）は
+                        // モデルの種別表現で一意にならないため拒否します。
+                        if (expr.args.any { it.name in setOf("yaw", "pitch") }) {
+                            error(expr.pos, "facing の location は座標(x,y,z)か角度(yaw,pitch)のどちらか一方で指定してください")
+                        }
+                        FacingSpec(
+                            kind = FacingKind.COORDINATES,
+                            x = literalNumberArg(expr, "x"),
+                            y = literalNumberArg(expr, "y"),
+                            z = literalNumberArg(expr, "z"),
+                        )
+                    } else {
+                        // ROTATION は有限値必須のため、省略成分は 0 へ正規化します。
+                        // `~`/`^` 接頭辞は成分ごとの相対角度として保持します。
+                        val cyaw = componentArg(expr, "yaw")
+                        val cpitch = componentArg(expr, "pitch")
+                        FacingSpec(
+                            kind = FacingKind.ROTATION,
+                            yaw = cyaw?.first?.toFloat() ?: 0f,
+                            pitch = cpitch?.first?.toFloat() ?: 0f,
+                            semanticsYaw = cyaw?.second ?: CoordinateSemantics.ABSOLUTE,
+                            semanticsPitch = cpitch?.second ?: CoordinateSemantics.ABSOLUTE,
+                        )
+                    }
+                }
+                "target" -> FacingSpec(FacingKind.TARGET, target = targetSpecOf(expr))
+                "orientation" -> expr.args.singleOrNull()?.let { arg ->
+                    FacingSpec(FacingKind.COPY_ORIENTATION, target = targetSpecOf(arg.value))
+                } ?: error(expr.pos, "orientation は対象を1個だけ指定してください")
+                else -> error(expr.pos, "'${expr.name}' は facing へ使えません")
             }
             is DslVarRef -> FacingSpec(FacingKind.TEMPORARY, tempName = modelName(expr.name))
-            else -> error(expr.pos, "facing は location(...) または location 型変数で指定してください")
+            else -> error(expr.pos, "facing は location(...)・target(...)・orientation(...)・location 型変数で指定してください")
         }
+
+        /**
+         * 位置・向きの成分引数（値と座標セマンティクス）を読みます。
+         * `~`/`^` 接頭辞付き数値は相対・ローカル成分として保持します。
+         */
+        private fun componentArg(expr: DslCallExpr, name: String): Pair<Double, CoordinateSemantics>? =
+            expr.args.firstOrNull { it.name == name }?.let { arg ->
+                when (val v = arg.value) {
+                    is DslComponentExpr -> v.value to v.semantics
+                    else -> literalNumber(v) to CoordinateSemantics.ABSOLUTE
+                }
+            }
 
         /** 位置リテラルの成分値を返します。`~` 単独は RELATIVE 0.0 として明示します。 */
         private fun componentValue(components: List<DslPositionComponent>, index: Int): Double =
@@ -1038,22 +1370,53 @@ private sealed interface ValuePlan {
     data class ItemValue(val itemId: String?, val itemData: String?, val tempRef: String?) : ValuePlan
     /** ブロックの構造値です。blockTempRef か block 欄へ写像します。 */
     data class BlockValue(val blockId: String?, val tempRef: String?) : ValuePlan
+    /** 乱数生成（RANDOM）です。`min..max` の範囲文字列を range 欄へ書きます。 */
+    data class RandomRange(val range: String) : ValuePlan
 }
 
 /** 命令の引数仕様です。slot は構造値の格納先、param は params 欄です。 */
-internal enum class ArgKind { NUMBER, STRING, BOOLEAN, ENTITY, LOCATION, ITEM, BLOCK, LITERAL }
-internal enum class ArgSlot { TARGET, SECONDARY_TARGET, DESTINATION, DEST_FACING, EXEC_POS, SOUND_POS, SUMMON_POS, PARTICLE_POS, BLOCK_POS, BLOCK_FROM, BLOCK_TO, FIREWORK_POS }
+internal enum class ArgKind {
+    NUMBER, STRING, BOOLEAN, ENTITY, LOCATION, ITEM, BLOCK, LITERAL,
+    /**
+     * PLACE_ITEM の slot です。文字列（`"hand"`/`"contents"`）は大文字へ、
+     * 数値は整数文字列へ正規化します。
+     */
+    SLOT,
+    /** ENTITY_OPERATION の `property = "id"` です。`entityDataPath` へ `property:<id>` を書きます。 */
+    PATH_PROPERTY,
+    /** ENTITY_OPERATION の `attribute = "id"` です。`entityDataPath` へ `attribute:<id>` を書きます。 */
+    PATH_ATTRIBUTE,
+    /**
+     * ENTITY_OPERATION の `tag_add`／`tag_remove` です。param に `add`/`remove` を持ち、
+     * `tagEntries` へ `<op>=<tag>` を追記します。
+     */
+    TAG_OP,
+}
+internal enum class ArgSlot {
+    TARGET, SECONDARY_TARGET, DESTINATION, DEST_FACING, EXEC_POS,
+    SOUND_POS, SUMMON_POS, PARTICLE_POS, PARTICLE_END, BLOCK_POS, BLOCK_FROM, BLOCK_TO,
+    FIREWORK_POS, STRUCTURE_POS, GROUP_PIVOT, DEST_TARGET, COND_POS,
+}
 internal data class ArgRule(
     val kind: ArgKind,
     val required: Boolean,
     val param: String? = null,
     val slot: ArgSlot? = null,
+    /** LITERAL 引数の許容値です。DSL では小文字で書きます。 */
     val enumValues: Set<String>? = null,
+    /** LITERAL 値を大文字へ正規化して保存します（placeDestination・particleShape 等）。 */
+    val uppercase: Boolean = false,
 )
 internal data class CommandSpec(
     val type: CommandType,
     val args: Map<String, ArgRule>,
     val fixedParams: Map<String, String> = emptyMap(),
+    /**
+     * `summon` の型付きデータ欄のように、テーブル未定義の引数名を
+     * `<prefix><引数名>` の params キーとして受け入れる接頭辞です。
+     * 値は EntityDataSchema の項目定義で検証します。
+     */
+    val extraParamPrefix: String? = null,
 )
 
 private fun compoundSymbol(op: DslAssignOp): String = when (op) {
@@ -1090,22 +1453,26 @@ internal val DSL_COMMAND_TABLE: Map<String, CommandSpec> = mapOf(
                 "fade_out" to ArgRule(ArgKind.NUMBER, required = false, param = "fadeOutSeconds"),
                 // DISPLAY_TEXT はモデル側で表示対象が必須です。
                 "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
             )),
             "summon" to CommandSpec(CommandType.SUMMON_ENTITY, mapOf(
                 "entity" to ArgRule(ArgKind.LITERAL, required = true, param = "summonEntity"),
                 "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.SUMMON_POS),
                 "tags" to ArgRule(ArgKind.STRING, required = false, param = "tags"),
-            )),
+            ), extraParamPrefix = "summonData_"),
             "play_sound" to CommandSpec(CommandType.PLAY_SOUND, mapOf(
                 "sound" to ArgRule(ArgKind.LITERAL, required = true, param = "sound"),
                 "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.SOUND_POS),
+                "origin" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
+                // 再生対象（指定時はその対象へ向けて鳴らします）。
+                "target" to ArgRule(ArgKind.ENTITY, required = false, slot = ArgSlot.TARGET),
                 "volume" to ArgRule(ArgKind.NUMBER, required = false, param = "volume"),
                 "pitch" to ArgRule(ArgKind.NUMBER, required = false, param = "pitch"),
                 "scope" to ArgRule(ArgKind.LITERAL, required = false, param = "soundScope",
-                    enumValues = setOf("POSITION", "WORLD")),
+                    enumValues = setOf("position", "world"), uppercase = true),
                 "category" to ArgRule(ArgKind.LITERAL, required = false, param = "soundCategory"),
                 "operation" to ArgRule(ArgKind.LITERAL, required = false, param = "soundOperation",
-                    enumValues = setOf("PLAY", "STOP")),
+                    enumValues = setOf("play", "stop"), uppercase = true),
             )),
             "entity_delete" to CommandSpec(CommandType.ENTITY_DELETE, mapOf(
                 "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
@@ -1115,6 +1482,7 @@ internal val DSL_COMMAND_TABLE: Map<String, CommandSpec> = mapOf(
                 "effect" to ArgRule(ArgKind.LITERAL, required = true, param = "effect"),
                 "seconds" to ArgRule(ArgKind.NUMBER, required = false, param = "seconds"),
                 "level" to ArgRule(ArgKind.NUMBER, required = false, param = "level"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
             )),
             "camera_shake" to CommandSpec(CommandType.CAMERA_SHAKE, mapOf(
                 "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
@@ -1131,6 +1499,7 @@ internal val DSL_COMMAND_TABLE: Map<String, CommandSpec> = mapOf(
                 "motion_x" to ArgRule(ArgKind.NUMBER, required = false, param = "motionX"),
                 "motion_y" to ArgRule(ArgKind.NUMBER, required = false, param = "motionY"),
                 "motion_z" to ArgRule(ArgKind.NUMBER, required = false, param = "motionZ"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
             )),
             "setblock" to CommandSpec(CommandType.BLOCK_OPERATION, mapOf(
                 "pos" to ArgRule(ArgKind.LOCATION, required = true, slot = ArgSlot.BLOCK_POS),
@@ -1148,15 +1517,86 @@ internal val DSL_COMMAND_TABLE: Map<String, CommandSpec> = mapOf(
                 "data" to ArgRule(ArgKind.STRING, required = false, param = "fireworkData"),
                 "height" to ArgRule(ArgKind.NUMBER, required = false, param = "burstHeight"),
                 "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.FIREWORK_POS),
+                "origin" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
             )),
             "particle" to CommandSpec(CommandType.PARTICLE, mapOf(
                 "particle" to ArgRule(ArgKind.LITERAL, required = true, param = "particle"),
                 "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.PARTICLE_POS),
+                // 表示対象（複数対象の位置群へ0..N件描画します）。
+                "target" to ArgRule(ArgKind.ENTITY, required = false, slot = ArgSlot.TARGET),
+                "origin" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
                 "count" to ArgRule(ArgKind.NUMBER, required = false, param = "particleCount"),
                 "speed" to ArgRule(ArgKind.NUMBER, required = false, param = "particleSpeed"),
                 "delta_x" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaX"),
                 "delta_y" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaY"),
                 "delta_z" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDeltaZ"),
                 "data" to ArgRule(ArgKind.STRING, required = false, param = "particleData"),
+            )),
+            "particle_geometry" to CommandSpec(CommandType.PARTICLE_GEOMETRY, mapOf(
+                "particle" to ArgRule(ArgKind.LITERAL, required = true, param = "particle"),
+                "shape" to ArgRule(ArgKind.LITERAL, required = false, param = "particleShape",
+                    enumValues = setOf("point_scatter", "line", "circle", "arc", "box", "sphere", "helix"),
+                    uppercase = true),
+                "data" to ArgRule(ArgKind.STRING, required = false, param = "particleData"),
+                "density" to ArgRule(ArgKind.NUMBER, required = false, param = "particleDensity"),
+                "radius" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryRadius"),
+                "height" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryHeight"),
+                "turns" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryTurns"),
+                "start_angle" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryStartAngle"),
+                "end_angle" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryEndAngle"),
+                "rotation" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryRotation"),
+                "axis_yaw" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryAxisYaw"),
+                "axis_pitch" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryAxisPitch"),
+                "step" to ArgRule(ArgKind.NUMBER, required = false, param = "geometryStep"),
+                "wireframe" to ArgRule(ArgKind.BOOLEAN, required = false, param = "geometryWireframe"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.PARTICLE_POS),
+                "end_at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.PARTICLE_END),
+                "target" to ArgRule(ArgKind.ENTITY, required = false, slot = ArgSlot.TARGET),
+                "origin" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
+            )),
+            "place_item" to CommandSpec(CommandType.PLACE_ITEM, mapOf(
+                "item" to ArgRule(ArgKind.ITEM, required = true),
+                "destination" to ArgRule(ArgKind.LITERAL, required = false, param = "placeDestination",
+                    enumValues = setOf("equipment", "player_hotbar", "player_inventory",
+                        "item_frame", "block_container"), uppercase = true),
+                "slot" to ArgRule(ArgKind.SLOT, required = false, param = "slot"),
+                "count" to ArgRule(ArgKind.NUMBER, required = false, param = "count"),
+                "overwrite" to ArgRule(ArgKind.BOOLEAN, required = false, param = "overwrite"),
+                // ENTITY 系配置先の対象（equipment/hotbar/inventory/item_frame）。
+                "target" to ArgRule(ArgKind.ENTITY, required = false, slot = ArgSlot.TARGET),
+                // BLOCK_CONTAINER の対象コンテナ位置です。
+                "pos" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.BLOCK_POS),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.EXEC_POS),
+            )),
+            "entity_operation" to CommandSpec(CommandType.ENTITY_OPERATION, mapOf(
+                "target" to ArgRule(ArgKind.ENTITY, required = true, slot = ArgSlot.TARGET),
+                "property" to ArgRule(ArgKind.PATH_PROPERTY, required = false),
+                "attribute" to ArgRule(ArgKind.PATH_ATTRIBUTE, required = false),
+                // 値はパス種別で保存欄が分かれるため、finishEntityOperation が
+                // propertyValue／attributeValue へ振り分けます。
+                "value" to ArgRule(ArgKind.STRING, required = false, param = "__dslValue"),
+                "tag_add" to ArgRule(ArgKind.TAG_OP, required = false, param = "add"),
+                "tag_remove" to ArgRule(ArgKind.TAG_OP, required = false, param = "remove"),
+            )),
+            "place_structure" to CommandSpec(CommandType.STRUCTURE_PLACE, mapOf(
+                "structure" to ArgRule(ArgKind.LITERAL, required = true, param = "structure"),
+                "at" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.STRUCTURE_POS),
+                "rotation" to ArgRule(ArgKind.LITERAL, required = false, param = "rotation",
+                    enumValues = setOf("none", "clockwise_90", "clockwise_180", "counterclockwise_90")),
+                "mirror" to ArgRule(ArgKind.LITERAL, required = false, param = "mirror",
+                    enumValues = setOf("none", "left_right", "front_back")),
+            )),
+            "entity_group" to CommandSpec(CommandType.ENTITY_GROUP, mapOf(
+                "operation" to ArgRule(ArgKind.LITERAL, required = true, param = "operation",
+                    enumValues = setOf("create", "add", "remove", "delete", "set_pivot", "move", "rotate", "cleanup")),
+                "group" to ArgRule(ArgKind.STRING, required = false, param = "group"),
+                "target" to ArgRule(ArgKind.ENTITY, required = false, slot = ArgSlot.TARGET),
+                "pivot" to ArgRule(ArgKind.LOCATION, required = false, slot = ArgSlot.GROUP_PIVOT),
+                "move_x" to ArgRule(ArgKind.NUMBER, required = false, param = "moveX"),
+                "move_y" to ArgRule(ArgKind.NUMBER, required = false, param = "moveY"),
+                "move_z" to ArgRule(ArgKind.NUMBER, required = false, param = "moveZ"),
+                "rotate_x" to ArgRule(ArgKind.NUMBER, required = false, param = "rotateX"),
+                "rotate_y" to ArgRule(ArgKind.NUMBER, required = false, param = "rotateY"),
+                "rotate_z" to ArgRule(ArgKind.NUMBER, required = false, param = "rotateZ"),
             )),
         )

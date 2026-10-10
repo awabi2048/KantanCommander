@@ -75,7 +75,8 @@ class DslParser(text: String) {
         DslTokenKind.CONTINUE -> { val t = advance(); expectSemicolon(); DslContinue(t.pos) }
         DslTokenKind.RETURN -> parseReturn()
         DslTokenKind.CALL -> parseCall()
-        DslTokenKind.WORLD -> parseAssign(worldTarget = true)
+        DslTokenKind.DEL -> parseDelete()
+        DslTokenKind.WORLD -> parseAssign(parseAssignTarget())
         DslTokenKind.IDENT -> parseIdentStatement()
         DslTokenKind.SEMICOLON -> error(peek().pos, "文が必要です")
         else -> error(peek().pos, "文を解釈できません（'${peek().text}'）")
@@ -83,6 +84,9 @@ class DslParser(text: String) {
 
     private fun parseVarDecl(): DslStmt {
         val head = advance()
+        // `var world.x: T` はワールド変数の新規定義です。
+        val world = accept(DslTokenKind.WORLD) != null
+        if (world) expect(DslTokenKind.DOT, "var world の後に '.変数名' を書いてください")
         val name = expect(DslTokenKind.IDENT, "var の後に変数名を書いてください").text
         expect(DslTokenKind.COLON, "変数名の後に ':' を書いてください")
         val typeTok = expect(DslTokenKind.IDENT, "':' の後に型名を書いてください")
@@ -90,7 +94,7 @@ class DslParser(text: String) {
         expect(DslTokenKind.ASSIGN, "型名の後に '= 初期値' を書いてください（宣言のみは認めません）")
         val value = parseExpr()
         expectSemicolon()
-        return DslVarDecl(name, type, value, head.pos)
+        return DslVarDecl(name, type, value, world, head.pos)
     }
 
     private fun dslType(token: DslToken): ValueType {
@@ -99,16 +103,49 @@ class DslParser(text: String) {
         return type
     }
 
-    /** `world.<name> op expr;` または `ident op expr;` の代入文です。 */
-    private fun parseAssign(worldTarget: Boolean): DslStmt {
-        val head = advance()
-        val target: DslAssignTarget = if (worldTarget) {
-            expect(DslTokenKind.DOT, "world の後に '.変数名' を書いてください")
-            val name = expect(DslTokenKind.IDENT, "world. の後に変数名を書いてください")
-            DslAssignTarget.WorldVariable(name.text, head.pos)
-        } else {
-            DslAssignTarget.Variable(head.text, head.pos)
+    /**
+     * 代入・削除の対象を読みます。
+     * `x`・`world.x`・`expr.vars.name`（エンティティ変数）のいずれかです。
+     * 対象式として呼出し形（`target(...)`）も受理します。
+     */
+    private fun parseAssignTarget(): DslAssignTarget {
+        val head = peek()
+        return when (head.kind) {
+            DslTokenKind.WORLD -> {
+                advance()
+                expect(DslTokenKind.DOT, "world の後に '.変数名' を書いてください")
+                val name = expect(DslTokenKind.IDENT, "world. の後に変数名を書いてください")
+                DslAssignTarget.WorldVariable(name.text, head.pos)
+            }
+            DslTokenKind.IDENT -> {
+                val primary = parseIdentExpr()
+                parseAssignTargetTail(primary, head.pos)
+            }
+            else -> error(head.pos, "代入先は変数名・world.変数名・対象.vars.変数名のいずれかです")
         }
+    }
+
+    /** 先頭式の直後が `.vars.<name>` かを判定します（エンティティ変数アクセスの印）。 */
+    private fun isEntityVarAccess(): Boolean =
+        peekKind() == DslTokenKind.DOT &&
+            peekKind(1) == DslTokenKind.IDENT &&
+            tokens.getOrNull(index + 1)?.text == "vars" &&
+            peekKind(2) == DslTokenKind.DOT
+
+    private fun parseAssignTargetTail(primary: DslExpr, pos: DslPos): DslAssignTarget {
+        if (isEntityVarAccess()) {
+            advance() // .
+            advance() // vars
+            advance() // .
+            val name = expect(DslTokenKind.IDENT, "'.vars.' の後に変数名を書いてください")
+            return DslAssignTarget.EntityVariable(primary, name.text, pos)
+        }
+        if (primary is DslVarRef) return DslAssignTarget.Variable(primary.name, primary.pos)
+        error(primary.pos, "代入先は変数名・world.変数名・対象.vars.変数名のいずれかです")
+    }
+
+    /** `target op expr;` の演算子と値部分です。 */
+    private fun parseAssign(target: DslAssignTarget): DslStmt {
         val op = when (peekKind()) {
             DslTokenKind.ASSIGN -> DslAssignOp.ASSIGN
             DslTokenKind.PLUS_ASSIGN -> DslAssignOp.ADD
@@ -121,20 +158,33 @@ class DslParser(text: String) {
         advance()
         val value = parseExpr()
         expectSemicolon()
-        return DslAssign(target, op, value, head.pos)
+        return DslAssign(target, op, value, target.pos)
     }
 
-    /** 識別子で始まる文です。`ident(...)` の命令呼出しか `ident op expr` の代入です。 */
+    /** `del <target>;` の削除文です。 */
+    private fun parseDelete(): DslStmt {
+        val head = advance()
+        val target = parseAssignTarget()
+        expectSemicolon()
+        return DslDelete(target, head.pos)
+    }
+
+    /**
+     * 識別子で始まる文です。`ident(...)` の命令呼出し、`ident op expr` の代入、
+     * `expr.vars.name op expr` のエンティティ変数代入のいずれかです。
+     */
     private fun parseIdentStatement(): DslStmt {
-        return when (peekKind(1)) {
-            DslTokenKind.LPAREN -> {
-                val name = advance()
-                val args = parseArgs()
+        val head = peek()
+        if (peekKind(1) == DslTokenKind.LPAREN) {
+            val primary = parseIdentExpr()
+            if (isEntityVarAccess()) return parseAssign(parseAssignTargetTail(primary, head.pos))
+            if (primary is DslCallExpr) {
                 expectSemicolon()
-                DslCallStmt(name.text, args, name.pos)
+                return DslCallStmt(primary.name, primary.args, primary.pos)
             }
-            else -> parseAssign(worldTarget = false)
+            error(peek().pos, "文を解釈できません（'${peek().text}'）")
         }
+        return parseAssign(parseAssignTarget())
     }
 
     private fun parseIf(): DslStmt {
@@ -298,10 +348,16 @@ class DslParser(text: String) {
                         expect(DslTokenKind.RPAREN, "')' を書いてください")
                         a
                     } else null
-                    DslPropertyRead(expr, name.text, arg, dot.pos)
+                    // `loop.count` は実行コンテキスト供給のシステム変数であり、
+                    // 詳細値参照ではなく専用の式として読みます。
+                    if (expr is DslVarRef && expr.name == "loop" && name.text == "count" && arg == null) {
+                        DslLoopCount(dot.pos)
+                    } else {
+                        DslPropertyRead(expr, name.text, arg, dot.pos)
+                    }
                 }
                 // `<expr> ~x ~y ~z` は変数基準の位置リテラルです。
-                DslTokenKind.TILDE, DslTokenKind.CARET -> parsePositionLiteral(expr)
+                DslTokenKind.TILDE, DslTokenKind.CARET -> parsePositionOrComponent(expr)
                 else -> return expr
             }
         }
@@ -331,7 +387,7 @@ class DslParser(text: String) {
             expect(DslTokenKind.RPAREN, "')' を書いてください")
             inner
         }
-        DslTokenKind.TILDE, DslTokenKind.CARET -> parsePositionLiteral(null)
+        DslTokenKind.TILDE, DslTokenKind.CARET -> parsePositionOrComponent(null)
         else -> error(peek().pos, "式を解釈できません（'${peek().text}'）")
     }
 
@@ -348,6 +404,8 @@ class DslParser(text: String) {
                 DslConst("gamemode", member.text, name.pos)
             }
             peekKind() == DslTokenKind.LPAREN -> DslCallExpr(name.text, parseArgs(), name.pos)
+            // 実行コンテキストが供給する予約位置式です（制御ブロック位置・捕捉位置）。
+            name.text == "disk" || name.text == "captured" -> DslSpecialPosition(name.text, name.pos)
             else -> DslVarRef(name.text, name.pos)
         }
     }
@@ -370,14 +428,27 @@ class DslParser(text: String) {
     }
 
     /**
-     * 位置リテラル `成分 成分 成分` を読みます。
-     * 各成分は `数値`（絶対）・`~数値`（相対）・`^数値`（ローカル）で、
-     * `~`/`^` 単独は 0 とします。必ず3成分を要求します。
+     * `~`/`^` で始まる式を読みます。後続が成分（`~x`・`^x`・`数値`・`-数値`）なら
+     * 3成分の位置リテラル、そうでなければ単一成分（`~12`・`^0`）です。
+     * 単一成分は `location(yaw = ~90)` のような引数値でのみ意味を持ちます。
+     * `base` がある場合は必ず3成分の位置リテラルとして読みます。
      */
-    private fun parsePositionLiteral(base: DslExpr?): DslPositionLiteral {
+    private fun parsePositionOrComponent(base: DslExpr?): DslExpr {
         val start = peek().pos
-        val components = (1..3).map { parsePositionComponent(it) }
-        return DslPositionLiteral(base, components, base?.pos ?: start)
+        val first = parsePositionComponent(1)
+        return when (peekKind()) {
+            DslTokenKind.TILDE, DslTokenKind.CARET, DslTokenKind.NUMBER, DslTokenKind.MINUS -> {
+                val second = parsePositionComponent(2)
+                val third = parsePositionComponent(3)
+                DslPositionLiteral(base, listOf(first, second, third), base?.pos ?: start)
+            }
+            else -> {
+                if (base != null) {
+                    error(peek().pos, "位置リテラルは3成分必要です")
+                }
+                DslComponentExpr(first.semantics, first.value, start)
+            }
+        }
     }
 
     private fun parsePositionComponent(ordinal: Int): DslPositionComponent {
