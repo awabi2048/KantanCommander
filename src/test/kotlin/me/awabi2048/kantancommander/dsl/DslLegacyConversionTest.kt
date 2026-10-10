@@ -41,19 +41,52 @@ class DslLegacyConversionTest {
 
         // ScriptStore は検証失敗ファイルを隔離先へ移動するため、
         // 原本を触らないようコピーした一時ディレクトリで読み込みます。
-        val work = Files.createTempDirectory("dsl-legacy-").toFile()
-        try {
+        fun copyCorpus(target: File) = try {
             sourceDir.listFiles { f -> f.isFile && f.extension.equals("json", true) }
-                ?.forEach { it.copyTo(work.resolve(it.name), overwrite = true) }
+                ?.forEach { it.copyTo(target.resolve(it.name), overwrite = true) }
+            true
         } catch (e: Exception) {
             assumeTrue(false, "サンプルコピーに失敗しました: ${e.message}")
         }
 
-        val store = ScriptStore(work, Logger.getLogger("dsl-legacy-test"))
+        // ワールド変数の型表は本番では変数定義レジストリから供給されます。
+        // テストでは別プログラムが定義するワールド変数を含むため、先に
+        // スクラッチ用の読込で型表を推論してから変換対象の store を作ります。
+        val scratch = Files.createTempDirectory("dsl-legacy-scratch-").toFile()
+        copyCorpus(scratch)
+        val worldTypes = loadWorldTypes(
+            ScriptStore(scratch, Logger.getLogger("dsl-legacy-scratch")).listAll(),
+        )
+
+        val work = Files.createTempDirectory("dsl-legacy-").toFile()
+        copyCorpus(work)
+        val store = ScriptStore(
+            work,
+            Logger.getLogger("dsl-legacy-test"),
+            worldTypes = { worldTypes },
+        )
         val scripts = store.listAll()
         assertTrue(scripts.isNotEmpty(), "読み込めたサンプルが0件です")
 
-        val worldTypes = loadWorldTypes(scripts)
+        // 起動時移行の確認: 変換可能なプログラムは全件 .kcp へ変換され、
+        // 旧JSONは converted-json/ へ退避されていることを検証します。
+        // 残った旧JSONは「読込は可能だが DSL へ写像できない」既存不正データに
+        // 限られます（警告を残してその場に置き、旧形式として読込を続けます）。
+        val leftoverJson = work.listFiles { f -> f.isFile && f.extension.equals("json", true) }
+            .orEmpty()
+            .filter { runCatching { UUID.fromString(it.nameWithoutExtension) }.isSuccess }
+        val unconvertible = leftoverJson.map { it.name }
+        println("=== DSL変換不能の旧JSON（残置）: ${unconvertible.size}件 ===")
+        val missingKcp = scripts
+            .filter { s -> leftoverJson.none { it.nameWithoutExtension == s.id.toString() } }
+            .map { it.id }
+            .filter { id -> !work.resolve("$id.kcp").isFile }
+            .map(UUID::toString)
+        assertEquals(
+            emptyList<String>(), missingKcp,
+            "読み込まれたのに .kcp が存在しないスクリプトがあります",
+        )
+
         val byId = scripts.associateBy { it.id }
         // 名前の一意なものだけ名前解決へ載せ、重複時はUUID表記へ退避します。
         val uniqueNames = scripts.map { it.name }.toSet()

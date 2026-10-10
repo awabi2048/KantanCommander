@@ -648,14 +648,24 @@ class ScriptStore(
                     return@forEach
                 }
                 val script = cached(id) ?: return@forEach
-                val canonical = runCatching { canonicalized(script) }.getOrNull()
-                val text = canonical?.let { runCatching { canonicalText(it) }.getOrNull() }
-                if (text == null) {
-                    logger.warning(
-                        ".kcp への変換に失敗したため旧JSONを残します: ${file.absolutePath}"
-                    )
-                    return@forEach
-                }
+                val canonical = runCatching { canonicalized(script) }
+                    .getOrElse { failure ->
+                        logger.log(
+                            Level.WARNING,
+                            ".kcp への変換に失敗したため旧JSONを残します: ${file.absolutePath}",
+                            failure,
+                        )
+                        return@forEach
+                    }
+                val text = runCatching { canonicalText(canonical) }
+                    .getOrElse { failure ->
+                        logger.log(
+                            Level.WARNING,
+                            ".kcp への変換に失敗したため旧JSONを残します: ${file.absolutePath}",
+                            failure,
+                        )
+                        return@forEach
+                    }
                 runCatching { atomicWrite(this.file(id), text) }
                     .onSuccess {
                         archiveLegacyJson(file)
