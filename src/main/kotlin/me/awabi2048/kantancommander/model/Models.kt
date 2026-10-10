@@ -200,6 +200,12 @@ data class CommandNode(
      * nullableにし、読み込み直後はCommandSettingsModelが値から安全に推定します。
      */
     var configuredFields: MutableSet<String>? = null,
+    /**
+     * DSL の `//` コメントです。文が生成する先頭ノードへ付記され、DSL 印刷時に
+     * `//` 行として文の直前へ再出力されます。GUI からは編集対象外の注記として、
+     * ノードが残る限り保持されます。
+     */
+    var comment: String? = null,
     var next: UUID? = null,
     var trueNext: UUID? = null,
     var falseNext: UUID? = null,

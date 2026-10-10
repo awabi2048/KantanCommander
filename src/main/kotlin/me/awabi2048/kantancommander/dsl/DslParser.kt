@@ -11,13 +11,30 @@ import me.awabi2048.kantancommander.model.ValueType
  * 構文と形状だけを検証します。失敗は DslParseException を1件投げます。
  */
 class DslParser(text: String) {
-    private val tokens: List<DslToken> = DslLexer(text).tokenize()
+    /** 行番号ごとのコメント本文です。文への所属が決まるまでここで保持します。 */
+    private val comments = sortedMapOf<Int, String>()
+    private val tokens: List<DslToken>
     private var index = 0
+    /** 最後に消費したトークンの行です。コメントの所属先を行番号で判定するために使います。 */
+    private var lastLine = 0
+    /** 文の pos をキーとするコメント一覧です。 */
+    private val stmtComments = mutableMapOf<DslPos, MutableList<String>>()
+    /** 次の文へ引き継ぐ、未所属のコメントです。 */
+    private val pending = mutableListOf<String>()
+
+    init {
+        tokens = DslLexer(text).tokenize().filter {
+            if (it.kind == DslTokenKind.COMMENT) {
+                comments[it.pos.line] = it.text
+                false
+            } else true
+        }
+    }
 
     private fun peek(): DslToken = tokens[index]
     private fun peekKind(): DslTokenKind = peek().kind
     private fun peekKind(offset: Int): DslTokenKind = tokens.getOrNull(index + offset)?.kind ?: DslTokenKind.EOF
-    private fun advance(): DslToken = tokens[index++]
+    private fun advance(): DslToken = tokens[index++].also { lastLine = it.pos.line }
     private fun accept(kind: DslTokenKind): DslToken? = if (peekKind() == kind) advance() else null
     private fun expect(kind: DslTokenKind, message: String): DslToken =
         accept(kind) ?: error(peek().pos, message)
@@ -46,7 +63,25 @@ class DslParser(text: String) {
         while (peekKind() != DslTokenKind.EOF) {
             body += parseStatement()
         }
-        return DslProgram(name, decls, body, head.pos)
+        // 末尾に残ったコメント（本文の最後の文以降）は最後の文へ寄せて保持します。
+        // 文が1つも無いプログラムではコメントの所属先が無いため保持しません。
+        if (comments.isNotEmpty() && body.isNotEmpty()) {
+            stmtComments.getOrPut(body.last().pos) { mutableListOf() } += comments.values
+            comments.clear()
+        }
+        return DslProgram(name, decls, body, head.pos, stmtComments)
+    }
+
+    /**
+     * 次のトークンの手前までにある未消費コメントを pending へ集めます。
+     * 宣言部やファイル先頭のコメントは、最初の文の直前に現れるものとして
+     * ここで一緒に拾われます。
+     */
+    private fun collectLeading() {
+        val nextLine = peek().pos.line
+        comments.keys
+            .filter { it in (lastLine + 1) until nextLine }
+            .forEach { pending += comments.remove(it)!! }
     }
 
     /** `import world;` の宣言です。現状の宣言対象は world のみです。 */
@@ -105,6 +140,8 @@ class DslParser(text: String) {
             if (peekKind() == DslTokenKind.EOF) error(peek().pos, "ブロックが閉じられていません")
             stmts += parseStatement()
         }
+        // ブロック末尾の未所属コメントは、次の文へ引き継いで保持します。
+        collectLeading()
         advance()
         return stmts
     }
@@ -114,7 +151,26 @@ class DslParser(text: String) {
         return parseStatements(DslTokenKind.RBRACE)
     }
 
-    private fun parseStatement(): DslStmt = when (peekKind()) {
+    /**
+     * 文を読み、その文へ所属するコメントを解決します。
+     * 文の前行にあるコメントは先行コメント、文と同じ行の末尾コメントは
+     * その文のコメントとして保持します（印刷時はいずれも文の直前へ出ます）。
+     */
+    private fun parseStatement(): DslStmt {
+        collectLeading()
+        // この文の手前までのコメントを確定します。内側の文を読む再帰へ
+        // 引き継がないよう、いったん pending から切り離します。
+        val mine = pending.toMutableList()
+        pending.clear()
+        val stmt = parseStatementBody()
+        comments.remove(lastLine)?.let { mine += it }
+        if (mine.isNotEmpty()) {
+            stmtComments.getOrPut(stmt.pos) { mutableListOf() } += mine
+        }
+        return stmt
+    }
+
+    private fun parseStatementBody(): DslStmt = when (peekKind()) {
         DslTokenKind.VAR -> parseVarDecl()
         DslTokenKind.IF -> parseIf()
         DslTokenKind.REPEAT -> parseRepeat()

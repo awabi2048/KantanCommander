@@ -71,8 +71,8 @@ class DslIOTest {
         val refreshed = io.refreshDsl(script)
         assertTrue(refreshed.dsl!!.contains("program \"r\""))
         assertTrue(refreshed.dsl!!.contains("var x: number = 1;"))
-        // 元テキスト（コメント入り）は正規形へ置き換わります。
-        assertTrue(!refreshed.dsl!!.contains("//"))
+        // コメントは文へ所属するため、正規形へ置き換わっても保持されます。
+        assertTrue(refreshed.dsl!!.contains("// コメントは正規形で消えます"))
     }
 
     @Test

@@ -12,7 +12,7 @@ enum class DslTokenKind {
     ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, PERCENT_ASSIGN,
     EQ, NE, LT, LE, GT, GE, AND, OR, NOT,
     PLUS, MINUS, STAR, SLASH, PERCENT,
-    TILDE, CARET, EOF,
+    TILDE, CARET, COMMENT, EOF,
 }
 
 data class DslToken(val kind: DslTokenKind, val text: String, val pos: DslPos)
@@ -22,7 +22,7 @@ data class DslToken(val kind: DslTokenKind, val text: String, val pos: DslPos)
  *
  * 文字列リテラルは `STRING_START` …（`STRING_TEXT` または `INTERP_START` 式 `INTERP_END`）…
  * `STRING_END` の並びで出し、補間式はパーサーへそのまま渡せる通常トークンとして流します。
- * `#` と `//` の行コメントは読み飛ばします。
+ * `#` と `//` の行コメントは COMMENT トークンとして出し、パーサーが文への所属を解決します。
  */
 class DslLexer(private val text: String) {
     private var index = 0
@@ -68,8 +68,8 @@ class DslLexer(private val text: String) {
                 if (index >= text.length) break
                 when (val c = text[index]) {
                     ' ' , '\t', '\r', '\n' -> advance()
-                    '#' -> skipLineComment()
-                    '/' -> if (peekChar(1) == '/') skipLineComment() else lexSymbol()
+                    '#' -> lexComment()
+                    '/' -> if (peekChar(1) == '/') lexComment() else lexSymbol()
                     '"' -> {
                         stringStartPos = pos()
                         emit(DslTokenKind.STRING_START, "\"")
@@ -85,8 +85,17 @@ class DslLexer(private val text: String) {
         return tokens
     }
 
-    private fun skipLineComment() {
-        while (index < text.length && text[index] != '\n') advance()
+    /** `#`・`//` の行コメントを COMMENT トークンとして出します。本文は両端の空白を除きます。 */
+    private fun lexComment() {
+        val at = pos()
+        advance()
+        if (text.getOrNull(index - 1) == '/') advance()
+        val sb = StringBuilder()
+        while (index < text.length && text[index] != '\n') {
+            sb.append(text[index])
+            advance()
+        }
+        emit(DslTokenKind.COMMENT, sb.toString().trim(), at)
     }
 
     private fun lexNumber() {

@@ -70,7 +70,7 @@ class DslCompiler(
     fun compile(program: DslProgram): DslCompileResult {
         val exprTypes = mutableMapOf<DslExpr, ValueType>()
         DslChecker(worldTypes, exprTypes).check(program)
-        val builder = Builder(exprTypes)
+        val builder = Builder(exprTypes, program.comments)
         val graph = builder.build(program)
         builder.assignMergePairs()
         return DslCompileResult(
@@ -81,7 +81,10 @@ class DslCompiler(
         )
     }
 
-    private inner class Builder(private val exprTypes: Map<DslExpr, ValueType>) {
+    private inner class Builder(
+        private val exprTypes: Map<DslExpr, ValueType>,
+        private val comments: Map<DslPos, List<String>>,
+    ) {
         val graph = CommandGraph()
         var tempCounter = 0
         /** 生成順の CONDITION・MERGE 一覧です。合流対応の割当てに使います。 */
@@ -182,17 +185,25 @@ class DslCompiler(
             return StmtChain(entry, exitJunction, terminals)
         }
 
-        private fun compileStmt(stmt: DslStmt): StmtChain = when (stmt) {
-            is DslVarDecl -> lowerVarDecl(stmt)
-            is DslAssign -> lowerAssign(stmt)
-            is DslIf -> lowerIf(stmt)
-            is DslRepeat -> lowerRepeat(stmt)
-            is DslBreak -> terminalChain(node(CommandType.BREAK))
-            is DslContinue -> terminalChain(node(CommandType.CONTINUE))
-            is DslReturn -> lowerReturn(stmt)
-            is DslCallStmt -> lowerCall(stmt)
-            is DslCallDisk -> lowerCallDisk(stmt)
-            is DslDelete -> lowerDelete(stmt)
+        private fun compileStmt(stmt: DslStmt): StmtChain {
+            val chain = when (stmt) {
+                is DslVarDecl -> lowerVarDecl(stmt)
+                is DslAssign -> lowerAssign(stmt)
+                is DslIf -> lowerIf(stmt)
+                is DslRepeat -> lowerRepeat(stmt)
+                is DslBreak -> terminalChain(node(CommandType.BREAK))
+                is DslContinue -> terminalChain(node(CommandType.CONTINUE))
+                is DslReturn -> lowerReturn(stmt)
+                is DslCallStmt -> lowerCall(stmt)
+                is DslCallDisk -> lowerCallDisk(stmt)
+                is DslDelete -> lowerDelete(stmt)
+            }
+            // 文のコメントはその文が生成する先頭ノードへ付記し、ノードが
+            // 残る限り DSL 印刷で `//` 行として復元されるようにします。
+            comments[stmt.pos]?.takeIf { it.isNotEmpty() }?.let { texts ->
+                chain.entry?.let { graph.nodes[it]?.comment = texts.joinToString("\n") }
+            }
+            return chain
         }
 
         // ---- 変数宣言・代入 ----

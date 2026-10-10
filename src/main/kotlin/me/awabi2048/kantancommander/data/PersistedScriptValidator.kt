@@ -88,6 +88,7 @@ object PersistedScriptValidator {
             }
         }
         optionalStringArray(node, "configuredFields", path, errors)
+        optionalString(node, "comment", path, errors)
         listOf("next", "trueNext", "falseNext", "pairedNodeId").forEach {
             optionalUuid(node, it, path, errors)
         }

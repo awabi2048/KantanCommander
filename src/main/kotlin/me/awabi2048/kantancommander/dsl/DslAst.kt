@@ -28,6 +28,12 @@ data class DslProgram(
     val decls: List<DslDecl>,
     val body: List<DslStmt>,
     override val pos: DslPos,
+    /**
+     * 文へ所属する `//` コメントです。キーは所属文の pos、値はコメント本文
+     * （`//` 記号を除く、出現順）です。宣言部・ファイル末尾のコメントは
+     * 最寄りの文へ寄せて保持します。
+     */
+    val comments: Map<DslPos, List<String>> = emptyMap(),
 ) : DslNode
 
 // ---- 宣言部 ----

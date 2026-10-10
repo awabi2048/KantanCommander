@@ -173,6 +173,7 @@ class DslPrinter(
                 if (guard-- <= 0) throw DslPrintException("ノード走査が上限を超えました（循環の可能性）")
                 val n = graph.nodes[cur] ?: throw DslPrintException("不明なノード参照です: $cur")
                 if (n.type == CommandType.FOR_END && endAtForEnd) return cur
+                emitComments(n)
                 cur = when (n.type) {
                     CommandType.MERGE -> n.next
                     CommandType.FOR_END -> throw DslPrintException("FOR_END が対応ループの外側に現れました")
@@ -193,6 +194,11 @@ class DslPrinter(
                 }
             }
             return cur
+        }
+
+        /** ノードへ付随する `//` コメントを文の直前へ出力します。 */
+        private fun emitComments(n: CommandNode) {
+            n.comment?.lines()?.forEach { text -> line(if (text.isEmpty()) "//" else "// $text") }
         }
 
         // ---- 変数（TEMP_SET / VARIABLE） ----
