@@ -4,8 +4,16 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.dsl.DslCompiler
+import me.awabi2048.kantancommander.dsl.DslDiskLink
+import me.awabi2048.kantancommander.dsl.DslParser
+import me.awabi2048.kantancommander.dsl.DslPrinter
+import me.awabi2048.kantancommander.dsl.DslProgram
+import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -52,8 +60,25 @@ class ScriptStore(
      * プラグインが配置台帳の判定を注入します。
      */
     private val isPlacedScript: (UUID) -> Boolean = { false },
+    /**
+     * DSL 正本の読込コンパイルで使うワールド変数の型表です。
+     * ワールド定義はワールドごとに管理されるため、呼び出し側は全ワールドの
+     * 定義の和集合を供給します（[WorldVariableStore.allDefinitionTypes]）。
+     */
+    private val worldTypes: () -> Map<String, ValueType> = { emptyMap() },
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
+    /**
+     * DSL 正本の読込コンパイルで `call` 解決が同じディスクへ戻る循環を検出する
+     * 作業集合です。検出時は保存済みグラフを呼出し先スナップショットとして
+     * 使い、循環呼出しの可否判定は検証層へ委ねます。
+     */
+    private val dslCompiling = ThreadLocal.withInitial { mutableSetOf<UUID>() }
+    /**
+     * 初回自動変換の進行中集合です。変換中の `call` 名前解決が同じファイルを
+     * 再読込した場合の再入を防ぎます（再入側はグラフ形式のまま返します）。
+     */
+    private val dslConverting = ThreadLocal.withInitial { mutableSetOf<UUID>() }
     private val relationFile = dir.resolve("relations.json")
     private val libraryPrograms = linkedMapOf<UUID, LinkedHashSet<UUID>>()
     private val historyPrograms = linkedMapOf<UUID, LinkedHashSet<UUID>>()
@@ -261,6 +286,15 @@ class ScriptStore(
             // 漏れが生じるため、保存正本を確定するこの一点で差分を記録します。
             script.contentModified = true
         }
+        // 保存では正規形 DSL を正本として書きます。DSL へ写像できないグラフは
+        // 従来形式のまま残し、次回読込の自動変換へ回します。
+        script.dsl = runCatching {
+            DslPrinter(::diskName).print(script.graph, script.name)
+        }.onFailure {
+            logger.warning(
+                "DSL への変換に失敗したためグラフ形式で保存します: ${script.name} (${it.message})"
+            )
+        }.getOrNull()
         // 保存成功ごとに単調増加させ、入力画面開始時の正本世代と比較できるようにします。
         script.revision = (previous?.revision ?: script.revision).inc()
         atomicWrite(file(script.id), gson.toJson(script))
@@ -268,6 +302,34 @@ class ScriptStore(
         rejectedFiles.remove(script.id)
         cache[script.id] = script.deepCopy()
         editorId?.let { recordHistory(it, script.id) }
+        if (previous != null && previous.name != script.name) {
+            propagateDiskRename(script.id)
+        }
+    }
+
+    /**
+     * ディスク名の変更を、`call "name"` で参照する全プログラムの DSL 正本へ
+     * 伝播します。DSL テキストはディスク名を正本として参照するため、保存済み
+     * テキストだけを最新名へ書き換えます（グラフ・revision・内容編集フラグは
+     * 変わりません）。
+     */
+    private fun propagateDiskRename(renamedId: UUID) {
+        listAll().filter { candidate ->
+            candidate.id != renamedId && candidate.graph.nodes.values.any {
+                it.type == CommandType.DISK_CALL &&
+                    it.string("diskId") == renamedId.toString()
+            }
+        }.forEach { caller ->
+            withScriptLock(caller.id) {
+                val target = file(caller.id)
+                if (!target.isFile) return@withScriptLock
+                caller.dsl = runCatching {
+                    DslPrinter(::diskName).print(caller.graph, caller.name)
+                }.getOrNull()
+                atomicWrite(target, gson.toJson(caller))
+                cache[caller.id] = caller.deepCopy()
+            }
+        }
     }
 
     fun delete(id: UUID) = withScriptLock(id) {
@@ -537,10 +599,64 @@ class ScriptStore(
             }
             return null
         }
+        // `dsl` 欄を持たない旧保存は初回読込時に DSL へ自動変換して書き戻し、
+        // 以後は DSL を正本として扱います。DSL へ写像できない構造は従来形式の
+        // まま維持し、警告だけを記録します。
+        if (loaded.dsl == null && dslConverting.get().add(id)) {
+            try {
+                convertToCanonicalDsl(loaded, target)
+            } finally {
+                dslConverting.get().remove(id)
+            }
+        }
         rejectedFiles.remove(id)
         cache[id] = loaded
         return loaded
     }
+
+    /** 旧形式の読込済みスクリプトへ正規形 DSL を生成して `dsl` 欄を書き戻します。 */
+    private fun convertToCanonicalDsl(script: DiskScript, target: File) {
+        val dsl = runCatching { DslPrinter(::diskName).print(script.graph, script.name) }
+            .onFailure {
+                logger.warning(
+                    "DSL へ変換できないためグラフ形式を維持します: ${script.name} (${it.message})"
+                )
+            }
+            .getOrNull() ?: return
+        script.dsl = dsl
+        atomicWrite(target, gson.toJson(script))
+    }
+
+    /**
+     * `dsl` 欄の DSL テキストを CommandGraph へ再コンパイルします。
+     * 読込時の正本処理であり、失敗は呼出し側で破損データとして隔離されます。
+     * `call` の参照先グラフは現在の正本（DSL 適用済み）から取ります。
+     */
+    private fun compileCanonicalDsl(script: DiskScript, program: DslProgram): CommandGraph {
+        if (!dslCompiling.get().add(script.id)) {
+            // `call` 解決がこのディスクへ戻ってきた循環です。保存済みグラフを
+            // スナップショットとして返し、循環可否は検証層へ委ねます。
+            return script.graph
+        }
+        try {
+            return DslCompiler(worldTypes(), ::resolveDiskLink).compile(program)
+        } finally {
+            dslCompiling.get().remove(script.id)
+        }
+    }
+
+    /**
+     * `call "<name>"` の対象ディスクを名前または UUID で解決します。
+     * スナップショットには解決済み正本のグラフをそのまま使います。
+     */
+    private fun resolveDiskLink(name: String): DslDiskLink? {
+        val byUuid = runCatching { UUID.fromString(name) }.getOrNull()?.let(::cached)
+        val target = byUuid ?: listAll().firstOrNull { it.name == name } ?: return null
+        return DslDiskLink(target.id, target.graph, target.arguments)
+    }
+
+    /** DISK_CALL の diskId を現在のプログラム名へ逆引きします（DSL 印刷用）。 */
+    private fun diskName(id: UUID): String? = cached(id)?.name
 
     private fun DiskScript.deepCopy(): DiskScript = copy(
         // TimerSettingは可変データなので、グラフだけをコピーするとload()後の
@@ -644,8 +760,24 @@ class ScriptStore(
                     "${file.absolutePath} (${limitViolations.joinToString("; ")})"
             )
         }
-        // 旧形式は読み込み不可のため書き戻し移行は行いません。
-        // 現行形式のみを正本として扱います。
+        // `dsl` 欄を持つ保存形式は DSL が正本です。graph 欄は派生キャッシュ
+        // として扱い、読込では DSL から再コンパイルしたグラフを採用します。
+        // コンパイル失敗（手編集の誤記・参照先の削除等）では警告を残して
+        // 保存済みグラフへフォールバックし、プログラム自体は読み込み可能に
+        // 保ちます。次回保存で正規形へ自動修復されます。
+        script.dsl?.let { dsl ->
+            runCatching {
+                val program = DslParser.parse(dsl)
+                script.graph = compileCanonicalDsl(script, program)
+                // DSL 正本では program 宣言名がプログラム名の正本です。
+                script.name = program.name
+            }.onFailure {
+                logger.warning(
+                    "DSL 正本のコンパイルに失敗したため保存済みグラフを使います: " +
+                        "${file.name} (${it.message})"
+                )
+            }
+        }
         script
     } catch (error: Exception) {
         quarantine(

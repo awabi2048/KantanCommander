@@ -434,6 +434,9 @@ class KantanCommanderPlugin : JavaPlugin() {
             isPlacedScript = { scriptId ->
                 ::placements.isInitialized && placements.findByScript(scriptId).isNotEmpty()
             },
+            // DSL 正本の読込コンパイルは編集対象ワールドを持たないため、
+            // ワールド変数の参照可否は全ワールドの定義の和集合で判定します。
+            worldTypes = { variables.allDefinitionTypes() },
         )
         exporter = VanillaDatapackExporter(
             scripts,

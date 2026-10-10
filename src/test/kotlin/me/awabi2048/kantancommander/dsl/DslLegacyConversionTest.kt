@@ -107,6 +107,56 @@ class DslLegacyConversionTest {
         )
     }
 
+    @Test
+    fun `初回読込でDSLへ変換書き戻しされ次回読込はDSLから復元される`() {
+        assumeTrue(sourceDir.isDirectory, "サンプルディレクトリがありません: $LEGACY_DIR")
+
+        val work = Files.createTempDirectory("dsl-legacy-store-").toFile()
+        try {
+            sourceDir.listFiles { f -> f.isFile && f.extension.equals("json", true) }
+                ?.forEach { it.copyTo(work.resolve(it.name), overwrite = true) }
+        } catch (e: Exception) {
+            assumeTrue(false, "サンプルコピーに失敗しました: ${e.message}")
+        }
+
+        // 初回読込: グラフのみの旧JSONへ dsl 欄が書き戻されることを確認します。
+        val first = ScriptStore(work, Logger.getLogger("dsl-legacy-store"))
+        val scripts = first.listAll()
+        assumeTrue(scripts.isNotEmpty())
+        val worldTypes = loadWorldTypes(scripts)
+        val checked = scripts.filter {
+            it.dsl != null && ExecutableScriptValidator.validate(it).isEmpty()
+        }.take(10)
+        assumeTrue(checked.isNotEmpty(), "DSL へ変換された有効サンプルがありません")
+        checked.forEach { script ->
+            val file = work.resolve("${script.id}.json")
+            assertTrue(
+                file.readText(Charsets.UTF_8).contains("\"dsl\""),
+                "初回読込で dsl 欄が書き戻されていません: ${script.name}",
+            )
+        }
+        val expected = checked.associate { it.id to it.dsl!! }
+
+        // 二度目の読込は dsl 欄から再コンパイルし、同じ意味内容を持つことを
+        // 確認します（新しい ScriptStore でキャッシュを持ち越しません）。
+        val second = ScriptStore(work, Logger.getLogger("dsl-legacy-store"))
+        checked.forEach { script ->
+            val reloaded = second.load(script.id)
+                ?: error("DSL 正本から復元できません: ${script.name}")
+            assertEquals(
+                signatures(script.graph).toSet(),
+                signatures(reloaded.graph).toSet(),
+                "DSL 正本から復元したグラフの意味内容が一致しません: ${script.name}",
+            )
+            // 復元側を再印刷すると保存済みの dsl 欄と同じ正規形になることを確認します。
+            assertEquals(
+                expected[script.id],
+                DslPrinter({ id -> second.load(id)?.name }).print(reloaded.graph, reloaded.name),
+                "DSL 正本の再印刷が保存テキストと一致しません: ${script.name}",
+            )
+        }
+    }
+
     /**
      * 旧JSON → DSL → モデル → DSL の往復です。
      * 再コンパイル結果の構造・実行検証（旧グラフが不正な場合は実行検証を除く）、

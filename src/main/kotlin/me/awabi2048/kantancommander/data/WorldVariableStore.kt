@@ -93,6 +93,24 @@ class WorldVariableStore(
     fun definitions(worldId: UUID): Map<String, TypedValue> =
         state(worldId).definitions.mapValues { (_, value) -> value.copy() }
 
+    /**
+     * 全ワールドの変数定義を「名前→型」の表へまとめます。
+     * DSL 正本の読込コンパイルは編集対象ワールドを持たないため、
+     * ワールド変数の参照可否は全ワールドの定義の和集合で判定します。
+     */
+    fun allDefinitionTypes(): Map<String, me.awabi2048.kantancommander.model.ValueType> {
+        val result = mutableMapOf<String, me.awabi2048.kantancommander.model.ValueType>()
+        directory.listFiles { f -> f.isFile && f.extension.equals("json", true) }
+            ?.forEach { file ->
+                val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()
+                    ?: return@forEach
+                definitions(id).forEach { (name, value) ->
+                    result.putIfAbsent(name, value.type)
+                }
+            }
+        return result
+    }
+
     @Synchronized
     fun deleteWorld(worldId: UUID): Boolean {
         val cached = cache[worldId]
