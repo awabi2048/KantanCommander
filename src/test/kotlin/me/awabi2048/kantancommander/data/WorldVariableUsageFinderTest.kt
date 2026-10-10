@@ -76,7 +76,7 @@ class WorldVariableUsageFinderTest {
     }
 
     private fun script(name: String, graph: CommandGraph): DiskScript =
-        DiskScript(name = name, owner = owner, graph = graph)
+        DiskScript(name = name, graph = graph)
 
     private fun graph(vararg nodes: CommandNode): CommandGraph =
         CommandGraph(nodes = linkedMapOf<UUID, CommandNode>().apply {

@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.util.KcI18n
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
@@ -102,7 +103,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
             plugin.scripts.load(id)?.let { script ->
                 world.getBlockAt(placement.x, placement.y, placement.z)
-                    .setType(PlacedBlockMaterials.forTimer(script.timer.enabled), false)
+                    .setType(PlacedBlockMaterials.forTimer(script.trigger.normalized().kind == TriggerKind.TIMER), false)
             }
             // 新しい表示体を保存できてから古い表示体を消します。先に古い体を
             // 消すと、表示体スポーン／台帳保存の失敗時に配置だけが残ります。
@@ -187,7 +188,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         val loc = Location(world, placement.x + 0.5, placement.y + 0.05, placement.z + 0.5)
         val display = world.spawn(loc, BlockDisplay::class.java) {
             val script = plugin.scripts.load(placement.scriptId)
-            val displayMaterial = if (script?.timer?.enabled == true) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
+            val displayMaterial = if (script?.trigger?.normalized()?.kind == TriggerKind.TIMER) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
             it.block = Bukkit.createBlockData(displayMaterial)
             it.isGlowing = false
             // 設置後実体の名称をかんたんコマンダー制御ブロックへ統一する（浮遊表示はせず識別用に保持する）。

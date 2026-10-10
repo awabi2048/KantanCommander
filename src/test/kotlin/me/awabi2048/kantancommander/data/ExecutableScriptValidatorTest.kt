@@ -5,12 +5,12 @@ import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.ValueType
-import me.awabi2048.kantancommander.model.ActivationMode
-import me.awabi2048.kantancommander.model.TimerSetting
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.BlockOperationMode
@@ -24,7 +24,7 @@ import java.util.UUID
 class ExecutableScriptValidatorTest {
     @Test
     fun `incomplete command settings fail execution preflight`() {
-        val script = DiskScript(name = "incomplete", owner = UUID.randomUUID())
+        val script = DiskScript(name = "incomplete")
         GraphEditor.append(script.graph, CommandType.DISK_CALL)
         val ride = GraphEditor.append(script.graph, CommandType.ENTITY_ACTION)
         ride.params["other"] = ""
@@ -37,7 +37,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `structured errors carry the node and gui field keys`() {
-        val script = DiskScript(name = "structured", owner = UUID.randomUUID())
+        val script = DiskScript(name = "structured")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         val diskCall = GraphEditor.append(script.graph, CommandType.DISK_CALL)
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
@@ -65,7 +65,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `control block condition requires a configured redstone signal`() {
-        val script = DiskScript(name = "control-state", owner = UUID.randomUUID())
+        val script = DiskScript(name = "control-state")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
             params["subject"] = ConditionSubject.CONTROL_BLOCK.name
         }
@@ -96,7 +96,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `variable definitions support number and string values`() {
-        val script = DiskScript(name = "variable", owner = UUID.randomUUID())
+        val script = DiskScript(name = "variable")
         val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
         variable.params.putAll(
             mapOf(
@@ -112,7 +112,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `temporary references are available only after their definition`() {
-        val script = DiskScript(name = "temporary-order", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temporary-order")
         val display = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
             targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
             params["text"] = "%{message}%"
@@ -131,7 +131,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `temporary references defined on only one branch are unavailable after merge`() {
-        val script = DiskScript(name = "temporary-branch", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temporary-branch")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
             targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
         }
@@ -155,7 +155,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `temporary references defined on every branch retain their common type`() {
-        val script = DiskScript(name = "temporary-branch-common", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temporary-branch-common")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
             targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
         }
@@ -182,7 +182,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `temporary redefinition may change type on one execution path`() {
-        val script = DiskScript(name = "temporary-redefinition", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temporary-redefinition")
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "value"
             params["tempType"] = ValueType.STRING.name
@@ -204,7 +204,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `composite temporary values cannot be embedded in generic text`() {
-        val script = DiskScript(name = "temporary-composite-text", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temporary-composite-text")
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "point"
             params["tempType"] = ValueType.LOCATION.name
@@ -232,7 +232,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `removed temporary sound and effect types are rejected`() {
-        val script = DiskScript(name = "removed-temp-types", owner = UUID.randomUUID())
+        val script = DiskScript(name = "removed-temp-types")
         val sound = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params.putAll(
                 mapOf(
@@ -263,25 +263,20 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `always active and interval require an enabled valid timer`() {
+    fun `timer trigger requires a valid interval`() {
         val script = DiskScript(
             name = "timer",
-            owner = UUID.randomUUID(),
-            activation = ActivationMode.ALWAYS_ACTIVE,
-            timer = TimerSetting(enabled = false, intervalSeconds = 0.0),
+            trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.0),
         )
-        assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("タイマーオフ") })
-
-        script.timer.enabled = true
         assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("タイマー間隔") })
 
-        script.timer.intervalSeconds = 0.5
-        assertTrue(ExecutableScriptValidator.validate(script).none { it.fieldKeys == setOf("timer") })
+        script.trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.5)
+        assertTrue(ExecutableScriptValidator.validate(script).none { it.fieldKeys == setOf("trigger") })
     }
 
     @Test
     fun `legacy raw selector and coordinate strings do not satisfy structured settings`() {
-        val script = DiskScript(name = "legacy", owner = UUID.randomUUID())
+        val script = DiskScript(name = "legacy")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.params["target"] = "@a"
         teleport.params["destination"] = "~ ~ ~"
@@ -294,7 +289,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `execution preflight uses configured graph limits`() {
-        val script = DiskScript(name = "limits", owner = UUID.randomUUID())
+        val script = DiskScript(name = "limits")
         val first = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         first.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
         val second = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
@@ -316,7 +311,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `non finite selectors and incomplete positions fail preflight`() {
-        val script = DiskScript(name = "unsafe", owner = UUID.randomUUID())
+        val script = DiskScript(name = "unsafe")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(
             TargetKind.NEAREST_PLAYER,
@@ -336,7 +331,7 @@ class ExecutableScriptValidatorTest {
     fun `temporary targets and rotation orientations require complete values`() {
         // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
         // 未完了の単一参照は一時変数参照で固定します。
-        val script = DiskScript(name = "target-shape", owner = UUID.randomUUID())
+        val script = DiskScript(name = "target-shape")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.TEMPORARY)
         teleport.destinationSpec = PositionSpec(PositionKind.CAPTURED, 1.0, 2.0, 3.0, null, null)
@@ -350,7 +345,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `repeat count may reference a world variable`() {
-        val script = DiskScript(name = "for-world", owner = UUID.randomUUID())
+        val script = DiskScript(name = "for-world")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         start.params["count"] = "\${limit}"
 
@@ -361,7 +356,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `numeric inputs reject string world variable references`() {
-        val script = DiskScript(name = "for-string-world", owner = UUID.randomUUID())
+        val script = DiskScript(name = "for-string-world")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         start.params["count"] = "\${limit}"
 
@@ -377,7 +372,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `loop values may be assigned inside a for body`() {
-        val script = DiskScript(name = "loop-world", owner = UUID.randomUUID())
+        val script = DiskScript(name = "loop-world")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         val variable = GraphEditor.appendToForBody(script.graph, start.id, CommandType.VARIABLE)
         variable.params.putAll(
@@ -394,7 +389,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `system references in structured target filters follow the for body scope`() {
-        val outside = DiskScript(name = "outside-target-template", owner = UUID.randomUUID())
+        val outside = DiskScript(name = "outside-target-template")
         val outsideDisplay = GraphEditor.append(outside.graph, CommandType.DISPLAY_TEXT)
         outsideDisplay.targetSpec = TargetSpec(
             TargetKind.ALL_PLAYERS,
@@ -404,7 +399,7 @@ class ExecutableScriptValidatorTest {
         val outsideErrors = ExecutableScriptValidator.validate(outside)
         assertTrue(outsideErrors.any { it.nodeId == outsideDisplay.id && it.message.contains("for本体内") })
 
-        val inside = DiskScript(name = "inside-target-template", owner = UUID.randomUUID())
+        val inside = DiskScript(name = "inside-target-template")
         val start = GraphEditor.append(inside.graph, CommandType.FOR_START)
         val insideDisplay = GraphEditor.appendToForBody(inside.graph, start.id, CommandType.DISPLAY_TEXT)
         insideDisplay.targetSpec = TargetSpec(
@@ -420,7 +415,7 @@ class ExecutableScriptValidatorTest {
     fun `actionbar validates only the single display duration`() {
         // issue #35-2: アクションバーは単独の表示時間だけを使い、
         // フェード値は検証対象にしません。
-        val script = DiskScript(name = "actionbar-duration", owner = UUID.randomUUID())
+        val script = DiskScript(name = "actionbar-duration")
         val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         actionbar.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
         actionbar.params.putAll(
@@ -451,7 +446,7 @@ class ExecutableScriptValidatorTest {
     fun `actionbar ignores leftover fade variable references`() {
         // issue #review P2-7: 非表示項目の残存値は検証対象外です。
         // 有効項目の定義は DisplayTextTimingPolicy で共有します。
-        val script = DiskScript(name = "actionbar-stale-fade", owner = UUID.randomUUID())
+        val script = DiskScript(name = "actionbar-stale-fade")
         val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         actionbar.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
         actionbar.params.putAll(
@@ -470,7 +465,7 @@ class ExecutableScriptValidatorTest {
     fun `temporary target skips detail filter validation`() {
         // issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
         // 残存条件の形式検査を行いません。変数名の定義検査だけ残します。
-        val script = DiskScript(name = "temporary-filters", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temporary-filters")
         val node = GraphEditor.append(script.graph, CommandType.ENTITY_DELETE)
         node.targetSpec = TargetSpec(TargetKind.TEMPORARY, tempName = "foe", tag = "###", maximumDistance = -1.0)
 
@@ -484,7 +479,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `display and wait durations require whole tick values`() {
-        val displayScript = DiskScript(name = "fractional-display", owner = UUID.randomUUID())
+        val displayScript = DiskScript(name = "fractional-display")
         val display = GraphEditor.append(displayScript.graph, CommandType.DISPLAY_TEXT)
         display.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
         display.params.putAll(
@@ -505,7 +500,7 @@ class ExecutableScriptValidatorTest {
             },
         )
 
-        val waitScript = DiskScript(name = "wait-boundaries", owner = UUID.randomUUID())
+        val waitScript = DiskScript(name = "wait-boundaries")
         val wait = GraphEditor.append(waitScript.graph, CommandType.WAIT)
 
         wait.params["seconds"] = "0.05"
@@ -543,7 +538,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `block operations and entity deletion require their structured inputs`() {
-        val script = DiskScript(name = "new-operations", owner = UUID.randomUUID())
+        val script = DiskScript(name = "new-operations")
         GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION)
         GraphEditor.append(script.graph, CommandType.ENTITY_DELETE)
 
@@ -556,7 +551,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `fill rejects a statically oversized volume`() {
-        val script = DiskScript(name = "large-fill", owner = UUID.randomUUID())
+        val script = DiskScript(name = "large-fill")
         val fill = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION)
         fill.params["operation"] = BlockOperationMode.FILL.value
         fill.params["block"] = "minecraft:stone"
@@ -568,7 +563,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `structure place requires a valid name and known rotation and mirror`() {
-        val script = DiskScript(name = "structure-place-check", owner = UUID.randomUUID())
+        val script = DiskScript(name = "structure-place-check")
         val place = GraphEditor.append(script.graph, CommandType.STRUCTURE_PLACE)
 
         val errors = ExecutableScriptValidator.validate(script)
@@ -589,7 +584,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `entity group requires its operation name and per-operation inputs`() {
-        val script = DiskScript(name = "entity-group-check", owner = UUID.randomUUID())
+        val script = DiskScript(name = "entity-group-check")
         val group = GraphEditor.append(script.graph, CommandType.ENTITY_GROUP)
 
         val blank = ExecutableScriptValidator.validate(script)
@@ -628,7 +623,7 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `summon tags are validated as one string rather than a comma-separated list`() {        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
+    fun `summon tags are validated as one string rather than a comma-separated list`() {        val script = DiskScript(name = "single-tag")
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY)
         summon.params["summonEntity"] = "minecraft:pig"
         summon.params["tags"] = "first_tag,second_tag"
@@ -645,7 +640,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `fresh particle node fails preflight until the kind is chosen`() {
-        val script = DiskScript(name = "fresh-particle", owner = UUID.randomUUID())
+        val script = DiskScript(name = "fresh-particle")
         val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
 
         // 選択肢型に既定値を置かないため、新規作成直後は未設定エラーになります。
@@ -665,7 +660,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `stale detail data on dataless particle is ignored`() {
-        val script = DiskScript(name = "stale-particle-data", owner = UUID.randomUUID())
+        val script = DiskScript(name = "stale-particle-data")
         val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
         particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_DATA] = "#ff0000 2"
 
@@ -680,7 +675,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `invalid detail data on data particle fails on the detail tab`() {
-        val script = DiskScript(name = "broken-particle-data", owner = UUID.randomUUID())
+        val script = DiskScript(name = "broken-particle-data")
         val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
         particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_PARTICLE] = "DUST"
         particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_DATA] = "not-a-color"
@@ -695,7 +690,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `particle count error maps to the parameters tab`() {
-        val script = DiskScript(name = "broken-particle-count", owner = UUID.randomUUID())
+        val script = DiskScript(name = "broken-particle-count")
         val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
         particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_COUNT] = "0"
 
@@ -708,7 +703,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `single only positions reject embedded targets`() {
-        val script = DiskScript(name = "single-target-position", owner = UUID.randomUUID())
+        val script = DiskScript(name = "single-target-position")
         val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
             params["operation"] = BlockOperationMode.FILL.value
             params["block"] = "minecraft:stone"
@@ -729,7 +724,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `single only positions allow statically single embedded targets`() {
-        val script = DiskScript(name = "single-static-target-position", owner = UUID.randomUUID())
+        val script = DiskScript(name = "single-static-target-position")
         val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
             params["operation"] = BlockOperationMode.FILL.value
             params["block"] = "minecraft:stone"
@@ -750,7 +745,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `embedded targets in multi positions are validated`() {
-        val script = DiskScript(name = "embedded-target", owner = UUID.randomUUID())
+        val script = DiskScript(name = "embedded-target")
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
             params["summonEntity"] = "minecraft:zombie"
             summonPositionSpec = PositionSpec(
@@ -767,7 +762,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `execution position accepts entity set resolution`() {
-        val script = DiskScript(name = "execution-position-target", owner = UUID.randomUUID())
+        val script = DiskScript(name = "execution-position-target")
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
             params["summonEntity"] = "minecraft:zombie"
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
@@ -787,7 +782,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `particle end allows statically single embedded targets`() {
-        val script = DiskScript(name = "particle-end-static", owner = UUID.randomUUID())
+        val script = DiskScript(name = "particle-end-static")
         val particle = GraphEditor.append(script.graph, CommandType.PARTICLE).apply {
             particleEndPositionSpec = PositionSpec(
                 PositionKind.TARGET,
@@ -805,7 +800,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `particle end rejects multi embedded targets`() {
-        val script = DiskScript(name = "particle-end-multi", owner = UUID.randomUUID())
+        val script = DiskScript(name = "particle-end-multi")
         val particle = GraphEditor.append(script.graph, CommandType.PARTICLE).apply {
             particleEndPositionSpec = PositionSpec(
                 PositionKind.TARGET,
@@ -823,7 +818,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `temporary positions resolve components against the variable`() {
-        val script = DiskScript(name = "temp-base-offset", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temp-base-offset")
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "base"
             params["tempType"] = ValueType.LOCATION.name
@@ -853,7 +848,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `temporary positions reject missing offsets and local angles`() {
-        val script = DiskScript(name = "temp-base-invalid", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temp-base-invalid")
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "base"
             params["tempType"] = ValueType.LOCATION.name
@@ -885,7 +880,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `temporary positions require a defined location variable`() {
-        val script = DiskScript(name = "temp-base-undefined", owner = UUID.randomUUID())
+        val script = DiskScript(name = "temp-base-undefined")
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
             params["summonEntity"] = "minecraft:zombie"
             summonPositionSpec = PositionSpec(
@@ -906,7 +901,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `block positions fall back to the execution position`() {
-        val script = DiskScript(name = "block-exec-fallback", owner = UUID.randomUUID())
+        val script = DiskScript(name = "block-exec-fallback")
         val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
             params["operation"] = BlockOperationMode.SETBLOCK.value
             params["block"] = "minecraft:stone"
@@ -923,7 +918,7 @@ class ExecutableScriptValidatorTest {
 
     @Test
     fun `fill range rejects multi execution fallbacks`() {
-        val script = DiskScript(name = "fill-multi-exec", owner = UUID.randomUUID())
+        val script = DiskScript(name = "fill-multi-exec")
         val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
             params["operation"] = BlockOperationMode.FILL.value
             params["block"] = "minecraft:stone"

@@ -2,9 +2,10 @@ package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.error.ValidationPhase
-import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -13,23 +14,22 @@ import java.util.UUID
 class ValidatorPhaseTest {
     @Test
     fun `edit time and preflight phases are distinguished by variable definitions`() {
-        val script = DiskScript(name = "phase", owner = UUID.randomUUID())
-        // タイマー矛盾は edit-time/preflight 両方で検出される代表例です。
-        script.activation = ActivationMode.ALWAYS_ACTIVE
-        script.timer = script.timer.copy(enabled = false)
+        val script = DiskScript(name = "phase")
+        // タイマー間隔の範囲違反は edit-time/preflight 両方で検出される代表例です。
+        script.trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.0)
 
         val editErrors = ExecutableScriptValidator.validate(script, variableDefinitions = null)
         val preflightErrors = ExecutableScriptValidator.validate(script, variableDefinitions = emptyMap())
 
-        val editTimer = editErrors.single { it.code == ErrorCode.TIMER_CONFLICT }
-        val preflightTimer = preflightErrors.single { it.code == ErrorCode.TIMER_CONFLICT }
+        val editTimer = editErrors.single { it.code == ErrorCode.TIMER_RANGE }
+        val preflightTimer = preflightErrors.single { it.code == ErrorCode.TIMER_RANGE }
         assertEquals(ValidationPhase.EDIT_TIME, editTimer.phase)
         assertEquals(ValidationPhase.PREFLIGHT, preflightTimer.phase)
     }
 
     @Test
     fun `structural errors keep node identity and persisted phase`() {
-        val script = DiskScript(name = "structural", owner = UUID.randomUUID())
+        val script = DiskScript(name = "structural")
         val first = GraphEditor.append(script.graph, CommandType.TELEPORT)
         val second = GraphEditor.append(script.graph, CommandType.TELEPORT)
         // 複数親を人為的に作り、構造エラーの nodeId 保持を確認します。
@@ -44,7 +44,7 @@ class ValidatorPhaseTest {
 
     @Test
     fun `graph structured validation preserves error codes`() {
-        val script = DiskScript(name = "graph-code", owner = UUID.randomUUID())
+        val script = DiskScript(name = "graph-code")
         GraphEditor.append(script.graph, CommandType.TELEPORT)
 
         val structured = GraphValidator.validateStructured(script.graph)
@@ -52,7 +52,7 @@ class ValidatorPhaseTest {
         // 空であること自体を固定します（code は非null型のため、all での存在確認は行いません）。
         assertTrue(structured.isEmpty(), "正常グラフは構造エラーを出さない")
 
-        val broken = DiskScript(name = "broken", owner = UUID.randomUUID())
+        val broken = DiskScript(name = "broken")
         GraphEditor.append(broken.graph, CommandType.TELEPORT)
         // 開始ノードを壊して MISSING 相当の構造エラーを作ります。
         broken.graph.nodes.values.forEach { it.next = UUID.randomUUID() }
@@ -63,13 +63,12 @@ class ValidatorPhaseTest {
 
     @Test
     fun `validation errors convert to common execution errors`() {
-        val script = DiskScript(name = "convert", owner = UUID.randomUUID())
-        script.activation = ActivationMode.ALWAYS_ACTIVE
-        script.timer = script.timer.copy(enabled = false)
+        val script = DiskScript(name = "convert")
+        script.trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.0)
 
         val errors = ExecutableScriptValidator.validate(script, variableDefinitions = emptyMap())
         val common = errors.map { it.toExecutionError(script.id) }
         assertTrue(common.all { it.scriptId == script.id })
-        assertTrue(common.any { it.code == ErrorCode.TIMER_CONFLICT && it.phase == ValidationPhase.PREFLIGHT })
+        assertTrue(common.any { it.code == ErrorCode.TIMER_RANGE && it.phase == ValidationPhase.PREFLIGHT })
     }
 }

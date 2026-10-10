@@ -4,7 +4,6 @@ import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.BlockDataSchema
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -2300,17 +2299,6 @@ object CommandSettingsModel {
             },
         ) { script ->
             script.trigger = normalized
-            // 従来欄も整合させ、旧来の実行経路・表示・出力が追従できるようにします。
-            when (normalized.kind) {
-                TriggerKind.TIMER -> {
-                    script.timer.intervalSeconds = normalized.intervalSeconds
-                    script.timer.enabled = true
-                }
-                TriggerKind.REDSTONE, TriggerKind.EVENT -> {
-                    script.timer.enabled = false
-                    script.activation = ActivationMode.NEEDS_REDSTONE
-                }
-            }
         }
     }
 

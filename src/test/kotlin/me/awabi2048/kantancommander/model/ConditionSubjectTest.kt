@@ -75,13 +75,10 @@ class ConditionSubjectTest {
             return com.google.gson.JsonParser.parseString(
                 """
                 {
-                  "formatVersion": 13,
+                  "formatVersion": 18,
                   "id": "${UUID.randomUUID()}",
                   "name": "subject-check",
-                  "owner": "${UUID.randomUUID()}",
-                  "createdAt": 0,
-                  "activation": "NEEDS_REDSTONE",
-                  "timer": {"enabled": false, "intervalSeconds": 1.0},
+                  "trigger": {"kind": "REDSTONE"},
                   "graph": {
                     "nodes": {
                       "$nodeId": {
@@ -108,7 +105,7 @@ class ConditionSubjectTest {
 
     @Test
     fun `player subject without a target fails validation`() {
-        val script = DiskScript(name = "subject-player", owner = UUID.randomUUID())
+        val script = DiskScript(name = "subject-player")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
             setConditionSubject(ConditionSubject.PLAYER)
         }
@@ -121,7 +118,7 @@ class ConditionSubjectTest {
 
     @Test
     fun `other entity subject without a target fails validation`() {
-        val script = DiskScript(name = "subject-other", owner = UUID.randomUUID())
+        val script = DiskScript(name = "subject-other")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
             setConditionSubject(ConditionSubject.OTHER_ENTITY)
         }
@@ -135,7 +132,7 @@ class ConditionSubjectTest {
     @Test
     fun `missing subject fails validation on the subject tab`() {
         // 旧 `kind` のみの保存は変換せず、判定対象タブの未設定として拒否します。
-        val script = DiskScript(name = "legacy-kind", owner = UUID.randomUUID())
+        val script = DiskScript(name = "legacy-kind")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
             params.remove("subject")
             params["kind"] = "TARGET_EXISTS"

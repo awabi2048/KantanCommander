@@ -4,9 +4,7 @@ import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphValidator
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ValueType
-import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -15,8 +13,8 @@ import java.io.File
 
 /**
  * DSL テキストとスクリプトモデルの入出力境界（DslIO）の検証です。
- * import は `dsl` 欄への出所記録、export はグラフからの正規形復元、
- * ファイル入出力の往復を確認します。
+ * `.kcp` テキストが正本であり、import はモデルへの低級化、export は
+ * グラフからの正規形復元、ファイル入出力の往復を確認します。
  */
 class DslIOTest {
     private val io = DslIO(worldTypes = { mapOf("score" to ValueType.NUMBER) })
@@ -28,16 +26,15 @@ class DslIOTest {
     }
 
     @Test
-    fun `import が名前・グラフ・出所テキストを持つスクリプトを返す`() {
+    fun `import が名前・グラフを持つスクリプトを返す`() {
         val text = """
             program "hello" ;
                 var x: number = 1;
                 wait(1);
             
         """.trimIndent()
-        val script = io.importScript(text, UUID.randomUUID())
+        val script = io.importScript(text)
         assertEquals("hello", script.name)
-        assertEquals(text, script.dsl)
         assertValid(script)
     }
 
@@ -52,46 +49,45 @@ class DslIOTest {
                 wait(1);
             
         """.trimIndent()
-        val script = io.importScript(text, UUID.randomUUID())
+        val script = io.importScript(text)
         val text1 = io.exportScript(script)
-        val script2 = io.importScript(text1, script.owner)
+        val script2 = io.importScript(text1)
         assertValid(script2)
         assertEquals(text1, io.exportScript(script2))
     }
 
     @Test
-    fun `refreshDsl が dsl 欄を正規形へ更新する`() {
+    fun `export の正規形でもコメントが保持される`() {
         val text = """
             program "r" ;
-                var x: number = 1; // コメントは正規形で消えます
+                var x: number = 1; // コメントは文へ所属して保持されます
                 wait(1);
             
         """.trimIndent()
-        val script = io.importScript(text, UUID.randomUUID())
-        val refreshed = io.refreshDsl(script)
-        assertTrue(refreshed.dsl!!.contains("program \"r\""))
-        assertTrue(refreshed.dsl!!.contains("var x: number = 1;"))
+        val script = io.importScript(text)
+        val exported = io.exportScript(script)
+        assertTrue(exported.contains("program \"r\""))
+        assertTrue(exported.contains("var x: number = 1;"))
         // コメントは文へ所属するため、正規形へ置き換わっても保持されます。
-        assertTrue(refreshed.dsl!!.contains("// コメントは正規形で消えます"))
+        assertTrue(exported.contains("// コメントは文へ所属して保持されます"))
     }
 
     @Test
-    fun `表現できないグラフの refreshDsl は null へ正規化する`() {
+    fun `表現できないグラフの export は例外になる`() {
         val base = io.importScript(
             """
             program "f" ;
                 wait(1);
             
             """.trimIndent(),
-            UUID.randomUUID(),
         )
-        // 折り畳みノードは DSL で表現できないため、dsl は null へ正規化されます。
+        // 折り畳みノードは DSL で表現できないため、export は失敗します。
         val folded = me.awabi2048.kantancommander.model.CommandType.FOLDED_IF.newNode()
         val entry = base.graph.entryNodeId!!
         base.graph.nodes.remove(entry)
         base.graph.nodes[folded.id] = folded
         base.graph.entryNodeId = folded.id
-        assertNull(io.refreshDsl(base).dsl)
+        assertThrows<DslPrintException> { io.exportScript(base) }
     }
 
     @Test
@@ -102,11 +98,11 @@ class DslIOTest {
             world.score = 3;
             
         """.trimIndent()
-        val script = io.importScript(text, UUID.randomUUID())
-        val file = dir.resolve("file_io.kc")
+        val script = io.importScript(text)
+        val file = dir.resolve("file_io.kcp")
         io.exportFile(script, file)
         assertTrue(file.exists())
-        val reimported = io.importFile(file, UUID.randomUUID())
+        val reimported = io.importFile(file)
         assertEquals("file_io", reimported.name)
         assertValid(reimported)
     }
@@ -114,7 +110,7 @@ class DslIOTest {
     @Test
     fun `import の構文エラーは例外として現れる`() {
         assertThrows<DslParseException> {
-            io.importScript("var x: number = 1;", UUID.randomUUID())
+            io.importScript("var x: number = 1;")
         }
     }
 }

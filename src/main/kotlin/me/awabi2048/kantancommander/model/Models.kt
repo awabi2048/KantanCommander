@@ -6,53 +6,31 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 17
+const val STRUCTURED_FORMAT_VERSION = 18
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
 const val MAX_BLOCK_OPERATION_VOLUME = 32_768L
 
+/**
+ * プログラムディスクのモデルです。
+ *
+ * `.kcp` ファイル（純粋DSLテキスト）がユーザー向けの正本であり、このモデルは
+ * コンパイル済みの実行形です。所有者・作成日時・一覧フラグなどの機械管理欄は
+ * 持たず、識別はファイル名の UUID が担います。埋め込みアイテム同梱の
+ * スナップショットは JSON 形式のまま残るため、formatVersion はその
+ * 内部形式の世代を示します（`.kcp` ファイル自身は世代を持ちません）。
+ */
 data class DiskScript(
     val formatVersion: Int = STRUCTURED_FORMAT_VERSION,
     val id: UUID = UUID.randomUUID(),
     var name: String,
-    val owner: UUID,
-    val createdAt: Long = System.currentTimeMillis(),
-    /**
-     * 旧形式の一覧フラグです。現在のライブラリ／履歴の正本はScriptStoreの
-     * 関係ファイルであり、この値は移行時だけ読み取ってfalseへ正規化します。
-     */
-    @Deprecated("Use ScriptStore library/history relations")
-    var listed: Boolean = false,
-    var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
-    var timer: TimerSetting = TimerSetting(),
     var graph: CommandGraph = CommandGraph.empty(),
     /**
      * 同じプログラムを複数画面から編集する際の楽観的競合検出値です。
-     * 旧JSONには存在しないため0で復元し、ScriptStoreの保存境界で進めます。
+     * メモリ内カウンタであり永続化しません。ScriptStoreの保存境界で進めます。
      */
     var revision: Long = 0L,
-    /**
-     * ジェスチャーGUIで折りたたみ表示するfor開始ノードのID群です。
-     *
-     * 新形式（v11）では折り畳み自体をノード種別（FOLDED_FOR／FOLDED_IF）として
-     * 永続化するため使用しません。旧JSONの読み捨て互換のために項目だけ残します。
-     */
-    var collapsedForStartIds: MutableSet<UUID>? = null,
-    /**
-     * ジェスチャーGUIで折りたたみ表示する条件分岐ノードのID群です。
-     *
-     * 新形式（v11）では折り畳み自体をノード種別（FOLDED_FOR／FOLDED_IF）として
-     * 永続化するため使用しません。旧JSONの読み捨て互換のために項目だけ残します。
-     */
-    var collapsedConditionIds: MutableSet<UUID>? = null,
-    /**
-     * ノードを持たないスクリプトでも、プログラム名またはタイマーを明示的に
-     * 編集したことを保持します。配置からのディスク出力可否は値の非空判定では
-     * なく、この編集状態とグラフの両方を共通判定するため、初期配置の既定名を
-     * 誤って「内容あり」と扱いません。旧JSONには存在しないためfalseで復元します。
-     */
-    var contentModified: Boolean = false,
     /**
      * issue #8 の関数引数定義です。
      *
@@ -62,23 +40,8 @@ data class DiskScript(
      * 引数はすべて必須とし、optional／default値は初期実装に含めません。
      */
     var arguments: List<DiskArgument> = emptyList(),
-    /**
-     * issue #7 の起動方法の明示指定です。
-     *
-     * 旧JSONには存在しないため null で復元し、その場合は [effectiveTrigger] が
-     * 従来の `activation`＋`timer` から読み替えます。新規保存は常に明示値を書き、
-     * 従来欄も整合させるため、null は旧保存の意味だけを持ちます。
-     */
-    var trigger: ScriptTrigger? = null,
-    /**
-     * このプログラムの DSL 正本テキストです。
-     *
-     * 保存時にグラフから正規形を再生成して書き込み、読込では `dsl` 欄が
-     * あれば DSL からグラフを再コンパイルします（`graph` 欄は派生
-     * キャッシュです）。旧JSONには存在しないため null で復元し、その場合は
-     * 初回読込時に DSL へ自動変換して書き戻します。
-     */
-    var dsl: String? = null,
+    /** issue #7 の起動方法です。`.kcp` の `trigger` 宣言が正本です。 */
+    var trigger: ScriptTrigger = ScriptTrigger(),
 )
 
 /**
@@ -125,51 +88,14 @@ fun CommandNode.declaredArguments(): List<DiskArgument> {
 fun encodeDeclaredArguments(arguments: List<DiskArgument>): String =
     arguments.joinToString(",") { "${it.name}:${it.type.name}" }
 
-/** 配置されたかんたんコマンダー制御ブロックからディスクへ出力できる内容があるかを判定します。 */
-fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotEmpty()
-
 /**
- * 折りたたみ表示するfor開始ノードのID群です。
+ * 配置されたかんたんコマンダー制御ブロックからディスクへ出力できる内容があるかを判定します。
  *
- * 新形式（v11）では使用しません。旧JSONの読み捨て互換のために残します。
+ * 内容は「ノード・呼出し引数・既定以外の起動方法」のいずれかを持つこととし、
+ * 初期配置の既定名だけを内容とは扱いません。
  */
-@Deprecated("折り畳みはFOLDED_FORへ移行しました。読み捨て専用です。")
-fun DiskScript.collapsedForStarts(): MutableSet<UUID> =
-    collapsedForStartIds ?: linkedSetOf<UUID>().also { collapsedForStartIds = it }
-
-/**
- * 折りたたみ表示する条件分岐ノードのID群です。
- *
- * 新形式（v11）では使用しません。旧JSONの読み捨て互換のために残します。
- */
-@Deprecated("折り畳みはFOLDED_IFへ移行しました。読み捨て専用です。")
-fun DiskScript.collapsedConditions(): MutableSet<UUID> =
-    collapsedConditionIds ?: linkedSetOf<UUID>().also { collapsedConditionIds = it }
-
-data class TimerSetting(
-    var enabled: Boolean = false,
-    var intervalSeconds: Double = DEFAULT_TIMER_SECONDS,
-) {
-    /**
-     * 保存・実行へ渡す秒数をモデル内で許す範囲へ寄せます。
-     * 非有限・0以下は既定値へ、上限超過は上限へ丸めます。tick境界の整合性は
-     * 保存・実行前検証（CommandValueRules.isTimerSeconds）が担保します。
-     */
-    fun normalized() = copy(
-        intervalSeconds = intervalSeconds
-            .takeIf { it.isFinite() && it > 0.0 }
-            ?.coerceAtMost(MAX_TIMER_SECONDS.toDouble())
-            ?: DEFAULT_TIMER_SECONDS,
-    )
-    /** Minecraftの内部スケジューラへ渡すtick値は、このモデル境界でだけ算出します。 */
-    val intervalTicks: Long get() =
-        CommandValueRules.secondsToTicks(normalized().intervalSeconds) ?: 1L
-}
-
-enum class ActivationMode {
-    NEEDS_REDSTONE,
-    ALWAYS_ACTIVE,
-}
+fun DiskScript.hasDiskContent(): Boolean =
+    graph.nodes.isNotEmpty() || arguments.isNotEmpty() || trigger.normalized() != ScriptTrigger()
 
 data class CommandGraph(
     var entryNodeId: UUID? = null,

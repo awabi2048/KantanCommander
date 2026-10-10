@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.gui.declarative
 
+import me.awabi2048.kantancommander.model.TriggerKind
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox

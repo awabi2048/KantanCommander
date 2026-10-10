@@ -1,6 +1,5 @@
 package me.awabi2048.kantancommander.data
 
-import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.BlockDataSchema
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.CommandGraph
@@ -184,46 +183,29 @@ object ExecutableScriptValidator {
         script: DiskScript,
         phase: ValidationPhase,
     ): List<ScriptValidationError> = buildList {
-        // issue #7: 明示の起動方法がある場合はそちらを検証し、従来欄の検査は行いません。
-        // 保存時に従来欄も整合させるため、両方の検査が同時に通る状態は作りません。
+        // issue #7: 起動方法は `trigger` 欄が単一正本です。
+        // 生値を検査します。正規化後の検査では不正な保存値を検出できません。
         val explicit = script.trigger
-        if (explicit != null) {
-            // 生値を検査します。正規化後の検査では不正な保存値を検出できません。
-            if (explicit.kind == TriggerKind.TIMER &&
-                !CommandValueRules.isTimerSeconds(explicit.intervalSeconds)
-            ) {
+        if (explicit.kind == TriggerKind.TIMER &&
+            !CommandValueRules.isTimerSeconds(explicit.intervalSeconds)
+        ) {
+            this += ScriptValidationError(
+                "root", null, setOf("trigger"),
+                "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
+                code = ErrorCode.TIMER_RANGE, phase = phase,
+            )
+        }
+        if (explicit.kind == TriggerKind.EVENT && explicit.event == null) {
+            this += ScriptValidationError(
+                "root", null, setOf("trigger"), "イベント起動には種別の指定が必要です",
+                code = ErrorCode.CONFIG_INVALID, phase = phase,
+            )
+        }
+        if (explicit.kind == TriggerKind.EVENT && explicit.event != null) {
+            explicit.conditions.validationProblem(explicit.event)?.let { problem ->
                 this += ScriptValidationError(
-                    "root", null, setOf("trigger"),
-                    "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
-                    code = ErrorCode.TIMER_RANGE, phase = phase,
-                )
-            }
-            if (explicit.kind == TriggerKind.EVENT && explicit.event == null) {
-                this += ScriptValidationError(
-                    "root", null, setOf("trigger"), "イベント起動には種別の指定が必要です",
+                    "root", null, setOf("trigger"), problem,
                     code = ErrorCode.CONFIG_INVALID, phase = phase,
-                )
-            }
-            if (explicit.kind == TriggerKind.EVENT && explicit.event != null) {
-                explicit.conditions.validationProblem(explicit.event)?.let { problem ->
-                    this += ScriptValidationError(
-                        "root", null, setOf("trigger"), problem,
-                        code = ErrorCode.CONFIG_INVALID, phase = phase,
-                    )
-                }
-            }
-        } else {
-            if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
-                this += ScriptValidationError(
-                    "root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません",
-                    code = ErrorCode.TIMER_CONFLICT, phase = phase,
-                )
-            }
-            if (script.timer.enabled && !CommandValueRules.isTimerSeconds(script.timer.intervalSeconds)) {
-                this += ScriptValidationError(
-                    "root", null, setOf("timer"),
-                    "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
-                    code = ErrorCode.TIMER_RANGE, phase = phase,
                 )
             }
         }

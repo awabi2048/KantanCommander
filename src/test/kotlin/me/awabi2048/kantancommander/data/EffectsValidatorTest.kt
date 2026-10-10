@@ -13,7 +13,7 @@ import java.util.UUID
 
 class EffectsValidatorTest {
     private fun scriptWith(type: CommandType, configure: me.awabi2048.kantancommander.model.CommandNode.() -> Unit = {}): DiskScript {
-        val script = DiskScript(name = "effects", owner = UUID.randomUUID())
+        val script = DiskScript(name = "effects")
         GraphEditor.append(script.graph, type).configure()
         return script
     }

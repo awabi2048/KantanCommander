@@ -2,7 +2,6 @@ package me.awabi2048.kantancommander.data
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
-import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
@@ -33,23 +32,11 @@ object PersistedScriptValidator {
         requireInteger(root, "formatVersion", path, errors)
         requireUuid(root, "id", path, errors)
         requireString(root, "name", path, errors)
-        requireUuid(root, "owner", path, errors)
-        requireInteger(root, "createdAt", path, errors)
-        requireEnum(root, "activation", path, enumNames<ActivationMode>(), errors)
-        requireObject(root, "timer", path, errors)?.let { timer ->
-            requireBoolean(timer, "enabled", "$path/timer", errors)
-            requireFiniteNumber(timer, "intervalSeconds", "$path/timer", errors)
-        }
         requireObject(root, "graph", path, errors)?.let {
             validateGraph(it, "$path/graph", errors)
         }
-        optionalBoolean(root, "listed", path, errors)
-        optionalInteger(root, "revision", path, errors)
-        optionalBoolean(root, "contentModified", path, errors)
         optionalDiskArguments(root, path, errors)
-        optionalTrigger(root, path, errors)
-        optionalUuidArray(root, "collapsedForStartIds", path, errors)
-        optionalUuidArray(root, "collapsedConditionIds", path, errors)
+        requireTrigger(root, path, errors)
         return errors
     }
 
@@ -368,18 +355,12 @@ object PersistedScriptValidator {
     /**
      * issue #7 の起動方法を検証します。
      *
-     * 旧JSONには存在しないため欠落・nullは許容し、読込時に従来欄から読み替えます。
-     * 存在する場合は種別enumを確認し、不正値は破損として隔離します。
+     * v18 では必須項目です。旧形式の `activation`＋`timer` からの読み替えは
+     * 読込時移行が行うため、ここでは保存形の整合だけを扱います。
      * 間隔の範囲は実行前検証の責務とし、ここでは型・enum整合性だけを扱います。
      */
-    private fun optionalTrigger(parent: JsonObject, path: String, errors: MutableList<String>) {
-        val raw = parent["trigger"] ?: return
-        if (raw.isJsonNull) return
-        if (!raw.isJsonObject) {
-            errors += "$path/trigger: オブジェクトではありません"
-            return
-        }
-        val item = raw.asJsonObject
+    private fun requireTrigger(parent: JsonObject, path: String, errors: MutableList<String>) {
+        val item = requireObject(parent, "trigger", path, errors) ?: return
         val triggerPath = "$path/trigger"
         requireEnum(item, "kind", triggerPath, enumNames<TriggerKind>(), errors)
         optionalEnum(item, "event", triggerPath, enumNames<EventTriggerKind>(), errors)

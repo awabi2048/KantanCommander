@@ -62,7 +62,7 @@ class UnsetConsistencyTest {
         value is DisplayValue.Localized && value.key == KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET
 
     private fun validate(node: CommandNode) =
-        ExecutableScriptValidator.validate(DiskScript(name = "unset-audit", owner = UUID.randomUUID()).also { script ->
+        ExecutableScriptValidator.validate(DiskScript(name = "unset-audit").also { script ->
             GraphEditor.append(script.graph, node.type).apply {
                 params.putAll(node.params)
             }

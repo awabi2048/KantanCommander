@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.gui.EditorGuiMode
 import me.awabi2048.kantancommander.gui.EditorGuiModeResolver
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.security.PlacementDecision
@@ -297,14 +298,16 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 plugin.scripts.copyForPlacement(embeddedProgram)
             } else {
                 // 通常の空アイテムから置いた場合だけ、配置者を初期名へ使います。
-                plugin.scripts.createPlacement(player.uniqueId, "${player.name}のプログラム")
+                plugin.scripts.createPlacement("${player.name}のプログラム")
             }
         }.getOrNull() ?: run {
             // 配置準備の失敗は操作者への異常系通知へ一本化し、コンソールへ出しません。
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
             return false
         }
-        val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
+        val material = PlacedBlockMaterials.forTimer(
+            placedScript.trigger.normalized().kind == TriggerKind.TIMER,
+        )
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
             return false

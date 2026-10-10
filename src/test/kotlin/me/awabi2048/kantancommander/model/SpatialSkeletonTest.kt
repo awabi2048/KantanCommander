@@ -74,7 +74,7 @@ class SpatialSkeletonTest {
 
     @Test
     fun `relative semantics on non coordinate position fails validation`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val script = DiskScript(name = "spatial")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         teleport.destinationSpec = PositionSpec(
@@ -92,7 +92,7 @@ class SpatialSkeletonTest {
 
     @Test
     fun `local angle fails validation`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val script = DiskScript(name = "spatial")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         teleport.destinationSpec = PositionSpec(
@@ -110,7 +110,7 @@ class SpatialSkeletonTest {
 
     @Test
     fun `single axis relative passes validation`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val script = DiskScript(name = "spatial")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         teleport.destinationSpec = PositionSpec(
@@ -129,7 +129,7 @@ class SpatialSkeletonTest {
 
     @Test
     fun `relative coordinates require finite offsets`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val script = DiskScript(name = "spatial")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         teleport.destinationSpec = PositionSpec(
@@ -147,7 +147,7 @@ class SpatialSkeletonTest {
 
     @Test
     fun `absolute coordinates keep existing meaning`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val script = DiskScript(name = "spatial")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         teleport.destinationSpec = PositionSpec(
@@ -165,7 +165,7 @@ class SpatialSkeletonTest {
 
     @Test
     fun `relative facing yaw passes validation`() {
-        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val script = DiskScript(name = "spatial")
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         teleport.destinationSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)

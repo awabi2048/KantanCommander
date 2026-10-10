@@ -72,7 +72,7 @@ class LegacyConditionMigrationTest {
         writeCondition(dir, scriptId, nodeId, version, params, targetSpec)
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val loaded = requireNotNull(store.load(scriptId))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
         return loaded.graph.nodes.getValue(nodeId)
     }
 
@@ -224,7 +224,7 @@ class LegacyConditionMigrationTest {
         val loaded = requireNotNull(store.load(scriptId))
         val node = loaded.graph.nodes.getValue(nodeId)
         assertEquals(ConditionSubject.VARIABLE, node.conditionSubject())
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
         assertFalse(
             ExecutableScriptValidator.validate(loaded).any { it.nodeId == nodeId },
         )

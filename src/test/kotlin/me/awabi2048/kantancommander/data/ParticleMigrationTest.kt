@@ -94,7 +94,7 @@ class ParticleMigrationTest {
         assertFalse(migrated.params.containsKey("particleDensity"))
         assertFalse(migrated.params.containsKey("geometryRadius"))
         assertFalse(migrated.params.containsKey("particleDisplayMode"))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
     }
 
     @Test
@@ -132,7 +132,7 @@ class ParticleMigrationTest {
         assertFalse(migrated.params.containsKey("particleSpeed"))
         assertFalse(migrated.params.containsKey("particleCount"))
         assertFalse(migrated.params.containsKey("particleDisplayMode"))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
     }
 
     @Test
@@ -162,6 +162,6 @@ class ParticleMigrationTest {
         assertEquals(CommandType.PARTICLE, migrated.type)
         assertTrue(migrated.params.containsKey("particleCount"))
         assertFalse(migrated.params.containsKey("particleShape"))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
     }
 }

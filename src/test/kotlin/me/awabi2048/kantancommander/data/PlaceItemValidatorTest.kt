@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 import java.util.UUID
 
 class PlaceItemValidatorTest {
-    private fun validEntityNode() = DiskScript(name = "place", owner = UUID.randomUUID()).let { script ->
+    private fun validEntityNode() = DiskScript(name = "place").let { script ->
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             params["placeDestination"] = "EQUIPMENT"
@@ -32,7 +32,7 @@ class PlaceItemValidatorTest {
 
     @Test
     fun `unknown destination fails without further checks`() {
-        val script = DiskScript(name = "place", owner = UUID.randomUUID())
+        val script = DiskScript(name = "place")
         val node = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             params["placeDestination"] = "UNKNOWN"
         }
@@ -44,7 +44,7 @@ class PlaceItemValidatorTest {
 
     @Test
     fun `entity destinations require a target and block destinations require a position`() {
-        val entityScript = DiskScript(name = "place", owner = UUID.randomUUID())
+        val entityScript = DiskScript(name = "place")
         val entityNode = GraphEditor.append(entityScript.graph, CommandType.PLACE_ITEM).apply {
             params["placeDestination"] = "PLAYER_HOTBAR"
             params["slot"] = "0"
@@ -56,7 +56,7 @@ class PlaceItemValidatorTest {
             },
         )
 
-        val blockScript = DiskScript(name = "place", owner = UUID.randomUUID())
+        val blockScript = DiskScript(name = "place")
         val blockNode = GraphEditor.append(blockScript.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             params["placeDestination"] = "BLOCK_CONTAINER"
@@ -77,7 +77,7 @@ class PlaceItemValidatorTest {
 
     @Test
     fun `slot item count and overwrite follow the destination contract`() {
-        val script = DiskScript(name = "place", owner = UUID.randomUUID())
+        val script = DiskScript(name = "place")
         val node = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             params["placeDestination"] = "PLAYER_HOTBAR"
@@ -98,7 +98,7 @@ class PlaceItemValidatorTest {
 
     @Test
     fun `frame contents accept the fixed slot and hotbar rejects equipment names`() {
-        val script = DiskScript(name = "place", owner = UUID.randomUUID())
+        val script = DiskScript(name = "place")
         val frame = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             params["placeDestination"] = "ITEM_FRAME"
@@ -120,7 +120,7 @@ class PlaceItemValidatorTest {
 
     @Test
     fun `count accepts variable templates without an upper bound`() {
-        val script = DiskScript(name = "place", owner = UUID.randomUUID())
+        val script = DiskScript(name = "place")
         val node = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             params["placeDestination"] = "EQUIPMENT"
@@ -136,7 +136,7 @@ class PlaceItemValidatorTest {
 
     @Test
     fun `legacy equip action no longer validates as equipment placement`() {
-        val script = DiskScript(name = "place", owner = UUID.randomUUID())
+        val script = DiskScript(name = "place")
         GraphEditor.append(script.graph, CommandType.ENTITY_ACTION).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             params["action"] = "equip"

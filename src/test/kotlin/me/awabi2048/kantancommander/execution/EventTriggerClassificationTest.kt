@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.execution
 
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import org.bukkit.block.data.AnaloguePowerable
 import org.bukkit.block.data.BlockData

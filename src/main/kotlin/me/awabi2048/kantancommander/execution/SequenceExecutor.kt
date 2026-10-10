@@ -348,7 +348,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             rootId = script.id,
             origin = origin.clone(),
             actor = actor,
-            creatorId = script.owner,
             programName = script.name,
             budget = plugin.config.getInt("execution.max-nodes-per-activation"),
             maxDepth = plugin.config.getInt("execution.max-disk-call-depth"),
@@ -1009,7 +1008,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         // コンテキストを生成しませんが、内部呼出し元が保持している実行状態
         // を呼出先の処理へ渡す境界として、この保存・復元を残します。
         session.context = effectiveContext(session)
-        val synthetic = DiskScript(name = "snapshot", owner = session.actor?.uniqueId ?: UUID(0, 0), graph = snapshot)
+        val synthetic = DiskScript(name = "snapshot", graph = snapshot)
         runGraph(synthetic, snapshot, session, depth + 1) { success ->
             val popped = if (session.callFrames.isNotEmpty()) {
                 session.callFrames.removeLast()
@@ -4119,9 +4118,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * 実行途中の失敗を最上位プログラムの作成者へ一度だけ通知します。
-     * DISK_CALLの入れ子や非同期WAITから同じ失敗経路へ戻っても、作成者への通知が
-     * 重複しないようセッション単位で抑制します。オフラインの場合は送信先がないため、
+     * 実行途中の失敗を実行主体へ一度だけ通知します。
+     * DISK_CALLの入れ子や非同期WAITから同じ失敗経路へ戻っても、通知が
+     * 重複しないようセッション単位で抑制します。実行主体がいない起動
+     * （タイマー・レッドストーン信号のみ）は送信先がないため、
      * 実行ログだけを正本として通知を捨てます。
      *
      * issue #34-5: セッションに記録されたエラーコードがある場合は、原因の表示名も
@@ -4131,7 +4131,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun notifyCreatorOfFailure(session: ExecutionSession) {
         if (session.failureNotified) return
         session.failureNotified = true
-        val creator = plugin.server.getPlayer(session.creatorId) ?: return
+        val creator = session.actor ?: return
         val causeCode = session.lastFailureCode ?: session.failureCode
         val cause = causeCode
             ?.let {
@@ -4181,8 +4181,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val rootId: UUID,
         val origin: Location,
         val actor: Player?,
-        /** 入れ子呼び出しでも通知先を変えないため、最上位スクリプトの作成者を保持します。 */
-        val creatorId: UUID,
         val programName: String,
         val budget: Int,
         val maxDepth: Int,

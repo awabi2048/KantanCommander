@@ -25,7 +25,7 @@ import java.util.UUID
  */
 class TriggerValidationTest {
     private fun script(configure: DiskScript.() -> Unit): DiskScript =
-        DiskScript(name = "trigger", owner = UUID.randomUUID()).apply(configure)
+        DiskScript(name = "trigger").apply(configure)
 
     private fun stateCondition(configure: me.awabi2048.kantancommander.model.CommandNode.() -> Unit): DiskScript {
         val prepared = script {}
@@ -75,15 +75,13 @@ class TriggerValidationTest {
     }
 
     @Test
-    fun `explicit trigger skips legacy timer checks`() {
-        // 従来欄だけを見れば矛盾する組み合わせでも、明示の起動方法が正本です。
+    fun `redstone trigger produces no timer errors`() {
+        // 起動方法は trigger が単一正本です。レッドストーン起動ではタイマー検査を行いません。
         val prepared = script {
-            timer.enabled = false
-            activation = me.awabi2048.kantancommander.model.ActivationMode.ALWAYS_ACTIVE
             trigger = ScriptTrigger(TriggerKind.REDSTONE)
         }
         val errors = ExecutableScriptValidator.validate(prepared)
-        assertFalse(errors.any { it.nodeId == null && "timer" in it.fieldKeys })
+        assertFalse(errors.any { it.nodeId == null && "trigger" in it.fieldKeys })
     }
 
     @Test

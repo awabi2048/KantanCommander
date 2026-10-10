@@ -6,10 +6,10 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
-import me.awabi2048.kantancommander.model.collapsedForStarts
-import me.awabi2048.kantancommander.model.collapsedConditions
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -39,7 +39,7 @@ class ScriptStoreTest {
     fun `legacy kind-only condition migrates to its subject`() {
         // issue #27: 旧 `kind` のみの保存は読込時に判定対象へ正本化し、
         // 従来と同じ条件判定として実行・検証できるようにします。
-        // v17受付（17・16・15）の範囲内で検証するため、形式番号は15を使います。
+        // v18受付（18・17・16・15）の範囲内で検証するため、形式番号は15を使います。
         val dir = temp.resolve("condition-subject").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val conditionId = UUID.randomUUID()
@@ -143,7 +143,7 @@ class ScriptStoreTest {
         val loaded = requireNotNull(store.load(script.id))
         // 直前世代の同梱スナップショットは移行して配置できる。
         val migrated = requireNotNull(store.copyForPlacement(loaded.copy(formatVersion = 16)))
-        assertEquals(17, migrated.formatVersion)
+        assertEquals(18, migrated.formatVersion)
         assertNotEquals(loaded.id, migrated.id)
         // 受付対象外の旧形式は例外を逃がさずnullとなり、設置側は正常に拒否できる。
         assertNull(store.copyForPlacement(loaded.copy(formatVersion = 14)))
@@ -193,16 +193,6 @@ class ScriptStoreTest {
         assertFalse(dir.resolve("$scriptId.json").exists())
         assertEquals(1, requireNotNull(dir.resolve("incompatible").listFiles()).size)
     }
-
-    @Test
-    fun `missing collapsed set loads as empty`() {
-        val store = ScriptStore(temp.resolve("collapsed-missing"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "test")
-        val loaded = requireNotNull(store.load(script.id))
-        assertTrue(loaded.collapsedForStarts().isEmpty())
-        assertTrue(loaded.collapsedConditions().isEmpty())
-    }
-
 
     @Test
     fun `revision rejects stale saves and compare and set updates`() {
@@ -506,8 +496,7 @@ class ScriptStoreTest {
     @Test
     fun `unset placement and written output use independent unlisted scripts`() {
         val store = ScriptStore(temp.resolve("structured"), Logger.getAnonymousLogger())
-        val placement = store.createPlacement(UUID.randomUUID(), "unset")
-        assertFalse(placement.listed)
+        val placement = store.createPlacement("unset")
 
         val node = CommandType.DISPLAY_TEXT.newNode()
         node.params["text"] = "before"
@@ -518,7 +507,6 @@ class ScriptStoreTest {
         placement.graph.nodes[node.id]?.params?.set("text", "after")
         store.save(placement)
 
-        assertFalse(output.listed)
         assertNotEquals(placement.id, output.id)
         assertEquals("before", requireNotNull(store.load(output.id)).graph.nodes[node.id]?.string("text"))
         assertEquals("after", requireNotNull(store.load(placement.id)).graph.nodes[node.id]?.string("text"))
@@ -597,25 +585,27 @@ class ScriptStoreTest {
     }
 
     @Test
-    fun `metadata-only edits are retained as disk output content`() {
+    fun `non-default trigger counts as disk output content`() {
+        // contentModified 欄の廃止に伴い、内容判定は派生値です。
+        // ノード・引数・既定以外の起動方法を内容とし、名前のみの変更は
+        // 既定名との区別が付かないため内容に含めません。
         val store = ScriptStore(temp.resolve("metadata-edits"), Logger.getAnonymousLogger())
 
-        val renamed = store.createPlacement(UUID.randomUUID(), "default")
+        val renamed = store.createPlacement("default")
         val renamedEdit = requireNotNull(store.load(renamed.id)).apply { name = "renamed" }
         store.save(renamedEdit)
-        assertTrue(requireNotNull(store.load(renamed.id)).hasDiskContent())
+        assertFalse(requireNotNull(store.load(renamed.id)).hasDiskContent())
         assertTrue(requireNotNull(store.load(renamed.id)).graph.nodes.isEmpty())
 
-        val timed = store.createPlacement(UUID.randomUUID(), "default")
+        val timed = store.createPlacement("default")
         val timedEdit = requireNotNull(store.load(timed.id)).apply {
-            timer.enabled = true
-            timer.intervalSeconds = 5.0
+            trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 5.0)
         }
         store.save(timedEdit)
         assertTrue(requireNotNull(store.load(timed.id)).hasDiskContent())
         assertTrue(requireNotNull(store.load(timed.id)).graph.nodes.isEmpty())
 
-        val untouched = store.createPlacement(UUID.randomUUID(), "default")
+        val untouched = store.createPlacement("default")
         assertTrue(!requireNotNull(store.load(untouched.id)).hasDiskContent())
     }
 
@@ -626,7 +616,7 @@ class ScriptStoreTest {
         val owner = UUID.randomUUID()
         val editor = UUID.randomUUID()
         val otherEditor = UUID.randomUUID()
-        val script = store.createPlacement(owner, "placement")
+        val script = store.createPlacement("placement")
 
         // 編集者ごとに同じ正本UUIDを履歴へ登録できます。
         store.save(requireNotNull(store.load(script.id)).apply { name = "edited" }, editor)
@@ -656,7 +646,6 @@ class ScriptStoreTest {
             DiskScript(
                 id = scriptId,
                 name = "valid",
-                owner = UUID.randomUUID(),
                 graph = CommandGraph.empty().also { graph ->
                     val node = CommandType.DISPLAY_TEXT.newNode().apply {
                         targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)

@@ -4,18 +4,12 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import me.awabi2048.kantancommander.dsl.DslCompileResult
-import me.awabi2048.kantancommander.dsl.DslCompiler
-import me.awabi2048.kantancommander.dsl.DslDiskLink
-import me.awabi2048.kantancommander.dsl.DslParser
-import me.awabi2048.kantancommander.dsl.DslPrinter
-import me.awabi2048.kantancommander.dsl.DslProgram
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.effectiveTrigger
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
-import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -62,25 +56,8 @@ class ScriptStore(
      * プラグインが配置台帳の判定を注入します。
      */
     private val isPlacedScript: (UUID) -> Boolean = { false },
-    /**
-     * DSL 正本の読込コンパイルで使うワールド変数の型表です。
-     * ワールド定義はワールドごとに管理されるため、呼び出し側は全ワールドの
-     * 定義の和集合を供給します（[WorldVariableStore.allDefinitionTypes]）。
-     */
-    private val worldTypes: () -> Map<String, ValueType> = { emptyMap() },
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
-    /**
-     * DSL 正本の読込コンパイルで `call` 解決が同じディスクへ戻る循環を検出する
-     * 作業集合です。検出時は保存済みグラフを呼出し先スナップショットとして
-     * 使い、循環呼出しの可否判定は検証層へ委ねます。
-     */
-    private val dslCompiling = ThreadLocal.withInitial { mutableSetOf<UUID>() }
-    /**
-     * 初回自動変換の進行中集合です。変換中の `call` 名前解決が同じファイルを
-     * 再読込した場合の再入を防ぎます（再入側はグラフ形式のまま返します）。
-     */
-    private val dslConverting = ThreadLocal.withInitial { mutableSetOf<UUID>() }
     private val relationFile = dir.resolve("relations.json")
     private val libraryPrograms = linkedMapOf<UUID, LinkedHashSet<UUID>>()
     private val historyPrograms = linkedMapOf<UUID, LinkedHashSet<UUID>>()
@@ -121,16 +98,13 @@ class ScriptStore(
         migrateLegacyListedPrograms()
     }
 
-    fun create(owner: UUID, name: String): DiskScript =
-        DiskScript(name = name, owner = owner).also {
+    fun create(playerId: UUID, name: String): DiskScript =
+        DiskScript(name = name).also {
             save(it)
-            addToLibrary(owner, it.id)
+            addToLibrary(playerId, it.id)
         }
 
-    fun createPlacement(
-        owner: UUID,
-        name: String,
-    ): DiskScript = DiskScript(name = name, owner = owner, listed = false).also(::save)
+    fun createPlacement(name: String): DiskScript = DiskScript(name = name).also(::save)
 
     /**
      * 埋め込みプログラム（アイテム同梱のスナップショット）を配置用に複製します。
@@ -144,21 +118,15 @@ class ScriptStore(
         val current = migrateEmbedded(source) ?: return null
         current.copy(
             id = UUID.randomUUID(),
-            createdAt = System.currentTimeMillis(),
-            listed = false,
             revision = 0L,
             graph = current.graph.deepCopy(),
-            // 旧形式の折り畳み表示状態は新形式で不使用のため引き継ぎません。
-            // 折り畳み自体はノード種別としてグラフ複製に含まれます。
-            collapsedForStartIds = null,
-            collapsedConditionIds = null,
         ).also(::save)
     }.getOrNull()
 
     /**
      * 埋め込みスナップショットを現行形式へ移行します。
      *
-     * ファイル読込（[read]）と同じ受付方針です。現行17と直前2世代（16・15）を
+     * ファイル読込（[read]）と同じ受付方針です。現行18と直前3世代（17・16・15）を
      * 受け付け、それ以外は移行せずnullを返します。
      * 旧equipは [LegacyEquipMigration] で PLACE_ITEM へ、
      * 旧kind条件は [LegacyConditionMigration] で判定対象へ正本化するため、
@@ -172,8 +140,9 @@ class ScriptStore(
             ?: return null
         val migrated = when (version) {
             STRUCTURED_FORMAT_VERSION -> json
-            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV16ToV17(json)
-            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV15ToV17(json)
+            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV17ToV18(json)
+            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV16ToV18(json)
+            STRUCTURED_FORMAT_VERSION - 3 -> migrateStructuredV15ToV18(json)
             else -> return null
         }
         // issue #21: 旧装備操作を PLACE_ITEM へ正本化します。
@@ -192,6 +161,10 @@ class ScriptStore(
         if (script.arguments == null) {
             script.arguments = emptyList()
         }
+        @Suppress("SENSELESS_COMPARISON")
+        if (script.trigger == null) {
+            script.trigger = ScriptTrigger()
+        }
         if (script.formatVersion != STRUCTURED_FORMAT_VERSION) return null
         if (validateRecursively(script.graph, UNBOUNDED_LIMITS).isNotEmpty()) return null
         script
@@ -200,28 +173,19 @@ class ScriptStore(
     fun copyForItem(source: DiskScript): DiskScript =
         source.copy(
             id = UUID.randomUUID(),
-            createdAt = System.currentTimeMillis(),
-            listed = false,
             revision = 0L,
             graph = source.graph.deepCopy(),
-            collapsedForStartIds = null,
-            collapsedConditionIds = null,
         ).also(::save)
 
-    fun copyToLibrary(source: DiskScript, owner: UUID, name: String = source.name): DiskScript =
+    fun copyToLibrary(source: DiskScript, playerId: UUID, name: String = source.name): DiskScript =
         source.copy(
             id = UUID.randomUUID(),
             name = name,
-            owner = owner,
-            createdAt = System.currentTimeMillis(),
-            listed = false,
             revision = 0L,
             graph = source.graph.deepCopy(),
-            collapsedForStartIds = null,
-            collapsedConditionIds = null,
         ).also {
             save(it)
-            addToLibrary(owner, it.id)
+            addToLibrary(playerId, it.id)
         }
 
     /** 保存済み内容の独立コピーを返す。呼び出し側が変更しても保存済み正本へ波及しない。 */
@@ -272,9 +236,6 @@ class ScriptStore(
         require(script.revision >= 0L) { "unsupported negative script revision" }
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
-        // 旧listedフラグを一覧の正本として再出力しないよう、保存境界で必ず
-        // 関係ファイル方式へ正規化します。
-        script.listed = false
         val previous = cache[script.id]
         if (previous != null && script.revision != previous.revision) {
             throw java.util.ConcurrentModificationException(
@@ -282,23 +243,6 @@ class ScriptStore(
                     "expected=${script.revision} actual=${previous.revision}",
             )
         }
-        if (previous != null && !sameEditableContent(previous, script)) {
-            // 名前・タイマーだけの編集も、ノード編集と同じくディスク内容です。
-            // 呼び出し元ごとにフラグを立てるとインベントリGUIとジェスチャーGUIで
-            // 漏れが生じるため、保存正本を確定するこの一点で差分を記録します。
-            script.contentModified = true
-        }
-        // 保存では正規形 DSL を正本として書きます。DSL へ写像できないグラフは
-        // 従来形式のまま残し、次回読込の自動変換へ回します。
-        script.dsl = runCatching {
-            DslPrinter(::diskName).print(
-                script.graph, script.name, script.effectiveTrigger(), script.arguments,
-            )
-        }.onFailure {
-            logger.warning(
-                "DSL への変換に失敗したためグラフ形式で保存します: ${script.name} (${it.message})"
-            )
-        }.getOrNull()
         // 保存成功ごとに単調増加させ、入力画面開始時の正本世代と比較できるようにします。
         script.revision = (previous?.revision ?: script.revision).inc()
         atomicWrite(file(script.id), gson.toJson(script))
@@ -306,36 +250,6 @@ class ScriptStore(
         rejectedFiles.remove(script.id)
         cache[script.id] = script.deepCopy()
         editorId?.let { recordHistory(it, script.id) }
-        if (previous != null && previous.name != script.name) {
-            propagateDiskRename(script.id)
-        }
-    }
-
-    /**
-     * ディスク名の変更を、`call "name"` で参照する全プログラムの DSL 正本へ
-     * 伝播します。DSL テキストはディスク名を正本として参照するため、保存済み
-     * テキストだけを最新名へ書き換えます（グラフ・revision・内容編集フラグは
-     * 変わりません）。
-     */
-    private fun propagateDiskRename(renamedId: UUID) {
-        listAll().filter { candidate ->
-            candidate.id != renamedId && candidate.graph.nodes.values.any {
-                it.type == CommandType.DISK_CALL &&
-                    it.string("diskId") == renamedId.toString()
-            }
-        }.forEach { caller ->
-            withScriptLock(caller.id) {
-                val target = file(caller.id)
-                if (!target.isFile) return@withScriptLock
-                caller.dsl = runCatching {
-                    DslPrinter(::diskName).print(
-                        caller.graph, caller.name, caller.effectiveTrigger(), caller.arguments,
-                    )
-                }.getOrNull()
-                atomicWrite(target, gson.toJson(caller))
-                cache[caller.id] = caller.deepCopy()
-            }
-        }
     }
 
     fun delete(id: UUID) = withScriptLock(id) {
@@ -382,9 +296,10 @@ class ScriptStore(
             ?.mapNotNull { file ->
                 val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()
                     ?: return@mapNotNull null
-                cached(id)?.deepCopy()
+                cached(id)?.deepCopy()?.to(file.lastModified())
             }
-            ?.sortedBy(DiskScript::createdAt)
+            ?.sortedBy(Pair<DiskScript, Long>::second)
+            ?.map(Pair<DiskScript, Long>::first)
             ?: emptyList()
 
     /** 旧API名。実体は新しいライブラリ関係を参照します。 */
@@ -560,22 +475,33 @@ class ScriptStore(
         return root
     }
 
-    /** listed=trueの旧形式を初回だけライブラリ関係へ移行します。 */
-    @Suppress("DEPRECATION")
+    /**
+     * listed=trueの旧形式を初回だけライブラリ関係へ移行します。
+     *
+     * モデルからは廃止した項目のため、保存JSONの欄を直接読み取ります。
+     * 移行済みマーカーはJSONから除去して書き戻し、次回起動時に再登録しない
+     * ようにします。
+     */
     private fun migrateLegacyListedPrograms() {
         var changed = false
         dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
             ?.forEach { file ->
                 val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull() ?: return@forEach
-                val script = cached(id) ?: return@forEach
-                if (script.listed) {
-                    val entries = libraryPrograms.getOrPut(script.owner) { linkedSetOf() }
-                    changed = entries.add(script.id) || changed
-                    // 移行済みマーカーを消すことで、利用者が後からライブラリから
-                    // 外したプログラムを次回起動時に再登録しないようにします。
-                    script.listed = false
-                    atomicWrite(file(id), gson.toJson(script))
-                }
+                // 起動時に全ファイルを検証するため、通常の読込・隔離経路を通します。
+                // 読み込めない（隔離対象）ファイルはここで警告済みになります。
+                cached(id) ?: return@forEach
+                val root = runCatching {
+                    JsonParser.parseString(file.readText(Charsets.UTF_8)).asJsonObject
+                }.getOrNull() ?: return@forEach
+                val listed = root["listed"]?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+                if (!listed) return@forEach
+                val owner = root["owner"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                    ?.let { runCatching { UUID.fromString(it.asString) }.getOrNull() }
+                    ?: return@forEach
+                val entries = libraryPrograms.getOrPut(owner) { linkedSetOf() }
+                changed = entries.add(id) || changed
+                root.remove("listed")
+                atomicWrite(file, gson.toJson(root))
             }
         if (changed) writeRelations()
     }
@@ -605,91 +531,15 @@ class ScriptStore(
             }
             return null
         }
-        // `dsl` 欄を持たない旧保存は初回読込時に DSL へ自動変換して書き戻し、
-        // 以後は DSL を正本として扱います。DSL へ写像できない構造は従来形式の
-        // まま維持し、警告だけを記録します。
-        if (loaded.dsl == null && dslConverting.get().add(id)) {
-            try {
-                convertToCanonicalDsl(loaded, target)
-            } finally {
-                dslConverting.get().remove(id)
-            }
-        }
         rejectedFiles.remove(id)
         cache[id] = loaded
         return loaded
     }
 
-    /** 旧形式の読込済みスクリプトへ正規形 DSL を生成して `dsl` 欄を書き戻します。 */
-    private fun convertToCanonicalDsl(script: DiskScript, target: File) {
-        val dsl = runCatching {
-            DslPrinter(::diskName).print(
-                script.graph, script.name, script.effectiveTrigger(), script.arguments,
-            )
-        }
-            .onFailure {
-                logger.warning(
-                    "DSL へ変換できないためグラフ形式を維持します: ${script.name} (${it.message})"
-                )
-            }
-            .getOrNull() ?: return
-        script.dsl = dsl
-        atomicWrite(target, gson.toJson(script))
-    }
-
-    /**
-     * `dsl` 欄の DSL テキストを CommandGraph と宣言部へ再コンパイルします。
-     * 読込時の正本処理であり、失敗は呼出し側で破損データとして隔離されます。
-     * `call` の参照先グラフは現在の正本（DSL 適用済み）から取ります。
-     */
-    private fun compileCanonicalDsl(script: DiskScript, program: DslProgram): DslCompileResult {
-        if (!dslCompiling.get().add(script.id)) {
-            // `call` 解決がこのディスクへ戻ってきた循環です。保存済みグラフを
-            // スナップショットとして返し、循環可否は検証層へ委ねます。
-            return DslCompileResult(script.graph, script.effectiveTrigger(), script.arguments)
-        }
-        try {
-            return DslCompiler(worldTypes(), ::resolveDiskLink).compile(program)
-        } finally {
-            dslCompiling.get().remove(script.id)
-        }
-    }
-
-    /**
-     * `call "<name>"` の対象ディスクを名前または UUID で解決します。
-     * スナップショットには解決済み正本のグラフをそのまま使います。
-     */
-    private fun resolveDiskLink(name: String): DslDiskLink? {
-        val byUuid = runCatching { UUID.fromString(name) }.getOrNull()?.let(::cached)
-        val target = byUuid ?: listAll().firstOrNull { it.name == name } ?: return null
-        return DslDiskLink(target.id, target.graph, target.arguments)
-    }
-
-    /** DISK_CALL の diskId を現在のプログラム名へ逆引きします（DSL 印刷用）。 */
-    private fun diskName(id: UUID): String? = cached(id)?.name
-
     private fun DiskScript.deepCopy(): DiskScript = copy(
-        // TimerSettingは可変データなので、グラフだけをコピーするとload()後の
-        // タイマー編集が保存済みキャッシュへ直接波及し、差分追跡をすり抜けます。
         // グラフの独立コピーは CommandGraph.deepCopy が内部グラフも含めて行います。
-        timer = timer.copy(),
         graph = graph.deepCopy(),
-        // 旧形式の折り畳み表示状態は新形式で不使用のため引き継ぎません。
-        collapsedForStartIds = null,
-        collapsedConditionIds = null,
     )
-
-    /**
-     * 識別子・所有者・一覧公開状態・作成時刻を除いた利用者編集部分を比較します。
-     * 折りたたみ表示は実行内容ではないため比較対象外とし、トグルだけで
-     * ディスク内容ありとは判定しません。起動方法は正本 `trigger` と旧欄
-     * （`activation`／`timer`）の読み替え後の意味で比較します。
-     */
-    private fun sameEditableContent(left: DiskScript, right: DiskScript): Boolean =
-        left.name == right.name &&
-            left.effectiveTrigger() == right.effectiveTrigger() &&
-            left.arguments == right.arguments &&
-            left.graph == right.graph
 
     private fun file(id: UUID) = dir.resolve("$id.json")
 
@@ -705,20 +555,21 @@ class ScriptStore(
             ?.asString
             ?.toIntOrNull()
             ?: error("formatVersionがありません、または整数ではありません")
-        // issue #4 の方針により、現行17と直前2世代（16・15）だけを受け付け、
+        // issue #4 の方針により、現行18と直前3世代（17・16・15）だけを受け付け、
         // それ以外は非対応形式として隔離します。旧形式の移行連鎖は保持せず、
         // 黙って別意味へ変換しません。
-        // v16→v17は保存キーの改名（召喚の種類 entity→summonEntity、
-        // 配置先 destination→placeDestination、値保持）を行います。
-        // v15→v17は#30の粒子移行に加えて同じ改名を適用します（v15→v16相当）。
+        // v17→v18はメタ欄の廃止と起動方法の trigger 一本化、v16→v18は保存キーの
+        // 改名（召喚の種類 entity→summonEntity、配置先 destination→placeDestination）を
+        // 加え、v15→v18は#30の粒子移行も併せて適用します。
         // v14以前は今回の受付対象外として隔離します。
         // 旧kind条件は [LegacyConditionMigration] で判定対象へ正本化します（#27）。
         // 旧equipは [LegacyEquipMigration] で PLACE_ITEM へ正本化します（#21）。
         // 同じ番号を異なる保存形式に再利用しません。
         val migrated = when (sourceVersion) {
             STRUCTURED_FORMAT_VERSION -> source
-            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV16ToV17(source)
-            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV15ToV17(source)
+            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV17ToV18(source)
+            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV16ToV18(source)
+            STRUCTURED_FORMAT_VERSION - 3 -> migrateStructuredV15ToV18(source)
             else -> {
                 quarantine(
                     file,
@@ -771,27 +622,12 @@ class ScriptStore(
                     "${file.absolutePath} (${limitViolations.joinToString("; ")})"
             )
         }
-        // `dsl` 欄を持つ保存形式は DSL が正本です。graph 欄は派生キャッシュ
-        // として扱い、読込では DSL から再コンパイルしたグラフを採用します。
-        // コンパイル失敗（手編集の誤記・参照先の削除等）では警告を残して
-        // 保存済みグラフへフォールバックし、プログラム自体は読み込み可能に
-        // 保ちます。次回保存で正規形へ自動修復されます。
-        script.dsl?.let { dsl ->
-            runCatching {
-                val program = DslParser.parse(dsl)
-                val compiled = compileCanonicalDsl(script, program)
-                script.graph = compiled.graph
-                // DSL 正本では program 宣言名がプログラム名、宣言部が起動方法・
-                // 呼出し引数の正本です。
-                script.name = program.name
-                script.trigger = compiled.trigger
-                script.arguments = compiled.arguments
-            }.onFailure {
-                logger.warning(
-                    "DSL 正本のコンパイルに失敗したため保存済みグラフを使います: " +
-                        "${file.name} (${it.message})"
-                )
-            }
+        // 旧JSONには trigger 欄が存在しない可能性があります（Gsonのリフレクション
+        // 復元では非null境界が保証されないため、欠落時はレッドストーン既定へ
+        // 正規化します）。意味の再解釈は行いません。
+        @Suppress("SENSELESS_COMPARISON")
+        if (script.trigger == null) {
+            script.trigger = ScriptTrigger(kind = TriggerKind.REDSTONE)
         }
         script
     } catch (error: Exception) {
@@ -805,7 +641,21 @@ class ScriptStore(
     }
 
     /**
-     * v16をv17へ移行します。保存キーの改名（値保持）を行います。
+     * v17をv18へ移行します。メタ欄の廃止と起動方法の trigger 一本化を行います。
+     *
+     * - 廃止欄 `owner` / `createdAt` / `listed` / `contentModified` / `dsl` /
+     *   `activation` / `timer` / `collapsedForStartIds` / `collapsedConditionIds` を除去。
+     * - 起動方法は旧 `activation` / `timer` から `trigger` 欄へ合成します。
+     */
+    private fun migrateStructuredV17ToV18(source: JsonObject): JsonObject {
+        val migrated = source.deepCopy()
+        migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        migrateTriggerFields(migrated)
+        return migrated
+    }
+
+    /**
+     * v16をv18へ移行します。v17相当の保存キー改名（値保持）を加えます。
      *
      * - 召喚ノードの種類 `entity` → `summonEntity`（一時対象指定の同名キーと区別）。
      * - 配置ノードの配置先 `destination` → `placeDestination`（テレポート移動先と区別）。
@@ -813,28 +663,60 @@ class ScriptStore(
      *
      * グラフ内のsnapshot／foldedGraphへ退避した副グラフも同じ規則で移行します。
      */
-    private fun migrateStructuredV16ToV17(source: JsonObject): JsonObject {
+    private fun migrateStructuredV16ToV18(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
         // issue #8: 旧JSONにない関数引数定義は空として移行し、欠落のまま復元しません。
         if (!migrated.has("arguments")) migrated.add("arguments", JsonArray())
         migrateRenamedFieldKeys(migrated["graph"]?.asJsonObject)
+        migrateTriggerFields(migrated)
         return migrated
     }
 
     /**
-     * v15をv17へ直接移行します。v16を経由する連鎖は残しません。
+     * v15をv18へ直接移行します。連鎖は残しません。
      *
-     * #30の粒子移行に加えて、v16→v17相当の保存キー改名を適用します。
+     * #30の粒子移行に加えて、保存キー改名と trigger 一本化を適用します。
+     * 現行の受付窓から外れているため呼び出されませんが、世代の境で再拡張
+     * した場合に備えて移行手順だけは保持します。
      */
-    private fun migrateStructuredV15ToV17(source: JsonObject): JsonObject {
+    private fun migrateStructuredV15ToV18(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
-        // issue #8: 旧JSONにない関数引数定義は空として移行し、欠落のまま復元しません。
         if (!migrated.has("arguments")) migrated.add("arguments", JsonArray())
         migrateParticleGraph(migrated["graph"]?.asJsonObject)
         migrateRenamedFieldKeys(migrated["graph"]?.asJsonObject)
+        migrateTriggerFields(migrated)
         return migrated
+    }
+
+    /**
+     * 廃止した旧起動欄 `activation` / `timer` とメタ欄を除去し、
+     * `trigger` 欄を合成します。合成規則は旧 [TriggersKt.effectiveTrigger] と
+     * 同一です（timer が有効なら TIMER 優先、activation に応じて種別を選択）。
+     * `trigger` 欄が既にある場合は合成せず既存値を維持します。
+     */
+    private fun migrateTriggerFields(script: JsonObject) {
+        if (!script.has("trigger")) {
+            // 旧欄からの読み替えは廃止前の effectiveTrigger と同一です。
+            // `activation`（NEEDS_REDSTONE/ALWAYS_ACTIVE のenum文字列）は
+            // 起動意味を持たず、タイマー有効なら TIMER、そうでなければ REDSTONE です。
+            val timer = script["timer"]?.takeIf { it.isJsonObject }?.asJsonObject
+            val timerEnabled = timer?.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+            val trigger = JsonObject()
+            if (timerEnabled) {
+                trigger.addProperty("kind", "TIMER")
+                timer.get("intervalSeconds")?.takeIf { it.isJsonPrimitive }
+                    ?.let { trigger.addProperty("intervalSeconds", it.asDouble) }
+            } else {
+                trigger.addProperty("kind", "REDSTONE")
+            }
+            script.add("trigger", trigger)
+        }
+        listOf(
+            "owner", "createdAt", "listed", "contentModified", "dsl",
+            "activation", "timer", "collapsedForStartIds", "collapsedConditionIds",
+        ).forEach { script.remove(it) }
     }
 
     /**
@@ -914,7 +796,7 @@ class ScriptStore(
         }
     }
 
-    // v14以前の移行処理は削除しました。現行17と直前2世代（16・15）以外は
+    // v14以前の移行処理は削除しました。現行18と直前3世代（17・16・15）以外は
     // 読み込み時に隔離するため、到達不能な移行連鎖を残しません。
 
     private fun quarantine(

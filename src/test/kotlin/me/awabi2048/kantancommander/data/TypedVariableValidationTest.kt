@@ -24,7 +24,7 @@ class TypedVariableValidationTest {
     private fun scriptWith(
         configure: me.awabi2048.kantancommander.model.CommandNode.() -> Unit,
     ): DiskScript {
-        val script = DiskScript(name = "typed-variables", owner = UUID.randomUUID())
+        val script = DiskScript(name = "typed-variables")
         GraphEditor.append(script.graph, CommandType.VARIABLE).configure()
         return script
     }
@@ -184,7 +184,7 @@ class TypedVariableValidationTest {
     @Test
     fun `execution operations follow the graph flow definitions`() {
         // DEFINE した直後の CHANGE はフロー定義で解決します。
-        val script = DiskScript(name = "execution-flow", owner = UUID.randomUUID())
+        val script = DiskScript(name = "execution-flow")
         val define = GraphEditor.append(script.graph, CommandType.VARIABLE)
         define.params.putAll(
             mapOf(
@@ -208,7 +208,7 @@ class TypedVariableValidationTest {
         assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == change.id })
 
         // フロー外の未定義 CHANGE は拒否します。
-        val script2 = DiskScript(name = "execution-missing", owner = UUID.randomUUID())
+        val script2 = DiskScript(name = "execution-missing")
         val change2 = GraphEditor.append(script2.graph, CommandType.VARIABLE)
         change2.params.putAll(
             mapOf(

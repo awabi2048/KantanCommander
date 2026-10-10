@@ -36,7 +36,7 @@ class DslCompilerTest {
     ): CommandGraph = DslCompiler(worldTypes, resolver).compile(DslParser.parse(src)).graph
 
     private fun script(graph: CommandGraph) =
-        DiskScript(name = "t", owner = UUID.randomUUID(), graph = graph)
+        DiskScript(name = "t", graph = graph)
 
     private fun assertValid(graph: CommandGraph) {
         assertEquals(emptyList<String>(), GraphValidator.validate(graph), "構造検証")

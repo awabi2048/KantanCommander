@@ -5,6 +5,8 @@ import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.TypedValue
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -40,7 +42,7 @@ class IncrementalValidatorTest {
     }
 
     private fun linearScript(): DiskScript {
-        val script = DiskScript(name = "incremental", owner = UUID.randomUUID())
+        val script = DiskScript(name = "incremental")
         val wait = GraphEditor.append(script.graph, CommandType.WAIT)
         wait.params["seconds"] = "1"
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
@@ -99,10 +101,10 @@ class IncrementalValidatorTest {
 
     @Test
     fun `condition subject change matches full validation`() {
-        val previous = DiskScript(name = "condition", owner = UUID.randomUUID())
+        val previous = DiskScript(name = "condition")
         val condition = GraphEditor.append(previous.graph, CommandType.CONDITION)
         condition.params["subject"] = ConditionSubject.OTHER_ENTITY.name
-        val mutated = DiskScript(name = "condition", owner = previous.owner).copy(
+        val mutated = DiskScript(name = "condition").copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
         )
@@ -131,13 +133,13 @@ class IncrementalValidatorTest {
 
     @Test
     fun `temporary variable change falls back to full validation`() {
-        val previous = DiskScript(name = "temp", owner = UUID.randomUUID())
+        val previous = DiskScript(name = "temp")
         val first = GraphEditor.append(previous.graph, CommandType.TEMP_SET)
         first.params["name"] = "flag"
         first.params["tempType"] = ValueType.NUMBER.name
         val second = GraphEditor.append(previous.graph, CommandType.WAIT)
         second.params["seconds"] = "\${flag}"
-        val mutated = DiskScript(name = "temp", owner = previous.owner).copy(
+        val mutated = DiskScript(name = "temp").copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
         )
@@ -159,7 +161,7 @@ class IncrementalValidatorTest {
         val mutated = linearScript().copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
-            timer = previous.timer.copy(enabled = true, intervalSeconds = 5.0),
+            trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 5.0),
         )
 
         assertEquivalent(previous, mutated)
@@ -167,13 +169,13 @@ class IncrementalValidatorTest {
 
     @Test
     fun `variable definitions path matches full validation`() {
-        val previous = DiskScript(name = "world-var", owner = UUID.randomUUID())
+        val previous = DiskScript(name = "world-var")
         val start = GraphEditor.append(previous.graph, CommandType.FOR_START)
         start.params["count"] = "\${limit}"
         val definitions = mapOf(
             "limit" to TypedValue(ValueType.NUMBER, numberValue = 3.0),
         )
-        val mutated = DiskScript(name = "world-var", owner = previous.owner).copy(
+        val mutated = DiskScript(name = "world-var").copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
         )
@@ -221,7 +223,7 @@ class IncrementalValidatorTest {
     fun `changed node referencing disk arguments matches full validation`() {
         // issue #8: 引数を参照するノードの編集は、種子付きで増分検証します。
         fun scriptWithArgs(operator: String): DiskScript {
-            val script = DiskScript(name = "args", owner = UUID.randomUUID())
+            val script = DiskScript(name = "args")
             script.arguments = listOf(
                 me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
             )
@@ -247,12 +249,12 @@ class IncrementalValidatorTest {
     fun `argument definition change falls back to full validation`() {
         // issue #8: 引数定義自体の変更は全ノードの定義可視性に波及するため、
         // グラフ不変でも増分検証を使わず全量へ委譲します。
-        val previous = DiskScript(name = "args", owner = UUID.randomUUID())
+        val previous = DiskScript(name = "args")
         previous.arguments = listOf(
             me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
         )
         GraphEditor.append(previous.graph, CommandType.WAIT).params["seconds"] = "1"
-        val mutated = DiskScript(name = "args", owner = previous.owner).copy(
+        val mutated = DiskScript(name = "args").copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
             arguments = listOf(
@@ -273,10 +275,10 @@ class IncrementalValidatorTest {
     @Test
     fun `return value edit falls back to full validation`() {        // issue #8: 戻り値の型一貫性はグラフ全体で判定するため、
         // RETURNノード自体の変更では増分検証を使わず全量へ委譲します。
-        val previous = DiskScript(name = "returns", owner = UUID.randomUUID())
+        val previous = DiskScript(name = "returns")
         val returned = GraphEditor.append(previous.graph, CommandType.RETURN_VALUE)
         returned.params["value"] = "1"
-        val mutated = DiskScript(name = "returns", owner = previous.owner).copy(
+        val mutated = DiskScript(name = "returns").copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
         )
@@ -299,7 +301,7 @@ class IncrementalValidatorTest {
     }
 
     private fun executionScript(): DiskScript {
-        val script = DiskScript(name = "execution", owner = UUID.randomUUID())
+        val script = DiskScript(name = "execution")
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "scope" to "EXECUTION",
@@ -317,7 +319,7 @@ class IncrementalValidatorTest {
     }
 
     private fun mutatedCopy(previous: DiskScript): DiskScript =
-        DiskScript(name = previous.name, owner = previous.owner).copy(
+        DiskScript(name = previous.name).copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
         )
@@ -398,7 +400,7 @@ class IncrementalValidatorTest {
     fun `folded inner define change falls back to full validation`() {
         // issue #8: 折り畳み内部の定義変更も、展開後の定義可視性に波及するため
         // 全量へ委譲します。外側ノードだけを見ると検出できません。
-        val previous = DiskScript(name = "folded", owner = UUID.randomUUID())
+        val previous = DiskScript(name = "folded")
         val condition = GraphEditor.append(previous.graph, CommandType.CONDITION)
         GraphEditor.append(previous.graph, CommandType.VARIABLE).params.putAll(
             mapOf(

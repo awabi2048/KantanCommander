@@ -22,7 +22,7 @@ import java.util.UUID
  */
 class EntityOperationValidationTest {
     private fun scriptWith(configure: (me.awabi2048.kantancommander.model.CommandNode) -> Unit): DiskScript {
-        val script = DiskScript(name = "entity-operation", owner = UUID.randomUUID())
+        val script = DiskScript(name = "entity-operation")
         val node = GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         }
@@ -31,7 +31,7 @@ class EntityOperationValidationTest {
     }
 
     private fun actionScriptWith(configure: (me.awabi2048.kantancommander.model.CommandNode) -> Unit): DiskScript {
-        val script = DiskScript(name = "entity-action", owner = UUID.randomUUID())
+        val script = DiskScript(name = "entity-action")
         val node = GraphEditor.append(script.graph, CommandType.ENTITY_ACTION).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         }
@@ -227,7 +227,7 @@ class EntityOperationValidationTest {
 
     @Test
     fun `data defers to runtime when entity type is unknown`() {
-        val script = DiskScript(name = "entity-data-runtime", owner = UUID.randomUUID())
+        val script = DiskScript(name = "entity-data-runtime")
         GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("ai")
@@ -239,7 +239,7 @@ class EntityOperationValidationTest {
 
     @Test
     fun `mannequin profile name validates player name syntax`() {
-        val valid = DiskScript(name = "mannequin-profile", owner = UUID.randomUUID()).also { script ->
+        val valid = DiskScript(name = "mannequin-profile").also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
                 params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME)
@@ -248,7 +248,7 @@ class EntityOperationValidationTest {
         }
         assertTrue(ExecutableScriptValidator.validate(valid).isEmpty())
 
-        val invalid = DiskScript(name = "mannequin-profile-invalid", owner = UUID.randomUUID()).also { script ->
+        val invalid = DiskScript(name = "mannequin-profile-invalid").also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
                 params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME)
@@ -261,7 +261,7 @@ class EntityOperationValidationTest {
             },
         )
 
-        val blank = DiskScript(name = "mannequin-profile-blank", owner = UUID.randomUUID()).also { script ->
+        val blank = DiskScript(name = "mannequin-profile-blank").also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
                 params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME)
@@ -277,7 +277,7 @@ class EntityOperationValidationTest {
 
     @Test
     fun `mannequin pose validates child screen choices`() {
-        val valid = DiskScript(name = "mannequin-pose", owner = UUID.randomUUID()).also { script ->
+        val valid = DiskScript(name = "mannequin-pose").also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
                 params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_POSE)
@@ -286,7 +286,7 @@ class EntityOperationValidationTest {
         }
         assertTrue(ExecutableScriptValidator.validate(valid).isEmpty())
 
-        val invalid = DiskScript(name = "mannequin-pose-invalid", owner = UUID.randomUUID()).also { script ->
+        val invalid = DiskScript(name = "mannequin-pose-invalid").also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
                 params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_POSE)
@@ -302,7 +302,7 @@ class EntityOperationValidationTest {
 
     @Test
     fun `mannequin description accepts text including empty`() {
-        val empty = DiskScript(name = "mannequin-description-empty", owner = UUID.randomUUID()).also { script ->
+        val empty = DiskScript(name = "mannequin-description-empty").also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
                 params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION)
@@ -311,7 +311,7 @@ class EntityOperationValidationTest {
         }
         assertTrue(ExecutableScriptValidator.validate(empty).isEmpty())
 
-        val text = DiskScript(name = "mannequin-description-text", owner = UUID.randomUUID()).also { script ->
+        val text = DiskScript(name = "mannequin-description-text").also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
                 params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION)

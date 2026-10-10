@@ -222,10 +222,9 @@ private fun TargetSpec.needsTriggerKindNormalization(): Boolean = kind != Target
 /**
  * issue #7 の起動方法の保存形式です。
  *
- * 旧JSONには存在しないため、欠落時は `DiskScript.trigger` が null となり、
- * [DiskScript.effectiveTrigger] が従来の `activation`＋`timer` から読み替えます。
- * 新規保存は常に明示値を書き、従来欄（`timer`／`activation`）も整合させます。
- * `intervalSeconds` は TIMER 以外では使用しません。
+ * `.kcp` の `trigger` 宣言が正本であり、埋め込みJSONでは `trigger` オブジェクトに
+ * 保持します。旧形式の `activation`＋`timer` 欄は読込時の移行で
+ * この形式へ置き換えます。`intervalSeconds` は TIMER 以外では使用しません。
  */
 data class ScriptTrigger(
     val kind: TriggerKind = TriggerKind.REDSTONE,
@@ -256,15 +255,23 @@ data class ScriptTrigger(
 /**
  * 実行時に採用する起動方法を返します。
  *
- * 明示指定があれば正規化して採用し、旧保存（欠落）は従来欄から読み替えます。
- * タイマー有効→TIMER、有効でない→REDSTONE であり、`ALWAYS_ACTIVE` 単独の
- * 旧値は検証層で拒否されるため到達しません。到達した場合はタイマー扱いとします。
+ * 保持値を保存時と同じ規則で正規化して返します（TIMER 以外に残った間隔・
+ * イベント指定は実行意味を持たないため落とします）。
  */
-fun DiskScript.effectiveTrigger(): ScriptTrigger {
-    val explicit = trigger
-    if (explicit != null) return explicit.normalized()
-    if (timer.enabled) return ScriptTrigger(TriggerKind.TIMER, intervalSeconds = timer.intervalSeconds)
-    return ScriptTrigger(TriggerKind.REDSTONE)
+fun DiskScript.effectiveTrigger(): ScriptTrigger = trigger.normalized()
+
+/**
+ * TIMER の間隔をtick値へ換算します。
+ * Minecraftの内部スケジューラへ渡す値はこの境界でだけ算出します。
+ * 0以下・非有限は既定秒へ、上限超過は上限秒へ寄せます（いずれも検証層で
+ * エラーになる値であり、ここでは実行不能にしないためのクランプです）。
+ */
+fun ScriptTrigger.intervalTicks(): Long {
+    val seconds = intervalSeconds
+        .takeIf { it.isFinite() && it > 0.0 }
+        ?.coerceAtMost(MAX_TIMER_SECONDS.toDouble())
+        ?: DEFAULT_TIMER_SECONDS
+    return CommandValueRules.secondsToTicks(seconds) ?: 1L
 }
 
 /**

@@ -18,14 +18,14 @@ import java.util.UUID
  */
 class DiskCallSelectionTest {
     private fun disk(name: String, arguments: List<DiskArgument>): DiskScript =
-        DiskScript(name = name, owner = UUID.randomUUID()).apply {
+        DiskScript(name = name).apply {
             this.arguments = arguments
             graph = CommandGraph.empty()
         }
 
     @Test
     fun `selection copies snapshot and declared arguments`() {
-        val script = DiskScript(name = "caller", owner = UUID.randomUUID())
+        val script = DiskScript(name = "caller")
         val node = GraphEditor.append(script.graph, CommandType.DISK_CALL)
         val calledId = UUID.randomUUID()
         val called = disk(
@@ -48,7 +48,7 @@ class DiskCallSelectionTest {
 
     @Test
     fun `reselecting removes arguments that disappeared`() {
-        val script = DiskScript(name = "caller", owner = UUID.randomUUID())
+        val script = DiskScript(name = "caller")
         val node = GraphEditor.append(script.graph, CommandType.DISK_CALL)
         node.applyCalledDisk(
             UUID.randomUUID(),
@@ -67,7 +67,7 @@ class DiskCallSelectionTest {
 
     @Test
     fun `disk without arguments clears declared list`() {
-        val script = DiskScript(name = "caller", owner = UUID.randomUUID())
+        val script = DiskScript(name = "caller")
         val node = GraphEditor.append(script.graph, CommandType.DISK_CALL)
         node.applyCalledDisk(UUID.randomUUID(), disk("first", listOf(DiskArgument("count", ValueType.NUMBER))))
 

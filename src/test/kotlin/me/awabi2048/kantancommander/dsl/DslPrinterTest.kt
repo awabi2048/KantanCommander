@@ -31,7 +31,6 @@ class DslPrinterTest {
         // 導入されるため、検証へは宣言部込みの DiskScript を渡します。
         val script = DiskScript(
             name = "t",
-            owner = UUID.randomUUID(),
             graph = result.graph,
             trigger = result.trigger,
             arguments = result.arguments,

@@ -17,7 +17,7 @@ import java.util.UUID
  */
 class SummonValidationTest {
     private fun summon(configure: me.awabi2048.kantancommander.model.CommandNode.() -> Unit): DiskScript {
-        val script = DiskScript(name = "summon-data", owner = UUID.randomUUID())
+        val script = DiskScript(name = "summon-data")
         GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
             params["summonEntity"] = "minecraft:zombie"
             configure()

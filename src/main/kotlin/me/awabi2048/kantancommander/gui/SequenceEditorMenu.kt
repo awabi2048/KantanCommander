@@ -585,14 +585,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             plugin.scripts.update(placement.scriptId, player.uniqueId) { placementScript ->
                 if (placementScript.graph.nodes.isNotEmpty()) return@update null
                 placementScript.name = diskScript.name
-                placementScript.activation = diskScript.activation
-                placementScript.timer = diskScript.timer.copy()
-                // issue #7/#8: 起動方法と引数定義も引き継ぎます。従来欄だけでは
-                // イベント起動が失われるため、明示指定ごと複写します。
-                placementScript.trigger = diskScript.trigger?.copy()
+                // issue #7/#8: 起動方法と引数定義も引き継ぎます。
+                placementScript.trigger = diskScript.trigger.copy()
                 placementScript.arguments = diskScript.arguments.toList()
                 placementScript.graph = diskScript.graph.deepCopy()
-                placementScript.contentModified = diskScript.contentModified
                 true
             }
         }

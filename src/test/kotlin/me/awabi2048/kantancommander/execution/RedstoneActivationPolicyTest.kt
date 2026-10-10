@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.execution
 
-import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.intervalTicks
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -9,66 +11,37 @@ import java.util.UUID
 
 class RedstoneActivationPolicyTest {
     @Test
-    fun `timer off runs only on redstone rising edge`() {
-        assertTrue(decide(timer = false, previous = false, powered = true))
-        assertFalse(decide(timer = false, previous = true, powered = true))
-        assertFalse(decide(timer = false, previous = true, powered = false))
-        assertFalse(decide(timer = false, previous = false, powered = false))
+    fun `redstone trigger runs only on rising edge`() {
+        assertTrue(decide(trigger = ScriptTrigger(TriggerKind.REDSTONE), previous = false, powered = true))
+        assertFalse(decide(trigger = ScriptTrigger(TriggerKind.REDSTONE), previous = true, powered = true))
+        assertFalse(decide(trigger = ScriptTrigger(TriggerKind.REDSTONE), previous = true, powered = false))
+        assertFalse(decide(trigger = ScriptTrigger(TriggerKind.REDSTONE), previous = false, powered = false))
     }
 
     @Test
-    fun `timer off never permits always active`() {
-        assertFalse(
-            decide(
-                activation = ActivationMode.ALWAYS_ACTIVE,
-                timer = false,
-                previous = false,
-                powered = true,
-            )
-        )
-    }
-
-    @Test
-    fun `timer with redstone runs on rising edge then repeats by interval`() {
-        // タイマー有効時は立ち上がりエッジで即時実行され、基準時刻が張り直される。
-        assertTrue(decide(timer = true, previous = false, powered = true, now = 100, last = 95))
-        // 立ち上がり後は常時実行へ切り替えた場合と同じく、間隔経過だけで判定する。
-        assertFalse(decide(timer = true, previous = true, powered = true, now = 109, last = 100))
-        assertTrue(decide(timer = true, previous = true, powered = true, now = 110, last = 100))
+    fun `timer trigger repeats by interval and ignores signal edges`() {
+        val timer = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.5)
+        // 信号の立ち上がりは実行条件に含めず、基準時刻からの間隔経過だけで判定する。
+        assertFalse(decide(trigger = timer, previous = false, powered = true, now = 104, last = 95))
+        assertFalse(decide(trigger = timer, previous = true, powered = true, now = 109, last = 100))
+        assertTrue(decide(trigger = timer, previous = true, powered = true, now = 110, last = 100))
         // 通電が切れている間も経過時間は進むため、間隔が満ちていれば直ちに実行される。
-        assertTrue(decide(timer = true, previous = true, powered = false, now = 110, last = 100))
-        assertFalse(decide(timer = true, previous = true, powered = false, now = 109, last = 100))
+        assertTrue(decide(trigger = timer, previous = true, powered = false, now = 110, last = 100))
+        assertFalse(decide(trigger = timer, previous = true, powered = false, now = 109, last = 100))
     }
 
     @Test
-    fun `always active timer ignores redstone but observes interval`() {
-        assertFalse(
-            decide(
-                activation = ActivationMode.ALWAYS_ACTIVE,
-                timer = true,
-                powered = false,
-                now = 100,
-                last = null,
-            )
-        )
-        assertFalse(
-            decide(
-                activation = ActivationMode.ALWAYS_ACTIVE,
-                timer = true,
-                powered = false,
-                now = 109,
-                last = 100,
-            )
-        )
-        assertTrue(
-            decide(
-                activation = ActivationMode.ALWAYS_ACTIVE,
-                timer = true,
-                powered = false,
-                now = 110,
-                last = 100,
-            )
-        )
+    fun `timer trigger waits for the first anchor`() {
+        val timer = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.5)
+        assertFalse(decide(trigger = timer, powered = false, now = 100, last = null))
+        assertFalse(decide(trigger = timer, powered = false, now = 109, last = 100))
+        assertTrue(decide(trigger = timer, powered = false, now = 110, last = 100))
+    }
+
+    @Test
+    fun `event trigger never runs on the tick watcher`() {
+        val event = ScriptTrigger(TriggerKind.EVENT)
+        assertFalse(decide(trigger = event, previous = false, powered = true, now = 1000, last = 0))
     }
 
     @Test
@@ -79,7 +52,7 @@ class RedstoneActivationPolicyTest {
         // そのためサーバー起動直後に通電中でも、立ち上がり実行は起きない。
         assertFalse(
             decide(
-                timer = false,
+                trigger = ScriptTrigger(TriggerKind.REDSTONE),
                 previous = state.observePower("world,1,2,3", true),
                 powered = true,
             )
@@ -106,31 +79,29 @@ class RedstoneActivationPolicyTest {
         val id = UUID.randomUUID()
 
         assertEquals(true, state.observePower("world,1,2,3", true))
-        assertEquals(100L, state.timerAnchor(id, true, 100L))
+        assertEquals(100L, state.timerAnchor(id, 100L))
         state.markRun(id, 120L)
-        assertEquals(120L, state.timerAnchor(id, true, 130L))
+        assertEquals(120L, state.timerAnchor(id, 130L))
 
         state.resetTiming(id)
-        assertEquals(140L, state.timerAnchor(id, true, 140L))
+        assertEquals(140L, state.timerAnchor(id, 140L))
         state.forget("world,1,2,3", id)
         assertEquals(true, state.observePower("world,1,2,3", true))
-        assertEquals(null, state.timerAnchor(id, false, 150L))
     }
 
     private fun decide(
-        activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
-        timer: Boolean,
+        trigger: ScriptTrigger,
         previous: Boolean = false,
         powered: Boolean,
         now: Long = 100,
         last: Long? = 90,
-    ) = RedstoneActivationPolicy.shouldRun(
-        activation = activation,
-        timerEnabled = timer,
-        intervalTicks = 10,
-        wasPowered = previous,
-        isPowered = powered,
-        currentTick = now,
-        lastRunTick = last,
-    )
+    ): Boolean = when (trigger.normalized().kind) {
+        TriggerKind.EVENT -> false
+        TriggerKind.TIMER -> RedstoneActivationPolicy.isIntervalElapsed(
+            intervalTicks = trigger.normalized().intervalTicks(),
+            currentTick = now,
+            lastRunTick = last,
+        )
+        TriggerKind.REDSTONE -> RedstoneActivationPolicy.isRisingEdge(previous, powered)
+    }
 }

@@ -97,15 +97,7 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
                         TriggerDisplay.summary(player, script.effectiveTrigger()),
                     ),
-                    // issue #13: 所有者・作成日時・共同編集者を一覧へ投影します。
-                    GuiMenuEntryData(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_OWNER),
-                        ProgramMetadata.ownerName(script.owner),
-                    ),
-                    GuiMenuEntryData(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_CREATED_AT),
-                        ProgramMetadata.formatCreatedAt(script.createdAt),
-                    ),
+                    // issue #13: 所有者・作成日時のメタデータは DSL 正本化で廃止しました。
                     // 未設定の検証エラーを一覧へ投影し、設定の完了扱いと接続します。
                     // 保存は構造検証だけを通すため、意味的な未完了はここで示します。
                     programStatusEntry(player, script),

@@ -78,8 +78,8 @@ class ScriptStoreLifecycleTest {
         val player = UUID.randomUUID()
         val library = store.create(player, "library")
         store.recordHistory(player, library.id)
-        val placementOnly = store.createPlacement(player, "placement")
-        val orphan = store.createPlacement(player, "orphan")
+        val placementOnly = store.createPlacement("placement")
+        val orphan = store.createPlacement("orphan")
         placed += placementOnly.id
 
         // library は履歴に残るため orphan ではありません。
@@ -110,7 +110,7 @@ class ScriptStoreLifecycleTest {
 
     @Test
     fun `asset references collect structure and group names from executable operations`() {
-        val script = DiskScript(name = "assets", owner = UUID.randomUUID())
+        val script = DiskScript(name = "assets")
         GraphEditor.append(script.graph, CommandType.STRUCTURE_PLACE).apply { params["structure"] = "my_house-01" }
         GraphEditor.append(script.graph, CommandType.ENTITY_GROUP).apply { params["group"] = "my_group-01" }
         GraphEditor.append(script.graph, CommandType.WAIT)

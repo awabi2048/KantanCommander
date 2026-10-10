@@ -1,5 +1,7 @@
 package me.awabi2048.kantancommander.model
 
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotSame
@@ -8,14 +10,14 @@ import org.junit.jupiter.api.Test
 class ModelsTest {
     @Test
     fun `timer interval is normalized to supported range`() {
-        assertEquals(20L, TimerSetting(true, 0.0).intervalTicks)
-        assertEquals(1_728_000L, TimerSetting(true, 100_000.0).intervalTicks)
+        assertEquals(20L, ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.0).intervalTicks())
+        assertEquals(1_728_000L, ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 100_000.0).intervalTicks())
     }
 
     @Test
     fun `timer accepts fractional seconds without a lower bound`() {
-        assertEquals(10L, TimerSetting(true, 0.5).intervalTicks)
-        assertEquals(2L, TimerSetting(true, 0.1).intervalTicks)
+        assertEquals(10L, ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.5).intervalTicks())
+        assertEquals(2L, ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 0.1).intervalTicks())
     }
 
     @Test

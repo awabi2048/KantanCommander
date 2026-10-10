@@ -18,7 +18,6 @@ class ControlBlockProgramCodecTest {
         }
         val script = DiskScript(
             name = "同梱テスト",
-            owner = UUID.randomUUID(),
             graph = me.awabi2048.kantancommander.model.CommandGraph(
                 entryNodeId = node.id,
                 nodes = linkedMapOf(node.id to node),
@@ -29,7 +28,7 @@ class ControlBlockProgramCodecTest {
 
         assertNotNull(decoded)
         assertEquals(script.name, decoded?.name)
-        assertEquals(script.owner, decoded?.owner)
+        assertEquals(script.trigger, decoded?.trigger)
         assertEquals(script.graph.entryNodeId, decoded?.graph?.entryNodeId)
         assertEquals(script.graph.nodes.keys, decoded?.graph?.nodes?.keys)
         assertEquals("CONTROL_BLOCK", decoded?.graph?.nodes?.get(node.id)?.params?.get("subject"))
@@ -53,7 +52,6 @@ class ControlBlockProgramCodecTest {
         }
         val script = DiskScript(
             name = "同梱移行テスト",
-            owner = UUID.randomUUID(),
             graph = me.awabi2048.kantancommander.model.CommandGraph(
                 entryNodeId = node.id,
                 nodes = linkedMapOf(node.id to node),

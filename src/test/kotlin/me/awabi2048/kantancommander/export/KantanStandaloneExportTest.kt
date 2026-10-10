@@ -1,12 +1,12 @@
 package me.awabi2048.kantancommander.export
 
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
 import java.nio.file.Path
 import java.util.UUID
-import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.TimerSetting
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.TypedValue
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -24,9 +24,7 @@ class KantanStandaloneExportTest {
         val script = DiskScript(
             id = scriptId,
             name = "timer",
-            owner = UUID.randomUUID(),
-            activation = ActivationMode.ALWAYS_ACTIVE,
-            timer = TimerSetting(true, 3.0),
+            trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 3.0),
             graph = CommandGraph.empty(),
         )
         val program = PreparedProgram(

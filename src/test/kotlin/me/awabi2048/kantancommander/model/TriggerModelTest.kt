@@ -1,5 +1,7 @@
 package me.awabi2048.kantancommander.model
 
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -9,16 +11,15 @@ import java.util.UUID
 /**
  * issue #7 の起動方法モデルのテストです。
  *
- * 旧保存の読み替え（タイマー有効→TIMER、無効→REDSTONE）、明示指定の正規化、
+ * 起動方法の正本は `trigger` 欄です。既定値・明示指定の正規化、
  * イベント引数契約の名称・型を固定します。引数名はすべて実行開始時に
  * 定義できる変数名であり、実行層と検証層で同じ表を共有します。
  */
 class TriggerModelTest {
     @Test
-    fun `legacy timer maps to timer trigger`() {
-        val script = DiskScript(name = "legacy-timer", owner = UUID.randomUUID())
-        script.timer.enabled = true
-        script.timer.intervalSeconds = 5.0
+    fun `timer trigger keeps its interval`() {
+        val script = DiskScript(name = "timer")
+        script.trigger = ScriptTrigger(TriggerKind.TIMER, intervalSeconds = 5.0)
         val effective = script.effectiveTrigger()
         assertEquals(TriggerKind.TIMER, effective.kind)
         assertEquals(5.0, effective.intervalSeconds)
@@ -26,20 +27,16 @@ class TriggerModelTest {
     }
 
     @Test
-    fun `legacy redstone maps to redstone trigger`() {
-        val script = DiskScript(name = "legacy-redstone", owner = UUID.randomUUID())
-        script.timer.enabled = false
-        script.activation = ActivationMode.NEEDS_REDSTONE
+    fun `default trigger is redstone`() {
+        val script = DiskScript(name = "redstone")
         val effective = script.effectiveTrigger()
         assertEquals(TriggerKind.REDSTONE, effective.kind)
         assertNull(effective.event)
     }
 
     @Test
-    fun `explicit trigger wins over legacy fields`() {
-        val script = DiskScript(name = "explicit", owner = UUID.randomUUID())
-        script.timer.enabled = true
-        script.timer.intervalSeconds = 5.0
+    fun `event trigger keeps its kind`() {
+        val script = DiskScript(name = "event")
         script.trigger = ScriptTrigger(TriggerKind.EVENT, EventTriggerKind.BLOCK_BREAK)
         val effective = script.effectiveTrigger()
         assertEquals(TriggerKind.EVENT, effective.kind)

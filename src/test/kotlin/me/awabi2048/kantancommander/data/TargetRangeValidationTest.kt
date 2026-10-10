@@ -17,7 +17,7 @@ import java.util.UUID
  */
 class TargetRangeValidationTest {
     private fun scriptWithTarget(spec: TargetSpec): DiskScript {
-        val script = DiskScript(name = "target-range", owner = UUID.randomUUID())
+        val script = DiskScript(name = "target-range")
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
             targetSpec = spec
             params["mode"] = "tellraw"
@@ -65,13 +65,10 @@ class TargetRangeValidationTest {
     private fun persistedRoot(targetSpecJson: String) = JsonParser.parseString(
         """
         {
-          "formatVersion": 13,
+          "formatVersion": 18,
           "id": "${UUID.randomUUID()}",
           "name": "target-range",
-          "owner": "${UUID.randomUUID()}",
-          "createdAt": 0,
-          "activation": "NEEDS_REDSTONE",
-          "timer": {"enabled": false, "intervalSeconds": 1.0},
+          "trigger": {"kind": "REDSTONE"},
           "graph": {
             "nodes": {
               "${UUID.randomUUID()}": {

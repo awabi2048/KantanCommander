@@ -1,7 +1,6 @@
 package me.awabi2048.kantancommander.display
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.gui.ProgramMetadata
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.entity.Display
@@ -92,7 +91,7 @@ class ControlBlockGazeService(private val plugin: KantanCommanderPlugin) : Liste
         val display = located.world.spawn(located.location, TextDisplay::class.java) { display ->
             display.billboard = Display.Billboard.CENTER
             display.isSeeThrough = false
-            display.text(gazeText(player, script.name, ownerName(script.owner)))
+            display.text(gazeText(player, script.name))
         }
         shown[player.uniqueId] = ShownDisplay(display.uniqueId, placementKey)
         // 文言変化・chunk unload 時の残留を防ぐため、表示は短時間で除去します。
@@ -126,9 +125,6 @@ class ControlBlockGazeService(private val plugin: KantanCommanderPlugin) : Liste
         val location: Location,
     )
 
-    private fun ownerName(owner: UUID): String =
-        ProgramMetadata.ownerName(owner) { Bukkit.getOfflinePlayer(it).name }
-
     companion object {
         const val DEFAULT_INTERVAL_TICKS = 10L
         const val DEFAULT_DISTANCE = 8.0
@@ -137,17 +133,10 @@ class ControlBlockGazeService(private val plugin: KantanCommanderPlugin) : Liste
         const val EXPIRE_TICKS = 40L
 
         /**
-         * issue #13: 注視表示の文言です。program 名・所有者だけを示し、
+         * issue #13: 注視表示の文言です。program 名だけを示し、
          * 権限・状態の feedback は含めません（#20 と責務を分けます）。
          */
-        fun gazeText(player: Player, programName: String, ownerName: String): net.kyori.adventure.text.Component {
-            val ownerLabel = me.awabi2048.kantancommander.util.KcI18n.text(
-                player,
-                com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys.KANTAN_COMMANDER_CLEAN_ITEM_OWNER,
-            )
-            return net.kyori.adventure.text.Component.text(programName)
-                .append(net.kyori.adventure.text.Component.newline())
-                .append(net.kyori.adventure.text.Component.text("$ownerLabel: $ownerName"))
-        }
+        fun gazeText(player: Player, programName: String): net.kyori.adventure.text.Component =
+            net.kyori.adventure.text.Component.text(programName)
     }
 }

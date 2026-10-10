@@ -6,11 +6,11 @@ import java.security.MessageDigest
 import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.PlacementStore
-import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.effectiveTrigger
+import me.awabi2048.kantancommander.model.intervalTicks
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.NumericExpression
@@ -274,16 +274,18 @@ internal class PreparedKantanExport(
             }
             load += "execute in ${program.dimensionKey} run kill @e[type=minecraft:block_display,tag=${PlacementStore.DISPLAY_TAG}]"
             val entry = program.entryFunctionName
-            val command = if (program.script.timer.enabled) {
+            val trigger = program.script.trigger.normalized()
+            val command = if (trigger.kind == TriggerKind.TIMER) {
                 val wrapper = "placed/${entry}_timer"
                 val holder = timerHolder(entry)
+                val intervalTicks = trigger.intervalTicks()
                 Files.createDirectories(functions.resolve("placed"))
                 Files.writeString(
                     functions.resolve("$wrapper.mcfunction"),
-                    timerFunction(entry, program.script.timer.intervalTicks),
+                    timerFunction(entry, intervalTicks),
                 )
                 load += "scoreboard players set $holder kc_timer 0"
-                tick += "execute unless score $holder kc_timer matches ${program.script.timer.intervalTicks}.. " +
+                tick += "execute unless score $holder kc_timer matches ${intervalTicks}.. " +
                     "run scoreboard players add $holder kc_timer 1"
                 "function kantan:$wrapper"
             } else {
@@ -304,9 +306,10 @@ internal class PreparedKantanExport(
         val facing = placement.facing.lowercase().takeIf {
             it in setOf("north", "south", "east", "west", "up", "down")
         } ?: "north"
-        val repeating = program.script.timer.enabled
+        val repeating = program.script.trigger.normalized().kind == TriggerKind.TIMER
         val block = if (repeating) "minecraft:repeating_command_block" else "minecraft:command_block"
-        val automatic = repeating && program.script.activation == ActivationMode.ALWAYS_ACTIVE
+        // タイマー起動は信号なしで間隔実行されるため、常時実行へ写像します。
+        val automatic = repeating
         return "execute in ${program.dimensionKey} run setblock ${placement.x} ${placement.y} ${placement.z} " +
             "$block[facing=$facing]{Command:\"${escapeNbt(command)}\",auto:${if (automatic) 1 else 0}b}"
     }

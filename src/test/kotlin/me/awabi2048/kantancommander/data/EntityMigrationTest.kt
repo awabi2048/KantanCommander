@@ -106,7 +106,7 @@ class EntityMigrationTest {
         val marks = migrated.configuredFields ?: emptySet()
         assertTrue(me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("custom_name") in marks)
         assertTrue("customName" !in marks)
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
     }
 
     @Test
@@ -167,7 +167,7 @@ class EntityMigrationTest {
         assertEquals("minecraft:mannequin", migrated.string("summonEntity", ""))
         assertTrue("entity" !in migrated.params)
         assertTrue("summonEntity" in (migrated.configuredFields ?: emptySet()))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
     }
 
     @Test
@@ -197,7 +197,7 @@ class EntityMigrationTest {
         assertEquals("EQUIPMENT", migrated.string("placeDestination", ""))
         assertTrue("destination" !in migrated.params)
         assertTrue("placeDestination" in (migrated.configuredFields ?: emptySet()))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
     }
 
     @Test
@@ -260,7 +260,7 @@ class EntityMigrationTest {
         assertTrue(EntityDataPath.PARAM_PATH in marks)
         assertTrue(EntityTagEntries.PARAM_ENTRIES in marks)
         assertTrue("action" !in marks)
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
         // 移行後は新 ENTITY_OPERATION の検証だけを通ります。
         assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
     }
@@ -278,7 +278,7 @@ class EntityMigrationTest {
         val migrated = loaded.graph.nodes.getValue(nodeId)
         assertEquals(CommandType.ENTITY_OPERATION, migrated.type)
         assertEquals("add=kc_test", migrated.string(EntityTagEntries.PARAM_ENTRIES, ""))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
         assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
     }
 
@@ -335,7 +335,7 @@ class EntityMigrationTest {
         assertTrue("placeDestination" in marks)
         assertTrue("action" !in marks)
         assertTrue("slot" in marks)
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
         // 移行後は新 PLACE_ITEM の検証だけを通ります。
         assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
     }
@@ -355,7 +355,7 @@ class EntityMigrationTest {
         assertEquals("EQUIPMENT", migrated.string("placeDestination", ""))
         assertEquals("HAND", migrated.string("slot", ""))
         assertEquals("1", migrated.string("count", ""))
-        assertEquals(17, loaded.formatVersion)
+        assertEquals(18, loaded.formatVersion)
         assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
     }
 

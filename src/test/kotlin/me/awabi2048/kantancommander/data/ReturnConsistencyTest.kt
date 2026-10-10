@@ -20,7 +20,7 @@ import java.util.UUID
  */
 class ReturnConsistencyTest {
     private fun script(configure: DiskScript.() -> Unit): DiskScript =
-        DiskScript(name = "returns", owner = UUID.randomUUID()).apply(configure)
+        DiskScript(name = "returns").apply(configure)
 
     private fun DiskScript.defineExecution(name: String, type: ValueType, value: String) {
         GraphEditor.append(graph, CommandType.VARIABLE).params.putAll(
@@ -103,7 +103,7 @@ class ReturnConsistencyTest {
         argValue: String,
         callee: DiskScript,
     ): DiskScript {
-        val caller = DiskScript(name = "caller", owner = UUID.randomUUID())
+        val caller = DiskScript(name = "caller")
         GraphEditor.append(caller.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "scope" to VariableScope.EXECUTION.name,
@@ -124,7 +124,7 @@ class ReturnConsistencyTest {
     }
 
     private fun calleeReturning(sourceScope: VariableScope, source: String): DiskScript {
-        val callee = DiskScript(name = "callee", owner = UUID.randomUUID())
+        val callee = DiskScript(name = "callee")
         GraphEditor.append(callee.graph, CommandType.RETURN_VALUE).params.putAll(
             mapOf("sourceScope" to sourceScope.name, "source" to source),
         )
@@ -132,7 +132,7 @@ class ReturnConsistencyTest {
     }
 
     private fun calleeDefiningAndReturning(type: ValueType, value: String): DiskScript {
-        val callee = DiskScript(name = "callee", owner = UUID.randomUUID())
+        val callee = DiskScript(name = "callee")
         GraphEditor.append(callee.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "scope" to VariableScope.EXECUTION.name,
