@@ -379,6 +379,9 @@ class DslCompiler(
          * 数値式は CALCULATE、詳細値は PROPERTY、構造値は型別 spec です。
          */
         private fun valuePlan(expr: DslExpr, expected: ValueType, pre: MutableList<CommandNode>): ValuePlan = when (expr) {
+            // `= null` は値が未設定の宣言・代入です。型は宣言・代入先に従い、
+            // 値の実体は空として保持します（旧形式の空欄と同じ意味です）。
+            is DslNull -> ValuePlan.AssignText("")
             is DslNumberLiteral, is DslBooleanLiteral, is DslConst ->
                 ValuePlan.AssignText(scalarText(expr, expected, pre))
             is DslStringLiteral -> ValuePlan.AssignText(scalarText(expr, expected, pre))

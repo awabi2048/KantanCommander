@@ -194,9 +194,12 @@ class DslChecker(
             is DslVarDecl -> {
                 checkVarName(stmt.name, stmt.pos)
                 if (stmt.world) requireWorld(stmt.pos, "ワールド変数の定義")
-                val actual = checkExpr(stmt.value)
-                if (actual != stmt.type) {
-                    error(stmt.value.pos, "変数 '${stmt.name}' は ${stmt.type.dslName()} 型ですが、${actual.dslName()} 型の値は代入できません")
+                // `= null` は値が未設定の宣言です（型は宣言に従い、値は空で保持します）。
+                if (stmt.value !is DslNull) {
+                    val actual = checkExpr(stmt.value)
+                    if (actual != stmt.type) {
+                        error(stmt.value.pos, "変数 '${stmt.name}' は ${stmt.type.dslName()} 型ですが、${actual.dslName()} 型の値は代入できません")
+                    }
                 }
                 if (stmt.name.isEmpty()) return
                 if (stmt.world) {
@@ -243,7 +246,13 @@ class DslChecker(
                         null
                     }
                 }
-                val valueType = checkExpr(stmt.value)
+                // `= null` は値を未設定へ戻す代入です（複合代入では使えません）。
+                // 式型は代入先の型として記録し、低級化側は空値を書きます。
+                val valueType = if (stmt.value is DslNull && stmt.op == DslAssignOp.ASSIGN) {
+                    (targetType ?: ValueType.STRING).also { exprTypes?.put(stmt.value, it) }
+                } else {
+                    checkExpr(stmt.value)
+                }
                 if (stmt.op == DslAssignOp.ASSIGN) {
                     if (targetType != null && valueType != targetType) {
                         error(stmt.value.pos, "${targetType.dslName()} 型の変数へ ${valueType.dslName()} 型の値は代入できません")

@@ -288,10 +288,22 @@ class DslCheckerTest {
     }
 
     @Test
-    fun `null is rejected in value positions`() {
-        fail("""program "p" ; var x: number = null;""")
-        fail("""program "p" ; var s: string = null;""")
+    fun `null is rejected in expression positions`() {
         fail("""program "p" ; var b: boolean = null == null;""")
+        fail("""program "p" ; var x: number = 1; x += null;""")
+    }
+
+    @Test
+    fun `null marks unset value in declarations and assignments`() {
+        assertDoesNotThrow {
+            check(
+                """program "p" ;
+                    var x: number = null;
+                    var l: location = null;
+                    x = null;
+                """,
+            )
+        }
     }
 
     @Test

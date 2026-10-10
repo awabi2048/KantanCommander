@@ -348,7 +348,11 @@ class DslPrinter(
         }
 
         /** ASSIGN の値（型別の構造値またはテンプレート文字列）を式へ復元します。 */
-        private fun assignExpr(n: CommandNode, typeName: String): String = when (typeName) {
+        private fun assignExpr(n: CommandNode, typeName: String): String {
+            // 値が空の型付き変数は `null`（値未設定）へ写像します。string の
+            // 空文字は意味のある値なので `""` のまま残します。
+            if (n.string("value").isBlank() && typeName != "STRING") return "null"
+            return when (typeName) {
             "LOCATION" -> {
                 val spec = n.temporaryLocationPositionSpec
                     ?: return quoteTemplate(n.string("value"))
@@ -371,6 +375,7 @@ class DslPrinter(
             "STRING" -> quoteTemplate(n.string("value"))
             "BOOLEAN" -> scalarText(n.string("value"))
             else -> scalarText(n.string("value"))
+            }
         }
 
         // ---- if 文 ----
@@ -917,6 +922,11 @@ class DslPrinter(
                 // 条件 subject 未設定は `null` 条件へ写像します。
                 "" -> "null"
                 ConditionSubject.VARIABLE.name -> {
+                    // 左辺の変数が未設定の条件は比較形を構成できないため、
+                    // 条件全体を `null`（未設定）へ写像します。
+                    if (c.string("variable").isBlank()) {
+                        return "null"
+                    }
                     val lhs = conditionLhs(c.string("variable"))
                     val op = c.string("operator", "==")
                     val rhs = conditionValue(c.string("value"))
