@@ -268,12 +268,13 @@ class Parser {
     }
 
     /**
-     * 変数名の位置を読みます。`null` は未命名（GUI の空名スロット）を表し、
+     * 変数名の位置を読みます。`null`・`_` は未命名（GUI の空名スロット）を表し、
      * 内部では空文字列として保持します。
      */
     private parseVarName(missingMessage: string): string {
         if (this.accept(TokenKind.NULL) !== null) return "";
-        return this.expect(TokenKind.IDENT, missingMessage).text;
+        const t = this.expect(TokenKind.IDENT, missingMessage);
+        return t.text === "_" ? "" : t.text;
     }
 
     private parseVarDecl(): DslStmt {
@@ -315,6 +316,10 @@ class Parser {
             }
             case TokenKind.NULL: {
                 this.advance();
+                // `null.vars.x` は対象未設定のエンティティ変数書き込みです。
+                if (this.isEntityVarAccess()) {
+                    return this.parseAssignTargetTail({ kind: "null", pos: head.pos }, head.pos);
+                }
                 return { kind: "variable", name: "", pos: head.pos };
             }
             case TokenKind.IDENT: {
@@ -573,7 +578,8 @@ class Parser {
                 if (expr.kind === "varRef" && expr.name === "loop" && name.text === "count" && arg === null) {
                     expr = { kind: "loopCount", pos: dot.pos };
                 } else if (expr.kind === "varRef" && expr.name === "vars" && arg === null) {
-                    expr = { kind: "entityVarRef", name: name.text, pos: dot.pos };
+                    // `vars._` は名前未設定のエンティティ変数参照です。
+                    expr = { kind: "entityVarRef", name: name.text === "_" ? "" : name.text, pos: dot.pos };
                 } else {
                     expr = { kind: "propertyRead", source: expr, name: name.text, arg, pos: dot.pos };
                 }
@@ -655,7 +661,8 @@ class Parser {
         if (name.text === "disk" || name.text === "captured") {
             return { kind: "specialPosition", name: name.text, pos: name.pos } satisfies DslSpecialPosition;
         }
-        return { kind: "varRef", name: name.text, pos: name.pos };
+        // `_` は未命名スロット（名前未入力の変数）への参照です。
+        return { kind: "varRef", name: name.text === "_" ? "" : name.text, pos: name.pos };
     }
 
     private parseStringLiteral(): DslStringLiteral {

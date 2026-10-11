@@ -523,7 +523,8 @@ class DslPrinterTest {
         )
         assertTrue(text.contains("if (null)"))
         assertTrue(text.contains("pos = null"))
-        assertTrue(text.contains("var null: number"))
+        // 空の変数名は `_`（未命名スロット）へ正規化されます。
+        assertTrue(text.contains("var _: number"))
     }
 
     @Test
@@ -603,5 +604,93 @@ class DslPrinterTest {
             DslPrinter().print(graph, "t")
         }
         assertTrue(ex.message!!.contains("a_b"), "衝突した DSL 名を報告します")
+    }
+
+    @Test
+    fun `未命名スロットが往復する`() {
+        // GUI で変数ノード・変数参照欄を名前未入力のまま保存した状態に対応します。
+        // `_` は未命名スロットで、内部では空文字列の名前として保持されます。
+        val text = roundTrip(
+            """
+            program "t" ;
+                import world;
+                var _: number = 0;
+                _ = 1;
+                var world._: number = 0;
+                world._ = 2;
+                del _;
+                setblock(pos = _, block = block(id = "minecraft:stone"));
+                var s: string = "";
+                s = _;
+            
+            """.trimIndent(),
+            checkExecutable = false,
+        )
+        assertTrue(text.contains("var _: number"), text)
+        assertTrue(text.contains("_ = 1;"), text)
+        assertTrue(text.contains("var world._: number"), text)
+        assertTrue(text.contains("world._ = 2;"), text)
+        assertTrue(text.contains("del _;"), text)
+        assertTrue(text.contains("pos = _"), text)
+        // 値位置の `_` は参照として書けないため型の空値（string は ""）へ正規化されます。
+        assertTrue(text.contains("s = \"\";"), text)
+    }
+
+    @Test
+    fun `対象未設定のエンティティ変数が往復する`() {
+        // GUI で ENTITY スコープの対象エンティティを選ばず保存した状態に対応します。
+        // `null.vars.x` は対象未設定、`_.vars.x` は対象の変数名未入力です。
+        val text = roundTrip(
+            """
+            program "t" ;
+                null.vars.x = 0;
+                null.vars._ = 1;
+                del null.vars.x;
+            
+            """.trimIndent(),
+            checkExecutable = false,
+        )
+        assertTrue(text.contains("null.vars.x = 0;"), text)
+        assertTrue(text.contains("null.vars._ = 1;"), text)
+        assertTrue(text.contains("del null.vars.x;"), text)
+    }
+
+    @Test
+    fun `対象未設定の条件が往復する`() {
+        // GUI で条件の対象を選ばず保存した状態に対応します。
+        val text = roundTrip(
+            """
+            program "t" ;
+                if (player(target = null)) { return; }
+                if (exists(target = null, at = location(x = 0, y = 0, z = 0))) { return; }
+            
+            """.trimIndent(),
+            checkExecutable = false,
+        )
+        assertTrue(text.contains("player(target = null)"), text)
+        assertTrue(text.contains("exists(target = null"), text)
+    }
+
+    @Test
+    fun `分岐未接続の孤立条件が往復する`() {
+        // GUI で条件ノードだけを置いて真偽両枝を接続せず保存した状態に対応します。
+        // 両出口の行き先が同一（null 同士含む）の縮退領域を `if` へ復元します。
+        val cond = CommandNode(
+            type = CommandType.CONDITION,
+            params = linkedMapOf("subject" to "OTHER_ENTITY"),
+            targetSpec = me.awabi2048.kantancommander.model.TargetSpec(
+                kind = me.awabi2048.kantancommander.model.TargetKind.NEAREST_PLAYER,
+            ),
+        )
+        val graph = CommandGraph(
+            entryNodeId = cond.id,
+            nodes = linkedMapOf(cond.id to cond),
+        )
+        val text1 = DslPrinter().print(graph, "t")
+        val r = DslCompiler(emptyMap()).compile(DslParser.parse(text1))
+        assertEquals(emptyList<String>(), GraphValidator.validate(r.graph), "再コンパイルの構造検証")
+        val text2 = DslPrinter().print(r.graph, "t", r.trigger, r.arguments)
+        assertEquals(text1, text2, "印刷テキストは不動点であるべきです")
+        assertTrue(text1.contains("exists(kind = \"nearest_player\")"), text1)
     }
 }

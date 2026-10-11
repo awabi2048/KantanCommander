@@ -297,9 +297,13 @@ export class Checker {
                     case "entityVariable": {
                         const t = stmt.target;
                         this.checkVarName(t.name, t.pos);
-                        const entityType = this.checkExpr(t.entity);
-                        if (entityType !== "entity") {
-                            this.error(t.entity.pos, `エンティティ変数の対象は entity 型が必要です（${entityType} 型）`);
+                        // `null.vars.x`（対象未設定）・`_.vars.x`（未命名変数の対象）は
+                        // GUI の未設定状態に対応するため、対象の型検査を行いません。
+                        if (t.entity.kind !== "null" && !this.isBlankVarRef(t.entity)) {
+                            const entityType = this.checkExpr(t.entity);
+                            if (entityType !== "entity") {
+                                this.error(t.entity.pos, `エンティティ変数の対象は entity 型が必要です（${entityType} 型）`);
+                            }
                         }
                         targetType = null;
                         break;
@@ -338,6 +342,10 @@ export class Checker {
                     // 実行内・ワールド変数の詳細値は値欄を通らないため写像できません。
                     this.error(value.pos, "エンティティ変数への書き込みでは、詳細値の参照元は vars.<name> で指定してください");
                     valueType = this.checkExpr(value);
+                } else if (this.isBlankVarRef(value)) {
+                    // `x = _` は未命名スロットからの読み出しです。型は未定義のため
+                    // 代入先の型として記録し、低級化側は型に応じた空名 spec を書きます。
+                    valueType = targetType ?? "string";
                 } else {
                     valueType = value.kind === "null" && stmt.op === "ASSIGN"
                         ? (targetType ?? "string")
@@ -351,6 +359,11 @@ export class Checker {
                 } else {
                     if (stmt.target.kind === "entityVariable") {
                         this.error(stmt.pos, "エンティティ変数への複合代入はモデルが未対応のため使えません");
+                    }
+                    if (this.isBlankVarRef(value)) {
+                        // 計算式の被演算子は `%{name}%` 参照であり、空名は参照として
+                        // 書けないため複合代入では未命名スロットを受理しません。
+                        this.error(value.pos, "複合代入に未命名スロット '_' は使えません");
                     }
                     if (targetType !== "number" || valueType !== "number") {
                         this.error(stmt.pos, "複合代入は number 型同士でのみ使えます");
@@ -380,16 +393,20 @@ export class Checker {
                     }
                 } else {
                     this.checkVarName(t.name, t.pos);
-                    const entityType = this.checkExpr(t.entity);
-                    if (entityType !== "entity") {
-                        this.error(t.entity.pos, `エンティティ変数の対象は entity 型が必要です（${entityType} 型）`);
+                    // 代入と同様に対象未設定（`null.vars.x`）・未命名対象（`_.vars.x`）を許容します。
+                    if (t.entity.kind !== "null" && !this.isBlankVarRef(t.entity)) {
+                        const entityType = this.checkExpr(t.entity);
+                        if (entityType !== "entity") {
+                            this.error(t.entity.pos, `エンティティ変数の対象は entity 型が必要です（${entityType} 型）`);
+                        }
                     }
                 }
                 break;
             }
             case "if": {
                 // `if (null)` は条件 subject 未設定の CONDITION ノードへ写像します。
-                if (stmt.condition.kind !== "null") {
+                // `if (_)` は左辺変数未設定の比較（variable="" の真偽評価）です。
+                if (stmt.condition.kind !== "null" && !this.isBlankVarRef(stmt.condition)) {
                     const cond = this.checkExpr(stmt.condition);
                     if (cond !== "boolean") {
                         this.error(stmt.condition.pos, `if の条件は boolean 型が必要です（${cond} 型）`);
@@ -536,6 +553,9 @@ export class Checker {
         enumValues: string[] | null,
     ) {
         if (arg.value.kind === "null") return;
+        // `_` は参照先の名前未入力（spec の変数参照欄が空）を表し、
+        // 型を持たないため写像層の spec 変換へ委ねます。
+        if (this.isBlankVarRef(arg.value)) return;
         const expected: V | null =
             kind === "NUMBER" ? "number"
             : kind === "STRING" ? "string"
@@ -613,7 +633,12 @@ export class Checker {
             case "boolean":
                 return "boolean";
             case "varRef":
-                return this.vars.get(expr.name) ?? this.error(expr.pos, `未定義の変数 '${expr.name}' です`);
+                return this.vars.get(expr.name) ?? (() => {
+                    // `_`（未命名スロット）は GUI の「名前未入力のまま変数参照を選択」
+                    // した状態に対応し、型を持たないため文脈ごとの検査に委ねます。
+                    if (expr.name === "") return "string" as V;
+                    return this.error(expr.pos, `未定義の変数 '${expr.name}' です`);
+                })();
             case "worldRef":
                 this.requireWorld(expr.pos, "ワールド変数の参照");
                 this.checkVarName(expr.name, expr.pos);
@@ -672,14 +697,22 @@ export class Checker {
     }
 
     private checkBinary(expr: Extract<DslExpr, { kind: "binary" }>): V {
-        const left = this.checkExpr(expr.left);
-        const right = this.checkExpr(expr.right);
+        // `_`（未命名スロット）は型を持たないため、比較では対向側の型として扱います。
+        // `variable=""` の条件欄を持つ GUI の未設定比較を表現できます。
+        const leftBlank = this.isBlankVarRef(expr.left);
+        const rightBlank = this.isBlankVarRef(expr.right);
+        const left: V | null = leftBlank ? null : this.checkExpr(expr.left);
+        const right: V | null = rightBlank ? null : this.checkExpr(expr.right);
         const fail = (): never => this.error(
             expr.pos,
-            `'${binaryOpSymbol(expr.op)}' は ${left} 型と ${right} 型には使えません`,
+            `'${binaryOpSymbol(expr.op)}' は ${left ?? "未命名"} 型と ${right ?? "未命名"} 型には使えません`,
         );
         switch (expr.op) {
             case "ADD": case "SUB": case "MUL": case "DIV":
+                // 計算式の被演算子は `%{name}%` 参照であり空名は書けないため拒否します。
+                if (leftBlank || rightBlank) {
+                    return this.error(expr.pos, "計算式では未命名スロット '_' は使えません");
+                }
                 return left === "number" && right === "number" ? "number" : fail();
             // モデルの数値式言語は剰余を持たないため、% は写像不能です。
             case "MOD":
@@ -687,15 +720,18 @@ export class Checker {
             case "EQ": case "NE": {
                 // モデルの条件が比較できるのは NUMBER／BOOLEAN／STRING の等値と、
                 // `pos.block == block(...)` 形式のブロック照合だけです。
+                const l = left ?? right;
+                const r = right ?? left;
                 const allowed =
-                    (left === right && COMPARABLE_TYPES.has(left)) ||
+                    (l !== null && l === r && COMPARABLE_TYPES.has(l)) ||
+                    (leftBlank && rightBlank) ||
                     (left === "block" && right === "block" &&
                         expr.left.kind === "propertyRead" && expr.left.name === "block" &&
                         expr.right.kind === "callExpr" && expr.right.name === "block");
                 return allowed ? "boolean" : fail();
             }
             case "LT": case "LE": case "GT": case "GE":
-                return left === "number" && right === "number" ? "boolean" : fail();
+                return (left ?? "number") === "number" && (right ?? "number") === "number" ? "boolean" : fail();
             case "AND": case "OR":
                 return left === "boolean" && right === "boolean" ? "boolean" : fail();
         }
@@ -733,12 +769,15 @@ export class Checker {
     }
 
     private checkPropertyRead(expr: Extract<DslExpr, { kind: "propertyRead" }>): V {
-        const sourceType = this.checkExpr(expr.source);
+        // `_.prop` は参照元変数の名前未入力（propertySource=""）に対応します。
+        // 参照元が型を持たないため、詳細値の適用可能型検査を省略します。
+        const blankSource = this.isBlankVarRef(expr.source);
+        const sourceType = blankSource ? null : this.checkExpr(expr.source);
         const def = this.catalog.properties[expr.name];
         if (def === undefined) {
             return this.error(expr.pos, `不明な詳細値 '${expr.name}' です`);
         }
-        if (!def.sources.includes(sourceType)) {
+        if (sourceType !== null && !def.sources.includes(sourceType)) {
             this.error(expr.pos, `${sourceType} 型からは詳細値 '${expr.name}' を取得できません`);
         }
         if (def.argType === undefined && expr.arg !== null) {
@@ -747,7 +786,7 @@ export class Checker {
         if (def.argType !== undefined && expr.arg === null) {
             this.error(expr.pos, `詳細値 '${expr.name}' には ${def.argType} 型の引数が必要です`);
         }
-        if (def.argType !== undefined && expr.arg !== null) {
+        if (def.argType !== undefined && expr.arg !== null && !this.isBlankVarRef(expr.arg)) {
             const argType = this.checkExpr(expr.arg);
             if (argType !== def.argType) {
                 this.error(expr.arg.pos, `詳細値 '${expr.name}' の引数は ${def.argType} 型が必要です`);
@@ -827,7 +866,8 @@ export class Checker {
      */
     private checkTargetCondCall(expr: DslCallExpr, playerExtras: boolean) {
         const direct = expr.args.find((a) => a.name === "target");
-        if (direct !== undefined && direct.value.kind !== "null") {
+        // `target = _` は変数参照を選んだまま名前未入力の対象指定です。
+        if (direct !== undefined && direct.value.kind !== "null" && !this.isBlankVarRef(direct.value)) {
             const type = this.checkExpr(direct.value);
             if (type !== "entity") {
                 this.error(direct.pos, `target は entity 型が必要です（${type} 型）`);
@@ -843,7 +883,7 @@ export class Checker {
             if (arg.name === "target") {
                 // 上で型検証済み
             } else if (arg.name === "at") {
-                if (this.checkExpr(arg.value) !== "location") {
+                if (!this.isBlankVarRef(arg.value) && this.checkExpr(arg.value) !== "location") {
                     this.error(arg.pos, "引数 'at' は location 型が必要です");
                 }
             } else if (arg.name in targetCondArgs) {
@@ -914,8 +954,10 @@ export class Checker {
         if (arg.name !== null && arg.name !== "target") {
             this.error(arg.pos, "orientation の引数名は target です");
         }
-        const type = this.checkExpr(arg.value);
-        if (type !== "entity") this.error(arg.pos, "orientation の対象は entity 型が必要です");
+        if (!this.isBlankVarRef(arg.value)) {
+            const type = this.checkExpr(arg.value);
+            if (type !== "entity") this.error(arg.pos, "orientation の対象は entity 型が必要です");
+        }
     }
 
     /**
@@ -984,6 +1026,11 @@ export class Checker {
             this.error(kindArg!.pos, `target の kind が不明です（${this.catalog.targetKinds.join("/")}）`);
         }
         return "entity";
+    }
+
+    /** `_`（空名）への変数参照かを判定します。型を持たない未命名スロットです。 */
+    private isBlankVarRef(expr: DslExpr): boolean {
+        return expr.kind === "varRef" && expr.name === "";
     }
 
     /**

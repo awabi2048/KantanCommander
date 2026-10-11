@@ -244,6 +244,11 @@ class DslLegacyConversionTest {
                 if (k == "changeMode" && v == "CALCULATE" &&
                     ATOMIC_VALUE.matches(n.string("value").trim())
                 ) return@filter false
+                // ENTITY 変数は定義概念を持たず DEFINE/SET はどちらも
+                // 書き込みとして機能するため、DSL 往復の SET 正規化を同一視します。
+                if (k == "operation" && n.type == CommandType.VARIABLE &&
+                    n.string("scope") == "ENTITY" && (v == "DEFINE" || v == "SET")
+                ) return@filter false
                 val d = defaults[k] ?: return@filter true
                 normalizeNumbers(v) != normalizeNumbers(d)
             }
@@ -321,10 +326,18 @@ class DslLegacyConversionTest {
      */
     private fun canonicalSpec(spec: Any): Any = when (spec) {
         is TargetSpec -> if (spec.kind == TargetKind.TEMPORARY) {
-            TargetSpec(kind = TargetKind.TEMPORARY, tempName = spec.tempName)
+            // 参照変数名の未入力は欄の空欄（null）・空文字の両方で保存され得るため
+            // 正規化します（DSL の `_` はいずれにも写像します）。
+            TargetSpec(kind = TargetKind.TEMPORARY, tempName = spec.tempName?.ifBlank { null })
         } else spec
-        is PositionSpec -> spec.copy(target = spec.target?.let { canonicalSpec(it) as TargetSpec })
-        is FacingSpec -> spec.copy(target = spec.target?.let { canonicalSpec(it) as TargetSpec })
+        is PositionSpec -> spec.copy(
+            tempName = spec.tempName?.ifBlank { null },
+            target = spec.target?.let { canonicalSpec(it) as TargetSpec },
+        )
+        is FacingSpec -> spec.copy(
+            tempName = spec.tempName?.ifBlank { null },
+            target = spec.target?.let { canonicalSpec(it) as TargetSpec },
+        )
         else -> spec
     }
 

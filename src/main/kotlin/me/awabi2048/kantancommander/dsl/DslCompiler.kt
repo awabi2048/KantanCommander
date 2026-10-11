@@ -347,7 +347,7 @@ class DslCompiler(
                             node.params["changeMode"] = VariableChangeMode.ASSIGN.name
                             node.params["name"] = modelName(t.name)
                             node.params["source"] = modelName(v.name)
-                            node.targetSpec = targetSpecOf(t.entity)
+                            node.targetSpec = entityVarTarget(t.entity)
                             stmtChain(node)
                         }
                         // `e.vars.x = vars.src.prop` は対象Entity自身の変数を
@@ -367,7 +367,7 @@ class DslCompiler(
                             (v.arg as? DslEntityVarRef)?.let {
                                 node.params["propertyArg"] = modelName(it.name)
                             }
-                            node.targetSpec = targetSpecOf(t.entity)
+                            node.targetSpec = entityVarTarget(t.entity)
                             stmtChain(node)
                         } else {
                             // PROPERTY の参照元は対象Entity自身の変数に限定されます。
@@ -376,7 +376,7 @@ class DslCompiler(
                             error(v.pos, "エンティティ変数への書き込みでは、詳細値の参照元は vars.<name> で指定してください")
                         }
                         else -> lowerVarWrite(VariableScope.ENTITY, t.name, exprTypes.getValue(v), v,
-                            entityTarget = targetSpecOf(t.entity))
+                            entityTarget = entityVarTarget(t.entity))
                     }
                 }
             }
@@ -401,7 +401,7 @@ class DslCompiler(
                 is DslAssignTarget.EntityVariable -> {
                     node.params["scope"] = VariableScope.ENTITY.name
                     node.params["name"] = modelName(target.name)
-                    node.targetSpec = targetSpecOf(target.entity)
+                    node.targetSpec = entityVarTarget(target.entity)
                 }
             }
             return stmtChain(node)
@@ -454,7 +454,9 @@ class DslCompiler(
                 ValueType.BLOCK -> ValuePlan.BlockValue(null, expr.name)
                 ValueType.LOCATION -> ValuePlan.LocationValue(PositionSpec(PositionKind.TEMPORARY, tempName = modelName(expr.name)))
                 ValueType.ENTITY -> ValuePlan.EntityValue(TargetSpec(TargetKind.TEMPORARY, tempName = modelName(expr.name)))
-                else -> ValuePlan.AssignText(execRef(expr.name))
+                // スカラー型の `_`（未命名スロット）参照は `%{""}%` として書けないため、
+                // 値未設定（空値）へ写像します。
+                else -> if (expr.name.isEmpty()) ValuePlan.AssignText("") else ValuePlan.AssignText(execRef(expr.name))
             }
             is DslWorldRef -> when (expected) {
                 ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> ValuePlan.AssignText(worldRef(expr.name))
@@ -597,7 +599,8 @@ class DslCompiler(
             is DslNumberLiteral -> fmt(expr.value)
             is DslBooleanLiteral -> expr.value.toString()
             is DslStringLiteral -> stringTemplate(expr, pre)
-            is DslVarRef -> execRef(expr.name)
+            // `_`（未命名スロット）は `%{""}%` と書けないため空文字へ写像します。
+            is DslVarRef -> if (expr.name.isEmpty()) "" else execRef(expr.name)
             is DslWorldRef -> worldRef(expr.name)
             is DslConst -> constValue(expr)
             is DslUnary -> when (expr.op) {
@@ -848,7 +851,8 @@ class DslCompiler(
          * 実体化して `%{t}%` を返します。
          */
         private fun lhsVariable(expr: DslExpr, pre: MutableList<CommandNode>): String = when (expr) {
-            is DslVarRef -> execRef(expr.name)
+            // `_`（未命名スロット）は `%{""}%` と書けないため、条件の変数欄を空欄にします。
+            is DslVarRef -> if (expr.name.isEmpty()) "" else execRef(expr.name)
             is DslWorldRef -> modelName(expr.name)
             else -> {
                 val temp = freshTemp()
@@ -1354,6 +1358,13 @@ class DslCompiler(
 
         private fun specialPositionSpec(expr: DslSpecialPosition): PositionSpec =
             PositionSpec(specialPositionKind(expr))
+
+        /**
+         * エンティティ変数の対象式を TargetSpec へ写像します。
+         * `null.vars.x` の `null` は対象未設定（spec なし）を表します。
+         */
+        private fun entityVarTarget(expr: DslExpr): TargetSpec? =
+            if (expr is DslNull) null else targetSpecOf(expr)
 
         /** `target(...)` または変数参照を TargetSpec へ写像します。 */
         private fun targetSpecOf(expr: DslExpr): TargetSpec = when (expr) {

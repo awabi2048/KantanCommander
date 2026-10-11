@@ -188,12 +188,13 @@ class DslParser(text: String) {
     }
 
     /**
-     * 変数名の位置を読みます。`null` は未命名（GUI の空名スロット）を表し、
+     * 変数名の位置を読みます。`null`・`_` は未命名（GUI の空名スロット）を表し、
      * 内部では空文字列として保持します。
      */
     private fun parseVarName(missingMessage: String): String {
         accept(DslTokenKind.NULL)?.let { return "" }
-        return expect(DslTokenKind.IDENT, missingMessage).text
+        val t = expect(DslTokenKind.IDENT, missingMessage)
+        return if (t.text == "_") "" else t.text
     }
 
     private fun parseVarDecl(): DslStmt {
@@ -233,7 +234,12 @@ class DslParser(text: String) {
             }
             DslTokenKind.NULL -> {
                 advance()
-                DslAssignTarget.Variable("", head.pos)
+                // `null.vars.x` は対象未設定のエンティティ変数書き込みです。
+                if (isEntityVarAccess()) {
+                    parseAssignTargetTail(DslNull(head.pos), head.pos)
+                } else {
+                    DslAssignTarget.Variable("", head.pos)
+                }
             }
             DslTokenKind.IDENT -> {
                 val primary = parseIdentExpr()
@@ -473,7 +479,8 @@ class DslParser(text: String) {
                     if (expr is DslVarRef && expr.name == "loop" && name.text == "count" && arg == null) {
                         DslLoopCount(dot.pos)
                     } else if (expr is DslVarRef && expr.name == "vars" && arg == null) {
-                        DslEntityVarRef(name.text, dot.pos)
+                        // `vars._` は名前未設定のエンティティ変数参照です。
+                        DslEntityVarRef(if (name.text == "_") "" else name.text, dot.pos)
                     } else {
                         DslPropertyRead(expr, name.text, arg, dot.pos)
                     }
@@ -537,6 +544,8 @@ class DslParser(text: String) {
             peekKind() == DslTokenKind.LPAREN -> DslCallExpr(name.text, parseArgs(), name.pos)
             // 実行コンテキストが供給する予約位置式です（制御ブロック位置・捕捉位置）。
             name.text == "disk" || name.text == "captured" -> DslSpecialPosition(name.text, name.pos)
+            // `_` は未命名スロット（名前未入力の変数）への参照です。
+            name.text == "_" -> DslVarRef("", name.pos)
             else -> DslVarRef(name.text, name.pos)
         }
     }

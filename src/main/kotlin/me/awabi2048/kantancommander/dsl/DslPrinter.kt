@@ -319,8 +319,8 @@ class DslPrinter(
         /** ENTITY scope の対象指定を対象式テキストへ戻します。 */
         private fun entityTargetText(n: CommandNode): String {
             // VARIABLE のエンティティ変数対象は targetSpec 欄です。
-            val spec = n.targetSpec
-                ?: unsupported("ENTITY 変数の対象が未設定です")
+            // 対象未設定は `null.vars.<name>`（`null`）として表します。
+            val spec = n.targetSpec ?: return "null"
             return targetExpr(spec)
         }
 
@@ -726,11 +726,17 @@ class DslPrinter(
             }
         }
 
-        /** 条件式の枝先を「then 出口・else 出口・領域内条件」のいずれかへ分類します。 */
-        private fun classify(region: Region, raw: UUID?): CondTarget {
+        /**
+         * 条件式の枝先を「then 出口・else 出口・領域内条件」のいずれかへ分類します。
+         * 真偽両枝が同じ出口（未設定の null 同士・同一ノード）へ向かう縮退領域では
+         * 行き先で極性を区別できないため、枝の極性（true 辺／false 辺）で分類します。
+         */
+        private fun classify(region: Region, raw: UUID?, isTrueEdge: Boolean): CondTarget {
             val t = followCondEdge(raw)
             if (t.isCond && t.id in region.conds) return CondTarget.Next(t.id!!)
-            return when (raw) {
+            return if (region.thenEntry == region.elseEntry) {
+                if (isTrueEdge) CondTarget.Then else CondTarget.Else
+            } else when (raw) {
                 region.thenEntry -> CondTarget.Then
                 region.elseEntry -> CondTarget.Else
                 else -> CondTarget.Other(raw)
@@ -744,8 +750,8 @@ class DslPrinter(
          */
         private fun condExpr(condId: UUID, region: Region): Pair<String, CondTopOp?> {
             val c = region.conds[condId] ?: throw DslPrintException("条件ノードが領域にありません")
-            val t = classify(region, c.trueNext)
-            val f = classify(region, c.falseNext)
+            val t = classify(region, c.trueNext, isTrueEdge = true)
+            val f = classify(region, c.falseNext, isTrueEdge = false)
             val leaf = leafExpr(c)
             return when {
                 t is CondTarget.Then && f is CondTarget.Else -> leaf to null
@@ -1068,12 +1074,9 @@ class DslPrinter(
                 // 条件 subject 未設定は `null` 条件へ写像します。
                 "" -> "null"
                 ConditionSubject.VARIABLE.name -> {
-                    // 左辺の変数が未設定の条件は比較形を構成できないため、
-                    // 条件全体を `null`（未設定）へ写像します。
-                    if (c.string("variable").isBlank()) {
-                        return "null"
-                    }
-                    val lhs = conditionLhs(c.string("variable"))
+                    // 左辺の変数が未設定の条件は `_`（未命名スロット）として表し、
+                    // 演算子・比較値を保持します。
+                    val lhs = if (c.string("variable").isBlank()) "_" else conditionLhs(c.string("variable"))
                     val op = c.string("operator", "==")
                     val rhs = conditionValue(c.string("value"))
                     // `X == true` は `X`、`X != true` は `!X` に正規化します。
@@ -1145,8 +1148,6 @@ class DslPrinter(
 
         /** 条件左辺の `%{x}%`（実行内変数）・plain 名（ワールド変数）を式へ戻します。 */
         private fun conditionLhs(raw: String): String {
-            // 変数名未設定の条件は `null` を左辺に置きます。
-            if (raw.isBlank()) return "null"
             if (TemporaryTemplate.isSingleReference(raw)) {
                 val name = TemporaryTemplate.references(raw).single()
                 return valueName(name)
@@ -1430,9 +1431,14 @@ class DslPrinter(
         private val dslNameClaims = mutableMapOf<String, MutableMap<String, String>>()
 
         private fun dslName(model: String, bucket: String = "var"): String {
+            // 空名（GUI の名前未入力スロット）は `_` へ写像します。`_` は DSL の
+            // 命名規則で宣言不能なためユーザー変数名と衝突しませんが、モデル名
+            // `-` 等が `_` へ潰れる場合は従来どおり衝突として拒否します。
+            if (model.isBlank()) return "_"
             val dsl = DslNames.dslName(model)
             if (!NAME_PATTERN.matches(dsl)) unsupported("変数名 '$model'")
-            val claims = dslNameClaims.getOrPut(bucket) { mutableMapOf() }
+            // `_` は空名の占有として事前登録し、`-` 等の実名が同名へ潰れる場合を検出します。
+            val claims = dslNameClaims.getOrPut(bucket) { mutableMapOf("_" to "") }
             val owner = claims.putIfAbsent(dsl, model)
             if (owner != null && owner != model) {
                 unsupported("変数名 '$owner' と '$model'（DSL ではいずれも '$dsl' になります）")
@@ -1440,9 +1446,8 @@ class DslPrinter(
             return dsl
         }
 
-        /** 変数名を名前位置のテキストへ戻します。空名（未命名スロット）は `null` です。 */
-        private fun varNameText(model: String, bucket: String = "var"): String =
-            if (model.isBlank()) "null" else dslName(model, bucket)
+        /** 変数名を名前位置のテキストへ戻します。空名（未命名スロット）は `_` です。 */
+        private fun varNameText(model: String, bucket: String = "var"): String = dslName(model, bucket)
 
         private fun typeName(raw: String): String = raw.lowercase()
 
