@@ -128,8 +128,15 @@ data class DslCallStmt(
     override val pos: DslPos,
 ) : DslStmt
 
-/** `call "disk_id";` です。 */
-data class DslCallDisk(val diskId: DslStringLiteral, override val pos: DslPos) : DslStmt
+/**
+ * `call "disk";` / `call "disk"(arg = 値, ...);` の呼出し文です。
+ * 引数は呼出し先の `defarg` 宣言名との照合で検証します。
+ */
+data class DslCallDisk(
+    val diskId: DslStringLiteral,
+    val args: List<DslArg>,
+    override val pos: DslPos,
+) : DslStmt
 
 /** `del x;` / `del world.x;` / `del e.vars.n;` の変数削除文です。 */
 data class DslDelete(val target: DslAssignTarget, override val pos: DslPos) : DslStmt
@@ -195,6 +202,17 @@ data class DslSpecialPosition(val name: String, override val pos: DslPos) : DslE
 
 /** `loop.count` です。内側ループの現在回数（CURRENT_LOOP_COUNT）を表します。 */
 data class DslLoopCount(override val pos: DslPos) : DslExpr
+
+/**
+ * `x = call "disk"(...)` の式位置の呼出しです。戻り値を実行内・ワールド変数へ
+ * 書き込む DISK_CALL へ写像するため、代入・変数宣言の値としてのみ使えます。
+ * 式の型は呼出し先の戻り値型に従うため、型検査はコンパイル時へ委ねます。
+ */
+data class DslCallResult(
+    val diskId: DslStringLiteral,
+    val args: List<DslArg>,
+    override val pos: DslPos,
+) : DslExpr
 
 /** `location(...)` `item(...)` `target(...)` 等の名前付き引数呼出し式です。 */
 data class DslCallExpr(val name: String, val args: List<DslArg>, override val pos: DslPos) : DslExpr

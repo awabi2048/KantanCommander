@@ -291,6 +291,124 @@ class DslCompilerTest {
         assertNotNull(call.snapshot)
     }
 
+    private fun diskLink(
+        vararg arguments: me.awabi2048.kantancommander.model.DiskArgument,
+    ): DslDiskLink {
+        val target = CommandGraph()
+        val wait = CommandType.WAIT.newNode()
+        target.nodes[wait.id] = wait
+        target.entryNodeId = wait.id
+        return DslDiskLink(UUID.randomUUID(), target, arguments.toList())
+    }
+
+    @Test
+    fun `call の引数が arg_ と argvar_ へ写像される`() {
+        val link = diskLink(
+            me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
+            me.awabi2048.kantancommander.model.DiskArgument("label", ValueType.STRING),
+            me.awabi2048.kantancommander.model.DiskArgument("who", ValueType.ENTITY),
+        )
+        val graph = compile(
+            """
+            program "t" ;
+                var who: entity = target(kind = "nearest_player");
+                call "sub"(count = 3, label = "hello", who = who);
+
+            """.trimIndent(),
+            resolver = { name -> if (name == "sub") link else null },
+        )
+        val call = graph.nodes.values.single { it.type == CommandType.DISK_CALL }
+        assertEquals("3", call.string("arg_count"))
+        assertEquals("hello", call.string("arg_label"))
+        assertEquals("who", call.string("argvar_who"))
+        assertEquals("count:NUMBER,label:STRING,who:ENTITY", call.string("declaredArgs"))
+    }
+
+    @Test
+    fun `call の引数で宣言外の名前はエラーになる`() {
+        val link = diskLink(me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER))
+        val ex = assertThrows(DslCompileException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    call "sub"(missing = 1);
+
+                """.trimIndent(),
+                resolver = { name -> if (name == "sub") link else null },
+            )
+        }
+        assertTrue(ex.message!!.contains("missing"))
+    }
+
+    @Test
+    fun `call の複合型引数は実行内変数のみ受け付ける`() {
+        val link = diskLink(me.awabi2048.kantancommander.model.DiskArgument("pos", ValueType.LOCATION))
+        assertThrows(DslCompileException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    call "sub"(pos = ~0 ~0 ~0);
+
+                """.trimIndent(),
+                resolver = { name -> if (name == "sub") link else null },
+            )
+        }
+    }
+
+    @Test
+    fun `call の戻り値が受取変数へ写像される`() {
+        val link = diskLink()
+        val graph = compile(
+            """
+            program "t" ;
+                var result: number = 0;
+                result = call "sub"();
+
+            """.trimIndent(),
+            resolver = { name -> if (name == "sub") link else null },
+        )
+        val call = graph.nodes.values.single { it.type == CommandType.DISK_CALL }
+        assertEquals("result", call.string("returnName"))
+        assertEquals(VariableScope.EXECUTION.name, call.string("returnScope"))
+    }
+
+    @Test
+    fun `var 宣言で call の戻り値を受け取れる`() {
+        val link = diskLink()
+        val graph = compile(
+            """
+            program "t" ;
+                var result: number = call "sub"();
+                wait(1);
+
+            """.trimIndent(),
+            resolver = { name -> if (name == "sub") link else null },
+        )
+        val nodes = chain(graph)
+        // TEMP_SET（宣言・値未設定）→ DISK_CALL → WAIT の3ノードです。
+        assertEquals(3, nodes.size)
+        assertEquals(CommandType.TEMP_SET, nodes[0].type)
+        assertEquals("result", nodes[0].string("name"))
+        assertEquals(CommandType.DISK_CALL, nodes[1].type)
+        assertEquals("result", nodes[1].string("returnName"))
+    }
+
+    @Test
+    fun `call の引数の型不一致はエラーになる`() {
+        val link = diskLink(me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER))
+        assertThrows(DslCompileException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var s: string = "x";
+                    call "sub"(count = s);
+
+                """.trimIndent(),
+                resolver = { name -> if (name == "sub") link else null },
+            )
+        }
+    }
+
     @Test
     fun `and と or の条件が木構造へ展開される`() {
         val graph = compile(

@@ -63,6 +63,13 @@ export class WorkspaceIndex {
         return out;
     }
 
+    /** 指定プログラムの `defarg` 宣言表（DSL 名 → 型）です。未索引なら null です。 */
+    defargsOf(programName: string): Map<string, ValueTypeName> | null {
+        const uri = this.programNames().get(programName);
+        if (uri === undefined) return null;
+        return this.files.get(uri)?.defargs ?? null;
+    }
+
     /** 全ファイルの `var world.x` 定義を集約したワールド変数型表です。 */
     worldTypes(): Map<string, ValueTypeName> {
         const out = new Map<string, ValueTypeName>();

@@ -343,8 +343,9 @@ class DslParser(text: String) {
     private fun parseCall(): DslStmt {
         val head = advance()
         val literal = parseStringLiteral()
+        val args = if (peekKind() == DslTokenKind.LPAREN) parseArgs() else emptyList()
         expectSemicolon()
-        return DslCallDisk(literal, head.pos)
+        return DslCallDisk(literal, args, head.pos)
     }
 
     private fun parseArgs(): List<DslArg> {
@@ -498,6 +499,14 @@ class DslParser(text: String) {
             expect(DslTokenKind.DOT, "world の後に '.変数名' を書いてください")
             val name = parseVarName("world. の後に変数名を書いてください")
             DslWorldRef(name, t.pos)
+        }
+        // `call "x"(...)` を式位置で読みます。戻り値を受け取る代入の値として
+        // 構文的には式ですが、使用位置は代入・変数宣言の右辺のみです。
+        DslTokenKind.CALL -> {
+            val t = advance()
+            val literal = parseStringLiteral()
+            val args = if (peekKind() == DslTokenKind.LPAREN) parseArgs() else emptyList()
+            DslCallResult(literal, args, t.pos)
         }
         DslTokenKind.IDENT -> parseIdentExpr()
         DslTokenKind.LPAREN -> {

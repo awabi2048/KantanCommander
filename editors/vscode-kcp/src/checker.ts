@@ -18,6 +18,7 @@ import {
     DslPos,
     DslProgram,
     DslStmt,
+    DslStringLiteral,
     binaryOpSymbol,
     posToString,
     stringLiteralPlainText,
@@ -245,7 +246,11 @@ export class Checker {
                 this.checkVarName(stmt.name, stmt.pos);
                 if (stmt.world) this.requireWorld(stmt.pos, "ワールド変数の定義");
                 // `= null` は値が未設定の宣言です（型は宣言に従い、値は空で保持します）。
-                if (stmt.value.kind !== "null") {
+                // `= call "x"(..)` は戻り値を受け取る宣言です。引数を検査し、
+                // 宣言型との整合は保存時のモデル検証へ委ねます。
+                if (stmt.value.kind === "callResult") {
+                    this.checkCallArgs(stmt.value.diskId, stmt.value.args);
+                } else if (stmt.value.kind !== "null") {
                     const actual = this.checkExpr(stmt.value);
                     if (actual !== stmt.type) {
                         this.error(stmt.value.pos, `変数 '${stmt.name}' は ${stmt.type} 型ですが、${actual} 型の値は代入できません`);
@@ -301,11 +306,25 @@ export class Checker {
                     }
                 }
                 // `= null` は値を未設定へ戻す代入です（複合代入では使えません）。
-                const valueType = stmt.value.kind === "null" && stmt.op === "ASSIGN"
-                    ? (targetType ?? "string")
-                    : this.checkExpr(stmt.value);
+                // `= call "x"(..)` は戻り値の受取です。戻り値の型は呼出し先の
+                // 解析に依存するため、この層では型一致を判定しません。
+                let valueType: V | null;
+                if (stmt.value.kind === "callResult") {
+                    if (stmt.op !== "ASSIGN") {
+                        this.error(stmt.value.pos, "call の戻り値は = 代入でのみ受け取れます");
+                    }
+                    if (stmt.target.kind === "entityVariable") {
+                        this.error(stmt.value.pos, "call の戻り値はエンティティ変数へ書き込めません");
+                    }
+                    this.checkCallArgs(stmt.value.diskId, stmt.value.args);
+                    valueType = targetType;
+                } else {
+                    valueType = stmt.value.kind === "null" && stmt.op === "ASSIGN"
+                        ? (targetType ?? "string")
+                        : this.checkExpr(stmt.value);
+                }
                 if (stmt.op === "ASSIGN") {
-                    if (targetType !== null && valueType !== targetType) {
+                    if (stmt.value.kind !== "callResult" && targetType !== null && valueType !== targetType) {
                         this.error(stmt.value.pos, `${targetType} 型の変数へ ${valueType} 型の値は代入できません`);
                     }
                 } else {
@@ -389,8 +408,28 @@ export class Checker {
                 this.checkCallStmt(stmt);
                 break;
             case "callDisk":
-                this.checkStringLiteral(stmt.diskId);
+                this.checkCallArgs(stmt.diskId, stmt.args);
                 break;
+        }
+    }
+
+    /**
+     * `call` の文・式共通の検査です。対象名リテラルと引数列を検査します。
+     * 引数名と呼出し先 `defarg` 宣言の照合・型一致はファイル間解決が必要な
+     * ため、この層では文法（名前付き・重複なし・値式が妥当）までを保証します。
+     */
+    private checkCallArgs(literal: DslStringLiteral, args: DslArg[]) {
+        this.checkStringLiteral(literal);
+        const seen = new Set<string>();
+        for (const arg of args) {
+            if (arg.name === null) this.error(arg.pos, "call の引数は名前付きで指定してください");
+            else {
+                this.checkVarName(arg.name, arg.pos);
+                if (seen.has(arg.name)) this.error(arg.pos, `引数 '${arg.name}' が重複しています`);
+                seen.add(arg.name);
+            }
+            // `arg = null` は呼出し先の設定欄が未設定であることを表します。
+            if (arg.value.kind !== "null") this.checkExpr(arg.value);
         }
     }
 
@@ -601,6 +640,10 @@ export class Checker {
                 // CURRENT_LOOP_COUNT はループ外で未解決になるため、DSL では repeat 内に限定します。
                 if (this.loopDepth === 0) this.error(expr.pos, "loop.count は repeat の内側でのみ使えます");
                 return "number";
+            // `call "x"(..)` の式は戻り値受取専用です。代入・宣言以外の式位置では
+            // 意味を持たないため、ここでは一律に拒否します。
+            case "callResult":
+                return this.error(expr.pos, "call は代入・変数宣言の値としてのみ使えます");
         }
     }
 

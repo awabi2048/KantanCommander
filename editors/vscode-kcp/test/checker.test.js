@@ -154,6 +154,45 @@ test("call の対象を検証する", () => {
     assert.match(missing[0].message, /見つかりません/);
 });
 
+test("call の引数は名前付きのみ", () => {
+    const uuid = "12345678-1234-1234-1234-123456789abc";
+    assert.deepEqual(err(`program "t";\nvar x: number = 1;\ncall "${uuid}"(n = x);`), []);
+    assert.match(err(`program "t";\nvar x: number = 1;\ncall "${uuid}"(x, x);`)[0].message, /名前付き/);
+    assert.match(err(`program "t";\ncall "${uuid}"(a = 1, a = 2);`)[0].message, /重複/);
+});
+
+test("call の戻り値受取を検証する", () => {
+    const uuid = "12345678-1234-1234-1234-123456789abc";
+    // 代入・宣言の右辺は受理します。
+    assert.deepEqual(err(`program "t";\nvar x: number = 0;\nx = call "${uuid}"();`), []);
+    assert.deepEqual(err(`program "t";\nvar x: number = call "${uuid}"();`), []);
+    assert.deepEqual(err(`program "t";\nimport world;\nvar world.score: number = 0;\nworld.score = call "${uuid}"();`), []);
+    // 複合代入・エンティティ変数・その他の式位置は拒否します。
+    assert.match(err(`program "t";\nvar x: number = 0;\nx += call "${uuid}"();`)[0].message, /= 代入でのみ/);
+    const e = `program "t";\nvar p: entity = target(kind = "nearest_player");\np.vars.n = call "${uuid}"();`;
+    assert.match(err(e)[0].message, /エンティティ変数へ書き込めません/);
+    assert.match(err(`program "t";\nreturn call "${uuid}"();`)[0].message, /代入・変数宣言の値としてのみ/);
+});
+
+test("call の引数が呼出し先 defarg と照合される", () => {
+    const defargs = new Map([["count", "number"], ["who", "entity"]]);
+    const resolve = (name) => (name === "sub" ? defargs : null);
+    const run = (text) => analyze(
+        text, new Map(), new Set(["sub"]), catalog, resolve,
+    ).diagnostics;
+    // 全引数を指定・型も一致 → 警告なし。
+    assert.deepEqual(run(`program "t";\nvar who: entity = target(kind = "nearest_player");\ncall "sub"(count = 3, who = who);`), []);
+    // 宣言外の引数名 → 警告。
+    assert.match(run('program "t";\nvar who: entity = target(kind = "nearest_player");\ncall "sub"(count = 1, who = who, extra = 2);')
+        .find((d) => /宣言されていません/.test(d.message)).message, /extra/);
+    // 宣言済みだが未指定 → 警告。
+    assert.match(run('program "t";\nvar who: entity = target(kind = "nearest_player");\ncall "sub"(count = 1);')
+        .find((d) => /未指定/.test(d.message)).message, /who/);
+    // リテラル型の不一致 → 警告。
+    assert.match(run('program "t";\nvar who: entity = target(kind = "nearest_player");\ncall "sub"(count = "x", who = who);')
+        .find((d) => /型ですが/.test(d.message)).message, /number 型ですが、string/);
+});
+
 test("gamemode 定数と特殊位置", () => {
     assert.deepEqual(err('program "t";\nvar m: string = gamemode.survival;\nvar d: location = disk;'), []);
     assert.throws(() => require("../out/parser").parse('program "t";\nvar m: string = gamemode.hardcore;'));

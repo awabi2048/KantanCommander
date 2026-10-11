@@ -30,6 +30,7 @@ export type CursorContext =
     | { kind: "gamemodeMember" }                    // `gamemode.|`
     | { kind: "propertyAccess"; receiver: string }  // `expr.|`
     | { kind: "callArg"; callName: string }         // `name(a = 1, |`
+    | { kind: "callDiskArg"; programName: string }  // `call "n"(a = 1, |`
     | { kind: "typeName" }                          // `var x: |` / `defarg x: |`
     | { kind: "triggerName" }                       // `trigger |`
     | { kind: "eventKind" }                         // `trigger event(kind = "|`
@@ -119,6 +120,9 @@ export function cursorContext(text: string, offset: number): CursorContext {
         return { kind: "typeName" };
     }
     if (/\btrigger\s+[a-z]*$/.test(prefix)) return { kind: "triggerName" };
+    // `call "name"(...|` の引数位置です。
+    const callDiskMatch = /\bcall\s+"([^"]*)"\s*\([^)]*$/.exec(prefix);
+    if (callDiskMatch) return { kind: "callDiskArg", programName: callDiskMatch[1] };
     const call = enclosingCallName(text, offset);
     if (call) return { kind: "callArg", callName: call };
     // 式位置か文位置かの推定：行頭からの空白のみ、または `=`/`(`/`{` 直後なら式。
@@ -129,7 +133,7 @@ export function cursorContext(text: string, offset: number): CursorContext {
 }
 
 /** ファイル内の `var`・`defarg`・`var world.` 宣言を収集します（解析失敗時は正規表現の近似）。 */
-function fileVariables(text: string): { vars: Map<string, ValueTypeName>; worldVars: Map<string, ValueTypeName> } {
+export function fileVariables(text: string): { vars: Map<string, ValueTypeName>; worldVars: Map<string, ValueTypeName> } {
     const vars = new Map<string, ValueTypeName>();
     const worldVars = new Map<string, ValueTypeName>();
     let program: DslProgram | null = null;
@@ -277,6 +281,19 @@ export function suggest(
             }
             if (ctx.callName === "target" || ctx.callName === "player" || ctx.callName === "exists") {
                 out.push({ label: "kind = ", kind: "arg", detail: "対象種別" });
+            }
+            return [...out, ...varSuggestions(), ...callExprSuggestions()];
+        }
+        case "callDiskArg": {
+            // `call "n"(|` は呼出し先の defarg 名を候補にします。
+            const out: Suggestion[] = [];
+            if (index) {
+                const defargs = index.defargsOf(ctx.programName);
+                if (defargs !== null) {
+                    for (const [name, type] of defargs) {
+                        out.push({ label: `${name} = `, kind: "arg", detail: `${name}: ${type}` });
+                    }
+                }
             }
             return [...out, ...varSuggestions(), ...callExprSuggestions()];
         }

@@ -287,25 +287,49 @@ class DslCompiler(
             return node
         }
 
-        private fun lowerVarDecl(stmt: DslVarDecl): StmtChain =
-            if (stmt.world) {
+        private fun lowerVarDecl(stmt: DslVarDecl): StmtChain {
+            val call = stmt.value as? DslCallResult
+            return if (call != null) {
+                // `var x: T = call ".."(..)` は「値未設定の宣言＋戻り値受取の
+                // 呼出し」の2ノードです。受取変数は呼出ノード以前に定義済みで
+                // ある必要があるため、空値の宣言ノードを先に発行します。
+                val scope = if (stmt.world) VariableScope.WORLD else VariableScope.EXECUTION
+                val define = varNode(
+                    scope, stmt.name, stmt.type, ValuePlan.AssignText(""),
+                    operation = if (stmt.world) VariableOperation.DEFINE else VariableOperation.SET,
+                )
+                val callChain = lowerCallResult(call, if (stmt.world)
+                    DslAssignTarget.WorldVariable(stmt.name, stmt.pos)
+                    else DslAssignTarget.Variable(stmt.name, stmt.pos))
+                define.next = callChain.entry
+                StmtChain(define.id, callChain.exit)
+            } else if (stmt.world) {
                 // ワールド変数の初期宣言は DEFINE を使います（旧保存データの規約と同一）。
                 lowerVarWrite(VariableScope.WORLD, stmt.name, stmt.type, stmt.value,
                     operation = VariableOperation.DEFINE)
             } else {
                 lowerVarWrite(VariableScope.EXECUTION, stmt.name, stmt.type, stmt.value)
             }
+        }
 
         private fun lowerAssign(stmt: DslAssign): StmtChain {
             return when (val t = stmt.target) {
                 is DslAssignTarget.Variable -> when (stmt.op) {
-                    DslAssignOp.ASSIGN -> lowerVarWrite(VariableScope.EXECUTION, t.name, exprTypes.getValue(stmt.value), stmt.value)
+                    DslAssignOp.ASSIGN -> if (stmt.value is DslCallResult) {
+                        lowerCallResult(stmt.value as DslCallResult, t)
+                    } else {
+                        lowerVarWrite(VariableScope.EXECUTION, t.name, exprTypes.getValue(stmt.value), stmt.value)
+                    }
                     else -> lowerCompoundAssign(VariableScope.EXECUTION, t.name, stmt)
                 }
                 is DslAssignTarget.WorldVariable -> when (stmt.op) {
                     // ワールド変数の代入は CHANGE（変更）として記録します。旧保存データと同じ規約です。
-                    DslAssignOp.ASSIGN -> lowerVarWrite(VariableScope.WORLD, t.name, exprTypes.getValue(stmt.value), stmt.value,
-                        operation = VariableOperation.CHANGE)
+                    DslAssignOp.ASSIGN -> if (stmt.value is DslCallResult) {
+                        lowerCallResult(stmt.value as DslCallResult, t)
+                    } else {
+                        lowerVarWrite(VariableScope.WORLD, t.name, exprTypes.getValue(stmt.value), stmt.value,
+                            operation = VariableOperation.CHANGE)
+                    }
                     else -> lowerCompoundAssign(VariableScope.WORLD, t.name, stmt)
                 }
                 is DslAssignTarget.EntityVariable -> {
@@ -831,19 +855,86 @@ class DslCompiler(
 
         // ---- call 文 ----
 
-        private fun lowerCallDisk(stmt: DslCallDisk): StmtChain {
-            val name = stmt.diskId.plainText()
-                ?: error(stmt.pos, "call の対象は文字列リテラルで指定してください")
+        private fun lowerCallDisk(stmt: DslCallDisk): StmtChain =
+            lowerCallResult(DslCallResult(stmt.diskId, stmt.args, stmt.pos), receiver = null)
+
+        /**
+         * `call "name"(arg = 値, ...)` を DISK_CALL ノードへ写像します。
+         *
+         * 引数は呼出し先の `defarg` 宣言（diskResolver が返す DiskArgument）と
+         * 照合します。実行内変数参照は `argvar_<名>`（参照渡し）、リテラル・
+         * ワールド変数・補間文字列は `arg_<名>`（テンプレート文字列）へ書き、
+         * 複合式は一時変数へ実体化した上で `arg_<名>` の単一参照を使います。
+         * `arg_<名>` は宣言型のスカラー値として解釈されるため、複合型
+         * （location/item/block/entity）の引数は実行内変数でのみ指定できます。
+         *
+         * 宣言に無い引数名・型の不一致はここで拒否します。宣言側に存在するが
+         * 呼出しで未指定の引数は `arg_` を書かないまま残し、GUI の半設定状態と
+         * 同じく検証層（ExecutableScriptValidator）の検出へ委ねます。
+         *
+         * `receiver` は戻り値の受取先（`x = call ".."`）で、returnName/
+         * returnScope へ写像します。エンティティ変数は戻り値を受け取れません。
+         */
+        private fun lowerCallResult(call: DslCallResult, receiver: DslAssignTarget?): StmtChain {
+            val name = call.diskId.plainText()
+                ?: error(call.pos, "call の対象は文字列リテラルで指定してください")
             val link = diskResolver(name)
-                ?: error(stmt.pos, "call 対象のディスクが見つかりません: $name")
-            if (link.arguments.isNotEmpty()) {
-                error(stmt.pos, "引数付きディスクの呼出しは未対応です")
+                ?: error(call.pos, "call 対象のディスクが見つかりません: $name")
+            // DSL 側の引数名を宣言名（モデルの変数名）へ照合します。
+            val provided = LinkedHashMap<String, DslArg>()
+            for (arg in call.args) {
+                val argName = arg.name ?: error(arg.pos, "call の引数は名前付きで指定してください")
+                val argument = link.arguments.firstOrNull { it.name == modelName(argName) }
+                    ?: error(arg.pos, "call 対象 '${name}' に引数 '${argName}' は宣言されていません")
+                if (provided.put(argument.name, arg) != null) {
+                    error(arg.pos, "引数 '${argName}' が重複しています")
+                }
             }
+            val pre = mutableListOf<CommandNode>()
             val node = node(CommandType.DISK_CALL)
             node.params["diskId"] = link.diskId.toString()
             node.params["declaredArgs"] = encodeDeclaredArguments(link.arguments)
             node.snapshot = link.snapshot.deepCopy()
-            return stmtChain(node)
+            for (argument in link.arguments) {
+                val arg = provided[argument.name] ?: continue
+                val value = arg.value
+                // `arg = null` はその引数欄が未設定であることを表します。
+                if (value is DslNull) continue
+                if (value is DslVarRef) {
+                    val actual = exprTypes.getValue(value)
+                    if (actual != argument.type) {
+                        error(value.pos, "引数 '${argument.name}' は ${argument.type.name.lowercase()} 型ですが、${actual.name.lowercase()} 型の変数は指定できません")
+                    }
+                    node.params["argvar_${argument.name}"] = modelName(value.name)
+                    continue
+                }
+                when (argument.type) {
+                    ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> {
+                        val actual = exprTypes.getValue(value)
+                        if (actual != argument.type) {
+                            error(value.pos, "引数 '${argument.name}' は ${argument.type.name.lowercase()} 型ですが、${actual.name.lowercase()} 型の値は指定できません")
+                        }
+                        node.params["arg_${argument.name}"] = scalarText(value, argument.type, pre)
+                    }
+                    // 複合型のリテラル受取はモデルが持たず、ワールド変数は
+                    // argvar（実行内変数参照）の対象外のため、いずれも拒否します。
+                    else -> error(value.pos, "${argument.type.name.lowercase()} 型の引数 '${argument.name}' は実行内変数で指定してください")
+                }
+            }
+            when (receiver) {
+                null -> Unit
+                is DslAssignTarget.Variable -> {
+                    node.params["returnName"] = modelName(receiver.name)
+                    node.params["returnScope"] = VariableScope.EXECUTION.name
+                }
+                is DslAssignTarget.WorldVariable -> {
+                    node.params["returnName"] = modelName(receiver.name)
+                    node.params["returnScope"] = VariableScope.WORLD.name
+                }
+                is DslAssignTarget.EntityVariable ->
+                    error(receiver.pos, "call の戻り値はエンティティ変数へ書き込めません")
+            }
+            return stmtChain(*(pre + node).toTypedArray())
         }
 
         // ---- 宣言部 ----

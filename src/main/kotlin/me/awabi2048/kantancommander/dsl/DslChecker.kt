@@ -195,7 +195,12 @@ class DslChecker(
                 checkVarName(stmt.name, stmt.pos)
                 if (stmt.world) requireWorld(stmt.pos, "ワールド変数の定義")
                 // `= null` は値が未設定の宣言です（型は宣言に従い、値は空で保持します）。
-                if (stmt.value !is DslNull) {
+                // `= call "x"(..)` は戻り値を受け取る宣言です。呼出し側の引数を検査し、
+                // 宣言型との整合は DISK_CALL の検証規則（受取変数の存在確認）に委ねます。
+                if (stmt.value is DslCallResult) {
+                    checkCallArgs(stmt.value.diskId, stmt.value.args)
+                    exprTypes?.put(stmt.value, stmt.type)
+                } else if (stmt.value !is DslNull) {
                     val actual = checkExpr(stmt.value)
                     if (actual != stmt.type) {
                         error(stmt.value.pos, "変数 '${stmt.name}' は ${stmt.type.dslName()} 型ですが、${actual.dslName()} 型の値は代入できません")
@@ -248,13 +253,25 @@ class DslChecker(
                 }
                 // `= null` は値を未設定へ戻す代入です（複合代入では使えません）。
                 // 式型は代入先の型として記録し、低級化側は空値を書きます。
-                val valueType = if (stmt.value is DslNull && stmt.op == DslAssignOp.ASSIGN) {
-                    (targetType ?: ValueType.STRING).also { exprTypes?.put(stmt.value, it) }
-                } else {
-                    checkExpr(stmt.value)
+                // `= call "x"(..)` は DISK_CALL の戻り値受取へ写像します。戻り値の
+                // 型は呼出し先解析に依存するため、この層では型一致を判定しません。
+                val valueType = when {
+                    stmt.value is DslCallResult -> {
+                        if (stmt.op != DslAssignOp.ASSIGN) {
+                            error(stmt.value.pos, "call の戻り値は = 代入でのみ受け取れます")
+                        }
+                        if (stmt.target is DslAssignTarget.EntityVariable) {
+                            error(stmt.value.pos, "call の戻り値はエンティティ変数へ書き込めません")
+                        }
+                        checkCallArgs(stmt.value.diskId, stmt.value.args)
+                        (targetType ?: ValueType.STRING).also { exprTypes?.put(stmt.value, it) }
+                    }
+                    stmt.value is DslNull && stmt.op == DslAssignOp.ASSIGN ->
+                        (targetType ?: ValueType.STRING).also { exprTypes?.put(stmt.value, it) }
+                    else -> checkExpr(stmt.value)
                 }
                 if (stmt.op == DslAssignOp.ASSIGN) {
-                    if (targetType != null && valueType != targetType) {
+                    if (stmt.value !is DslCallResult && targetType != null && valueType != targetType) {
                         error(stmt.value.pos, "${targetType.dslName()} 型の変数へ ${valueType.dslName()} 型の値は代入できません")
                     }
                 } else {
@@ -324,7 +341,25 @@ class DslChecker(
             is DslContinue -> if (loopDepth == 0) error(stmt.pos, "continue は repeat の内側でのみ使えます")
             is DslReturn -> stmt.value?.let { checkExpr(it) }
             is DslCallStmt -> checkCallStmt(stmt)
-            is DslCallDisk -> checkStringLiteral(stmt.diskId)
+            is DslCallDisk -> checkCallArgs(stmt.diskId, stmt.args)
+        }
+    }
+
+    /**
+     * `call` の文・式共通の検査です。対象名リテラルと引数列を検査します。
+     * 引数名と呼出し先 `defarg` 宣言の照合・型一致はファイル間解決が必要な
+     * ため、この層では文法（名前付き・重複なし・値式が妥当）までを保証し、
+     * 実在確認はコンパイル時のリンク解決に委ねます。
+     */
+    private fun checkCallArgs(literal: DslStringLiteral, args: List<DslArg>) {
+        checkStringLiteral(literal)
+        val seen = mutableSetOf<String>()
+        for (arg in args) {
+            val name = arg.name ?: error(arg.pos, "call の引数は名前付きで指定してください")
+            checkVarName(name, arg.pos)
+            if (!seen.add(name)) error(arg.pos, "引数 '${name}' が重複しています")
+            // `arg = null` は呼出し先の設定欄が未設定であることを表します。
+            if (arg.value !is DslNull) checkExpr(arg.value)
         }
     }
 
@@ -415,6 +450,9 @@ class DslChecker(
             if (loopDepth == 0) error(expr.pos, "loop.count は repeat の内側でのみ使えます")
             ValueType.NUMBER
         }
+        // `call "x"(..)` の式は戻り値受取専用です。代入・宣言以外の式位置では
+        // 意味を持たないため、ここでは一律に拒否します。
+        is DslCallResult -> error(expr.pos, "call は代入・変数宣言の値としてのみ使えます")
     }
 
     private fun checkBinary(expr: DslBinary): ValueType {

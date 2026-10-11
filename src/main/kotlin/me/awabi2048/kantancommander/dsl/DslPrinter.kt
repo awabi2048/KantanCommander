@@ -27,6 +27,7 @@ import me.awabi2048.kantancommander.model.variableScope
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.declaredArguments
 import java.util.UUID
 
 /**
@@ -723,11 +724,57 @@ class DslPrinter(
             line("return $expr;")
         }
 
+        /**
+         * DISK_CALL を `call` へ復元します。
+         *
+         * 引数は被呼出し側の宣言（`declaredArgs`）の順で、`argvar_` は変数参照、
+         * `arg_` は宣言型に従うリテラル・テンプレートとして読みます。宣言に
+         * 存在するが未設定の引数は `= null` として残し、宣言外に残った古い
+         * 引数欄（arg_/argvar_）も後続に保持します。戻り値の受取欄
+         * （returnName/returnScope）があれば `<変数> = call ".."` へ写像します。
+         */
         private fun emitCallDisk(n: CommandNode) {
             val rawId = n.string("diskId")
             val name = runCatching { UUID.fromString(rawId) }.getOrNull()
                 ?.let(diskNameResolver) ?: rawId
-            line("call \"${escape(name)}\";")
+            val declared = n.declaredArguments()
+            val declaredNames = declared.mapTo(mutableSetOf()) { it.name }
+            val args = mutableListOf<String>()
+            for (argument in declared) {
+                val label = dslName(argument.name)
+                val variable = n.string("argvar_${argument.name}").takeIf(String::isNotBlank)
+                val literal = n.string("arg_${argument.name}").takeIf(String::isNotBlank)
+                args += "$label = " + when {
+                    variable != null -> valueName(variable)
+                    literal != null -> when (argument.type) {
+                        ValueType.STRING -> quoteTemplate(literal)
+                        else -> scalarText(literal)
+                    }
+                    else -> "null"
+                }
+            }
+            // 宣言に存在しない arg_/argvar_ 欄は被呼出し側の引数改名等で残る
+            // 古いデータです。捨てずに名前順で保持します。
+            for (key in n.params.keys.sorted()) {
+                val (isVariable, argName) = when {
+                    key.startsWith("argvar_") -> true to key.removePrefix("argvar_")
+                    key.startsWith("arg_") -> false to key.removePrefix("arg_")
+                    else -> continue
+                }
+                if (argName in declaredNames) continue
+                val raw = n.string(key).takeIf(String::isNotBlank) ?: continue
+                args += "${dslName(argName)} = ${if (isVariable) valueName(raw) else scalarText(raw)}"
+            }
+            val receiver = n.string("returnName").takeIf(String::isNotBlank)?.let { r ->
+                if (VariableScope.parse(n.string("returnScope")) == VariableScope.WORLD) {
+                    worldRef(r)
+                } else {
+                    dslName(r)
+                }
+            }
+            val argsText = if (args.isEmpty()) "" else "(${args.joinToString(", ")})"
+            val call = "call \"${escape(name)}\"$argsText"
+            line(if (receiver != null) "$receiver = $call;" else "$call;")
         }
 
         // ---- 命令ノード ----

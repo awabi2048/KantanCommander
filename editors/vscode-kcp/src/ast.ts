@@ -147,9 +147,11 @@ export interface DslCallStmt {
     pos: DslPos;
 }
 
+/** `call "disk";` / `call "disk"(arg = 値, ...);` の呼出し文です。 */
 export interface DslCallDisk {
     kind: "callDisk";
     diskId: DslStringLiteral;
+    args: DslArg[];
     pos: DslPos;
 }
 
@@ -173,6 +175,7 @@ export type DslExpr =
     | DslBinary
     | DslPropertyRead
     | DslCallExpr
+    | DslCallResult
     | DslSpecialPosition
     | DslLoopCount
     | DslPositionLiteral
@@ -285,6 +288,17 @@ export interface DslPropertyRead {
 export interface DslCallExpr {
     kind: "callExpr";
     name: string;
+    args: DslArg[];
+    pos: DslPos;
+}
+
+/**
+ * `x = call "disk"(...)` の式位置の呼出しです。代入・変数宣言の右辺でのみ
+ * 使用でき、式の型は呼出し先の戻り値に従います（この層では型を確定しません）。
+ */
+export interface DslCallResult {
+    kind: "callResult";
+    diskId: DslStringLiteral;
     args: DslArg[];
     pos: DslPos;
 }

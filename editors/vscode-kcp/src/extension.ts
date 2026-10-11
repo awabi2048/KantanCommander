@@ -88,7 +88,13 @@ function toRange(doc: vscode.TextDocument, pos: { line: number; column: number }
 }
 
 function revalidate(doc: vscode.TextDocument) {
-    const result = analyze(doc.getText(), index.worldTypes(), new Set(index.programNames().keys()), catalog);
+    const result = analyze(
+        doc.getText(),
+        index.worldTypes(),
+        new Set(index.programNames().keys()),
+        catalog,
+        (name) => index.defargsOf(name),
+    );
     diagnostics.set(doc.uri, result.diagnostics.map((d) =>
         new vscode.Diagnostic(
             toRange(doc, d.pos),

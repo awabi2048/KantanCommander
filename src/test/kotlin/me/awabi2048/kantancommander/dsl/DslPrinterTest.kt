@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphValidator
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
+import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
@@ -471,6 +472,39 @@ class DslPrinterTest {
         // `#` は正規形の `//` へ統一され、同行コメントは文の直前行へ揃います。
         listOf("先頭のコメント", "文の直前コメント", "同行コメント", "内部コメント", "末尾コメント")
             .forEach { assertTrue(text.contains("// $it"), "コメント '$it'") }
+    }
+
+    @Test
+    fun `call の引数と戻り値受取が往復する`() {
+        val target = CommandGraph()
+        val wait = CommandType.WAIT.newNode()
+        target.nodes[wait.id] = wait
+        target.entryNodeId = wait.id
+        val link = DslDiskLink(
+            java.util.UUID.randomUUID(), target, listOf(
+                me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
+                me.awabi2048.kantancommander.model.DiskArgument("label", ValueType.STRING),
+                me.awabi2048.kantancommander.model.DiskArgument("who", ValueType.ENTITY),
+            ),
+        )
+        val src = """
+            program "t" ;
+                var who: entity = target(kind = "nearest_player");
+                var result: number = 0;
+                result = call "sub"(count = 3, label = "hi", who = who);
+
+            """.trimIndent()
+        val resolver: (String) -> DslDiskLink? = { name -> if (name == "sub") link else null }
+        val printer = DslPrinter(diskNameResolver = { if (it == link.diskId) "sub" else it.toString() })
+        val r1 = DslCompiler(emptyMap(), resolver).compile(DslParser.parse(src))
+        assertValid(r1)
+        val text1 = printer.print(r1.graph, "t", r1.trigger, r1.arguments)
+        val r2 = DslCompiler(emptyMap(), resolver).compile(DslParser.parse(text1))
+        assertValid(r2)
+        val text2 = printer.print(r2.graph, "t", r2.trigger, r2.arguments)
+        assertEquals(text1, text2, "印刷テキストは不動点であるべきです")
+        assertTrue(text1.contains("""result = call "sub"(count = 3, label = "hi", who = who);"""))
+        assertEquals(signatures(r1.graph), signatures(r2.graph), "往路・復路で意味内容が一致すべきです")
     }
 
     @Test

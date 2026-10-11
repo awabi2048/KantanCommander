@@ -11,6 +11,7 @@ import {
     DslAssignTarget,
     DslBreak,
     DslCallDisk,
+    DslCallResult,
     DslCallExpr,
     DslCallStmt,
     DslComponentExpr,
@@ -430,8 +431,9 @@ class Parser {
     private parseCall(): DslStmt {
         const head = this.advance();
         const literal = this.parseStringLiteral();
+        const args = this.peek().kind === TokenKind.LPAREN ? this.parseArgs() : [];
         this.expectSemicolon();
-        return { kind: "callDisk", diskId: literal, pos: head.pos } satisfies DslCallDisk;
+        return { kind: "callDisk", diskId: literal, args, pos: head.pos } satisfies DslCallDisk;
     }
 
     private parseArgs(): DslArg[] {
@@ -607,6 +609,14 @@ class Parser {
                 this.expect(TokenKind.DOT, "world の後に '.変数名' を書いてください");
                 const name = this.parseVarName("world. の後に変数名を書いてください");
                 return { kind: "worldRef", name, pos: t.pos };
+            }
+            // `call "x"(...)` を式位置で読みます。戻り値を受け取る代入の値として
+            // 構文的には式ですが、使用位置は代入・変数宣言の右辺のみです。
+            case TokenKind.CALL: {
+                const t = this.advance();
+                const literal = this.parseStringLiteral();
+                const args = this.peek().kind === TokenKind.LPAREN ? this.parseArgs() : [];
+                return { kind: "callResult", diskId: literal, args, pos: t.pos } satisfies DslCallResult;
             }
             case TokenKind.IDENT:
                 return this.parseIdentExpr();
