@@ -745,6 +745,122 @@ class DslCompilerTest {
     }
 
     @Test
+    fun `vars_ref はエンティティ変数の COPY へ写像される`() {
+        val graph = compile(
+            """
+            program "t" ;
+                var e: entity = target(kind = "nearest_player");
+                e.vars.dst = vars.src;
+            
+            """.trimIndent(),
+        )
+        assertValid(graph)
+        val node = graph.nodes.values.first { it.type == CommandType.VARIABLE }
+        assertEquals(VariableScope.ENTITY.name, node.string("scope"))
+        assertEquals("COPY", node.string("operation"))
+        assertEquals("dst", node.string("name"))
+        assertEquals("src", node.string("source"))
+        assertNotNull(node.targetSpec)
+    }
+
+    @Test
+    fun `vars_ref の詳細値はエンティティ変数の PROPERTY 生成へ写像される`() {
+        val graph = compile(
+            """
+            program "t" ;
+                var e: entity = target(kind = "nearest_player");
+                e.vars.dst = vars.src.health;
+            
+            """.trimIndent(),
+        )
+        assertValid(graph)
+        val node = graph.nodes.values.first { it.type == CommandType.VARIABLE }
+        assertEquals(VariableScope.ENTITY.name, node.string("scope"))
+        assertEquals("SET", node.string("operation"))
+        assertEquals(VariableChangeMode.PROPERTY.name, node.string("changeMode"))
+        assertEquals("src", node.string("propertySource"))
+        assertEquals("health", node.string("property"))
+        assertNotNull(node.targetSpec)
+    }
+
+    @Test
+    fun `vars_ref の引数付き詳細値は propertyArg へ写像される`() {
+        val graph = compile(
+            """
+            program "t" ;
+                var e: entity = target(kind = "nearest_player");
+                e.vars.dst = vars.src.distance(vars.loc);
+            
+            """.trimIndent(),
+        )
+        assertValid(graph)
+        val node = graph.nodes.values.first { it.type == CommandType.VARIABLE }
+        assertEquals(VariableChangeMode.PROPERTY.name, node.string("changeMode"))
+        assertEquals("src", node.string("propertySource"))
+        assertEquals("distance", node.string("property"))
+        assertEquals("loc", node.string("propertyArg"))
+    }
+
+    @Test
+    fun `vars_ref はエンティティ変数以外への代入では拒否される`() {
+        assertThrows(DslCheckException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var x: number = 0;
+                    x = vars.src;
+                
+                """.trimIndent(),
+            )
+        }
+    }
+
+    @Test
+    fun `エンティティ変数の複合代入は拒否される`() {
+        val ex = assertThrows(DslCheckException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var e: entity = target(kind = "nearest_player");
+                    e.vars.x += 1;
+                
+                """.trimIndent(),
+            )
+        }
+        assertTrue(ex.message?.contains("複合代入") == true)
+    }
+
+    @Test
+    fun `実行内変数の詳細値はエンティティ変数への書込みで拒否される`() {
+        val ex = assertThrows(DslCheckException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var e: entity = target(kind = "nearest_player");
+                    var l: location = null;
+                    e.vars.x = l.x;
+                
+                """.trimIndent(),
+            )
+        }
+        assertTrue(ex.message?.contains("vars.<name>") == true)
+    }
+
+    @Test
+    fun `vars という変数名は予約名として拒否される`() {
+        val ex = assertThrows(DslCheckException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var vars: number = 0;
+                
+                """.trimIndent(),
+            )
+        }
+        assertTrue(ex.message?.contains("予約") == true)
+    }
+
+    @Test
     fun `null は条件・引数・変数名の未設定へ写像される`() {
         val graph = compile(
             """

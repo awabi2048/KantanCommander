@@ -568,9 +568,12 @@ class Parser {
                     this.expect(TokenKind.RPAREN, "')' を書いてください");
                 }
                 // `loop.count` は実行コンテキスト供給のシステム変数であり、
-                // 詳細値参照ではなく専用の式として読みます。
+                // `vars.<name>` はエンティティ変数の参照であり、
+                // いずれも詳細値参照ではなく専用の式として読みます。
                 if (expr.kind === "varRef" && expr.name === "loop" && name.text === "count" && arg === null) {
                     expr = { kind: "loopCount", pos: dot.pos };
+                } else if (expr.kind === "varRef" && expr.name === "vars" && arg === null) {
+                    expr = { kind: "entityVarRef", name: name.text, pos: dot.pos };
                 } else {
                     expr = { kind: "propertyRead", source: expr, name: name.text, arg, pos: dot.pos };
                 }

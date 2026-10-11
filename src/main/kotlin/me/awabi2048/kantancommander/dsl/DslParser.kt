@@ -468,9 +468,12 @@ class DslParser(text: String) {
                         a
                     } else null
                     // `loop.count` は実行コンテキスト供給のシステム変数であり、
-                    // 詳細値参照ではなく専用の式として読みます。
+                    // `vars.<name>` はエンティティ変数の参照であり、
+                    // いずれも詳細値参照ではなく専用の式として読みます。
                     if (expr is DslVarRef && expr.name == "loop" && name.text == "count" && arg == null) {
                         DslLoopCount(dot.pos)
+                    } else if (expr is DslVarRef && expr.name == "vars" && arg == null) {
+                        DslEntityVarRef(name.text, dot.pos)
                     } else {
                         DslPropertyRead(expr, name.text, arg, dot.pos)
                     }

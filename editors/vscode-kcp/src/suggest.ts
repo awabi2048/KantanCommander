@@ -27,6 +27,7 @@ const TRIGGER_NAMES = ["timer", "redstone", "event"];
 export type CursorContext =
     | { kind: "callTarget" }                        // `call "..|`
     | { kind: "worldMember" }                       // `world.|`
+    | { kind: "varsMember" }                        // `vars.|`（対象エンティティの変数名）
     | { kind: "gamemodeMember" }                    // `gamemode.|`
     | { kind: "propertyAccess"; receiver: string }  // `expr.|`
     | { kind: "callArg"; callName: string }         // `name(a = 1, |`
@@ -113,6 +114,9 @@ export function cursorContext(text: string, offset: number): CursorContext {
         if (call) return { kind: "stringLiteralArg", callName: call, argName: litArgMatch[1] };
     }
     if (/\bworld\.[a-z0-9_]*$/.test(prefix)) return { kind: "worldMember" };
+    // `vars.<name>.|` の詳細値位置は propertyAccess 側へ委ねるため、
+    // `vars.|` のみをここで拾います。
+    if (/\bvars\.[a-z0-9_]*$/.test(prefix)) return { kind: "varsMember" };
     if (/\bgamemode\.[a-z0-9_]*$/.test(prefix)) return { kind: "gamemodeMember" };
     const propMatch = /([a-zA-Z_][a-zA-Z0-9_]*)\.[a-z0-9_]*$/.exec(prefix);
     if (propMatch) return { kind: "propertyAccess", receiver: propMatch[1] };
@@ -250,6 +254,15 @@ export function suggest(
         }
         case "worldMember":
             return worldVarSuggestions();
+        case "varsMember": {
+            // ENTITY scope は定義表を持たないため、ファイル内で既に使われている
+            // `vars.<name>` の名前だけを候補にします。
+            const names = new Set<string>();
+            const re = /\bvars\.([a-z][a-z0-9_]*)/g;
+            let m: RegExpExecArray | null;
+            while ((m = re.exec(text))) names.add(m[1]);
+            return [...names].map((name) => ({ label: name, kind: "variable" as const, detail: `vars.${name}` }));
+        }
         case "gamemodeMember":
             return catalog.gamemodeConstants.map((c) => ({ label: c, kind: "constant" as const }));
         case "propertyAccess": {

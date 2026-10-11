@@ -34,7 +34,8 @@
   "reservedNames": [
     "disk",
     "captured",
-    "loop"
+    "loop",
+    "vars"
   ],
   "gamemodeConstants": [
     "survival",

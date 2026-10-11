@@ -141,6 +141,10 @@
           "match": "\\bworld\\.[a-z_][a-z0-9_]*"
         },
         {
+          "name": "variable.language.entityvar.kcp",
+          "match": "\\bvars\\.[a-z_][a-z0-9_]*"
+        },
+        {
           "name": "keyword.other.vars-access.kcp",
           "match": "\\.vars\\."
         }

@@ -174,6 +174,7 @@ export type DslExpr =
     | DslUnary
     | DslBinary
     | DslPropertyRead
+    | DslEntityVarRef
     | DslCallExpr
     | DslCallResult
     | DslSpecialPosition
@@ -282,6 +283,17 @@ export interface DslPropertyRead {
     source: DslExpr;
     name: string;
     arg: DslExpr | null;
+    pos: DslPos;
+}
+
+/**
+ * `vars.<name>` の式位置参照です。対象エンティティ自身の変数を読み出し、
+ * エンティティ変数への代入値としてのみ有効です（モデルの ENTITY COPY／
+ * PROPERTY 生成へ写像されます）。型は参照元の値に従いこの層では確定しません。
+ */
+export interface DslEntityVarRef {
+    kind: "entityVarRef";
+    name: string;
     pos: DslPos;
 }
 

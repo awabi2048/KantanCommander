@@ -238,14 +238,12 @@ class DslPrinter(
                 }
                 VariableOperation.COPY -> {
                     // 複写は参照代入と同義のため `dst = src` へ正規化します。
+                    // ENTITY の複写元は同一対象のエンティティ変数 `vars.<name>` です。
                     val src = n.string("source")
                     val srcText = when (scope) {
                         VariableScope.WORLD -> "world.${varNameText(src)}"
                         VariableScope.EXECUTION -> valueName(src)
-                        VariableScope.ENTITY ->
-                            // エンティティ変数の複写元は同一対象のエンティティ変数であり、
-                            // DSL は entity 変数の読出しを表現できません。
-                            unsupported("ENTITY 変数の COPY")
+                        VariableScope.ENTITY -> "vars.${dslName(src)}"
                     }
                     emitVarAssign(n, scope, name, srcText)
                 }
@@ -262,11 +260,18 @@ class DslPrinter(
                         }
                     }
                     VariableScope.ENTITY -> {
-                        // PROPERTY の参照元は同一対象の entity 変数であり DSL では表現不能。
                         if (n.string("changeMode") == VariableChangeMode.PROPERTY.name) {
-                            unsupported("ENTITY 変数の PROPERTY 生成")
+                            // PROPERTY の参照元・引数は同一対象の entity 変数で、
+                            // DSL では `vars.<name>` 名前空間で表します。
+                            val src = n.string("propertySource")
+                            val prop = n.string("property")
+                            val arg = n.string("propertyArg").takeIf(String::isNotBlank)
+                            val expr = "vars.${dslName(src)}.$prop" +
+                                (arg?.let { "(vars.${dslName(it)})" } ?: "")
+                            line("${entityTargetText(n)}.vars.${varNameText(name)} = $expr;")
+                        } else {
+                            line("${entityTargetText(n)}.vars.${varNameText(name)} = ${variableExpr(n)};")
                         }
-                        line("${entityTargetText(n)}.vars.${varNameText(name)} = ${variableExpr(n)};")
                     }
                 }
             }

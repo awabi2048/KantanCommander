@@ -525,4 +525,21 @@ class DslPrinterTest {
         assertTrue(text.contains("pos = null"))
         assertTrue(text.contains("var null: number"))
     }
+
+    @Test
+    fun `エンティティ変数の読み取りが往復する`() {
+        val text = roundTrip(
+            """
+            program "t" ;
+                var e: entity = target(kind = "nearest_player");
+                e.vars.dst = vars.src;
+                e.vars.d = vars.src.health;
+                e.vars.dist = vars.src.distance(vars.loc);
+            
+            """.trimIndent(),
+        )
+        assertTrue(text.contains("e.vars.dst = vars.src;"))
+        assertTrue(text.contains("e.vars.d = vars.src.health;"))
+        assertTrue(text.contains("e.vars.dist = vars.src.distance(vars.loc);"))
+    }
 }

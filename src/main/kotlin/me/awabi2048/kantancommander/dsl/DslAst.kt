@@ -194,6 +194,14 @@ data class DslPropertyRead(
 ) : DslExpr
 
 /**
+ * `vars.<name>` です。`e.vars.x = vars.src` の右辺で対象エンティティ自身の
+ * 変数を参照します（VARIABLE scope=ENTITY の COPY／PROPERTY へ写像）。
+ * エンティティ変数は同一対象の中でしか読み出せないため、代入の値と
+ * `vars.src.prop` の参照元・引数としてのみ使用できます。
+ */
+data class DslEntityVarRef(val name: String, override val pos: DslPos) : DslExpr
+
+/**
  * 実行コンテキストが供給する予約位置式です。`disk` は起動した制御ブロックの
  * 位置（PositionKind.DISK）、`captured` は捕捉済み位置（PositionKind.CAPTURED）
  * へ写像します。型はいずれも location です。

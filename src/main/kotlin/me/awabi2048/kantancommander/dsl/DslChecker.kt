@@ -268,10 +268,31 @@ class DslChecker(
                     }
                     stmt.value is DslNull && stmt.op == DslAssignOp.ASSIGN ->
                         (targetType ?: ValueType.STRING).also { exprTypes?.put(stmt.value, it) }
+                    // `vars.x`・`vars.x.prop` は対象エンティティ自身の変数読み取りです。
+                    // エンティティ変数への代入の値でのみ有効で、COPY／PROPERTY へ写像します。
+                    stmt.value is DslEntityVarRef -> {
+                        if (stmt.target !is DslAssignTarget.EntityVariable) {
+                            error(stmt.value.pos, "vars.<name> はエンティティ変数の代入値としてのみ使えます")
+                        }
+                        checkVarName(stmt.value.name, stmt.value.pos)
+                        // COPY は複写元の型を引き継ぐため、この層では型を確定しません。
+                        targetType
+                    }
+                    stmt.value is DslPropertyRead && stmt.value.source is DslEntityVarRef -> {
+                        if (stmt.target !is DslAssignTarget.EntityVariable) {
+                            error(stmt.value.pos, "vars.<name> はエンティティ変数の代入値としてのみ使えます")
+                        }
+                        checkEntityVarPropertyRead(stmt.value)
+                    }
+                    // PROPERTY の参照元は対象Entity自身の変数に限定されます。
+                    // 実行内・ワールド変数の詳細値は値欄を通らないため写像できません。
+                    stmt.value is DslPropertyRead && stmt.target is DslAssignTarget.EntityVariable ->
+                        error(stmt.value.pos, "エンティティ変数への書き込みでは、詳細値の参照元は vars.<name> で指定してください")
                     else -> checkExpr(stmt.value)
                 }
                 if (stmt.op == DslAssignOp.ASSIGN) {
-                    if (stmt.value !is DslCallResult && targetType != null && valueType != targetType) {
+                    // `vars.x`（COPY）は複写元の型を引き継ぐため、ここでは比較しません。
+                    if (valueType != null && stmt.value !is DslCallResult && targetType != null && valueType != targetType) {
                         error(stmt.value.pos, "${targetType.dslName()} 型の変数へ ${valueType.dslName()} 型の値は代入できません")
                     }
                 } else {
@@ -453,6 +474,9 @@ class DslChecker(
         // `call "x"(..)` の式は戻り値受取専用です。代入・宣言以外の式位置では
         // 意味を持たないため、ここでは一律に拒否します。
         is DslCallResult -> error(expr.pos, "call は代入・変数宣言の値としてのみ使えます")
+        // `vars.<name>` はエンティティ変数への代入値でのみ有効です。それ以外の
+        // 式位置（条件・命令引数・他変数への代入等）では意味を持ちません。
+        is DslEntityVarRef -> error(expr.pos, "vars.<name> はエンティティ変数の代入値としてのみ使えます")
     }
 
     private fun checkBinary(expr: DslBinary): ValueType {
@@ -484,6 +508,34 @@ class DslChecker(
             DslBinaryOp.AND, DslBinaryOp.OR ->
                 if (left == ValueType.BOOLEAN && right == ValueType.BOOLEAN) ValueType.BOOLEAN else fail()
         }
+    }
+
+    /**
+     * `vars.<src>.<prop>` / `vars.<src>.<prop>(vars.<arg>)` のエンティティ変数
+     * 詳細値読み取りを検証します。ENTITY scope は定義表を持たず参照元・
+     * 引数変数の型は実行時に決まるため、詳細値の存在・引数の有無・
+     * 引数が同じ対象の変数参照であることまでを確認します。
+     */
+    private fun checkEntityVarPropertyRead(expr: DslPropertyRead): ValueType {
+        val source = expr.source as DslEntityVarRef
+        checkVarName(source.name, source.pos)
+        val def = ValueProperties.definition(expr.name)
+            ?: error(expr.pos, "不明な詳細値 '${expr.name}' です")
+        when {
+            def.argType == null && expr.arg != null ->
+                error(expr.arg.pos, "詳細値 '${expr.name}' は引数を取りません")
+            def.argType != null && expr.arg == null ->
+                error(expr.pos, "詳細値 '${expr.name}' には ${def.argType.dslName()} 型の引数が必要です")
+            def.argType != null -> {
+                // 引数変数は参照元と同じ対象のエンティティ変数から読み出されます。
+                val arg = expr.arg!!
+                if (arg !is DslEntityVarRef) {
+                    error(arg.pos, "エンティティ変数の詳細値引数は vars.<name> で指定してください")
+                }
+                checkVarName(arg.name, arg.pos)
+            }
+        }
+        return def.result
     }
 
     private fun checkPropertyRead(expr: DslPropertyRead): ValueType {
@@ -788,6 +840,6 @@ class DslChecker(
 
         internal val namePattern = Regex("[a-z][a-z0-9_]*")
         /** 予約位置式・システム変数と衝突するため変数名として使えない識別子です。 */
-        internal val RESERVED_NAMES = setOf("disk", "captured", "loop")
+        internal val RESERVED_NAMES = setOf("disk", "captured", "loop", "vars")
     }
 }

@@ -203,3 +203,31 @@ test("変数名の規則", () => {
     assert.match(err('program "t";\nvar loop: number = 1;')[0].message, /予約された名前/);
     assert.deepEqual(err('program "t";\nvar null: number = 1;'), []);
 });
+
+test("vars.<name> はエンティティ変数の代入値として有効", () => {
+    const decl = 'var p: entity = target(kind = "nearest_player");';
+    // 単純読み取り（COPY）・詳細値・引数付き詳細値は受理します。
+    assert.deepEqual(err(`program "t";\n${decl}\np.vars.dst = vars.src;`), []);
+    assert.deepEqual(err(`program "t";\n${decl}\np.vars.d = vars.src.health;`), []);
+    assert.deepEqual(err(`program "t";\n${decl}\np.vars.dist = vars.src.distance(vars.loc);`), []);
+    // エンティティ変数以外への代入・その他の式位置では拒否します。
+    assert.match(err(`program "t";\nvar x: number = 0;\nx = vars.src;`)[0].message, /代入値としてのみ/);
+    assert.match(err(`program "t";\nif (vars.src.health > 0) { }`)[0].message, /代入値としてのみ/);
+});
+
+test("vars.<name> の詳細値と引数を検証する", () => {
+    const decl = 'var p: entity = target(kind = "nearest_player");';
+    assert.match(err(`program "t";\n${decl}\np.vars.d = vars.src.zzz;`)[0].message, /不明な詳細値/);
+    // 引数を取らない詳細値への引数・引数必須の詳細値の引数欠落を拒否します。
+    assert.match(err(`program "t";\n${decl}\np.vars.d = vars.src.health(vars.a);`)[0].message, /引数を取りません/);
+    assert.match(err(`program "t";\n${decl}\np.vars.d = vars.src.distance;`)[0].message, /引数が必要です/);
+    // 引数変数は同じ対象のエンティティ変数（vars.<name>）のみです。
+    assert.match(err(`program "t";\nvar l: location = null;\n${decl}\np.vars.d = vars.src.distance(l);`)[0].message, /vars\.<name>/);
+});
+
+test("vars は予約名・実行内変数の詳細値はエンティティ変数へ書き込めない", () => {
+    const decl = 'var p: entity = target(kind = "nearest_player");';
+    assert.match(err('program "t";\nvar vars: number = 1;')[0].message, /予約された名前/);
+    assert.match(err(`program "t";\nvar l: location = null;\n${decl}\np.vars.x = l.x;`)[0].message, /vars\.<name>/);
+    assert.match(err(`program "t";\n${decl}\np.vars.x += 1;`)[0].message, /複合代入/);
+});

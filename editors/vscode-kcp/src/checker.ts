@@ -308,24 +308,45 @@ export class Checker {
                 // `= null` は値を未設定へ戻す代入です（複合代入では使えません）。
                 // `= call "x"(..)` は戻り値の受取です。戻り値の型は呼出し先の
                 // 解析に依存するため、この層では型一致を判定しません。
+                const value = stmt.value;
                 let valueType: V | null;
-                if (stmt.value.kind === "callResult") {
+                if (value.kind === "callResult") {
                     if (stmt.op !== "ASSIGN") {
-                        this.error(stmt.value.pos, "call の戻り値は = 代入でのみ受け取れます");
+                        this.error(value.pos, "call の戻り値は = 代入でのみ受け取れます");
                     }
                     if (stmt.target.kind === "entityVariable") {
-                        this.error(stmt.value.pos, "call の戻り値はエンティティ変数へ書き込めません");
+                        this.error(value.pos, "call の戻り値はエンティティ変数へ書き込めません");
                     }
-                    this.checkCallArgs(stmt.value.diskId, stmt.value.args);
+                    this.checkCallArgs(value.diskId, value.args);
                     valueType = targetType;
+                } else if (value.kind === "entityVarRef") {
+                    // `vars.x`・`vars.x.prop` は対象エンティティ自身の変数読み取りです。
+                    // エンティティ変数への代入の値でのみ有効で、COPY／PROPERTY へ写像します。
+                    if (stmt.target.kind !== "entityVariable") {
+                        this.error(value.pos, "vars.<name> はエンティティ変数の代入値としてのみ使えます");
+                    }
+                    this.checkVarName(value.name, value.pos);
+                    // COPY は複写元の型を引き継ぐため、この層では型を確定しません。
+                    valueType = targetType;
+                } else if (value.kind === "propertyRead" && value.source.kind === "entityVarRef") {
+                    if (stmt.target.kind !== "entityVariable") {
+                        this.error(value.pos, "vars.<name> はエンティティ変数の代入値としてのみ使えます");
+                    }
+                    valueType = this.checkEntityVarPropertyRead(value);
+                } else if (value.kind === "propertyRead" && stmt.target.kind === "entityVariable") {
+                    // PROPERTY の参照元は対象Entity自身の変数に限定されます。
+                    // 実行内・ワールド変数の詳細値は値欄を通らないため写像できません。
+                    this.error(value.pos, "エンティティ変数への書き込みでは、詳細値の参照元は vars.<name> で指定してください");
+                    valueType = this.checkExpr(value);
                 } else {
-                    valueType = stmt.value.kind === "null" && stmt.op === "ASSIGN"
+                    valueType = value.kind === "null" && stmt.op === "ASSIGN"
                         ? (targetType ?? "string")
-                        : this.checkExpr(stmt.value);
+                        : this.checkExpr(value);
                 }
                 if (stmt.op === "ASSIGN") {
-                    if (stmt.value.kind !== "callResult" && targetType !== null && valueType !== targetType) {
-                        this.error(stmt.value.pos, `${targetType} 型の変数へ ${valueType} 型の値は代入できません`);
+                    // `vars.x`（COPY）は複写元の型を引き継ぐため、ここでは比較しません。
+                    if (valueType !== null && value.kind !== "callResult" && targetType !== null && valueType !== targetType) {
+                        this.error(value.pos, `${targetType} 型の変数へ ${valueType} 型の値は代入できません`);
                     }
                 } else {
                     if (stmt.target.kind === "entityVariable") {
@@ -644,6 +665,9 @@ export class Checker {
             // 意味を持たないため、ここでは一律に拒否します。
             case "callResult":
                 return this.error(expr.pos, "call は代入・変数宣言の値としてのみ使えます");
+            // `vars.<name>` はエンティティ変数への代入値でのみ有効です。
+            case "entityVarRef":
+                return this.error(expr.pos, "vars.<name> はエンティティ変数の代入値としてのみ使えます");
         }
     }
 
@@ -675,6 +699,37 @@ export class Checker {
             case "AND": case "OR":
                 return left === "boolean" && right === "boolean" ? "boolean" : fail();
         }
+    }
+
+    /**
+     * `vars.<src>.<prop>` / `vars.<src>.<prop>(vars.<arg>)` のエンティティ変数
+     * 詳細値読み取りを検証します。ENTITY scope は定義表を持たず参照元・
+     * 引数変数の型は実行時に決まるため、詳細値の存在・引数の有無・
+     * 引数が同じ対象の変数参照であることまでを確認します。
+     */
+    private checkEntityVarPropertyRead(expr: Extract<DslExpr, { kind: "propertyRead" }>): V {
+        const source = expr.source;
+        if (source.kind !== "entityVarRef") return this.error(expr.pos, "vars.<name> の形式で参照してください");
+        this.checkVarName(source.name, source.pos);
+        const def = this.catalog.properties[expr.name];
+        if (def === undefined) {
+            return this.error(expr.pos, `不明な詳細値 '${expr.name}' です`);
+        }
+        if (def.argType === undefined && expr.arg !== null) {
+            this.error(expr.arg.pos, `詳細値 '${expr.name}' は引数を取りません`);
+        }
+        if (def.argType !== undefined && expr.arg === null) {
+            this.error(expr.pos, `詳細値 '${expr.name}' には ${def.argType} 型の引数が必要です`);
+        }
+        if (def.argType !== undefined && expr.arg !== null) {
+            // 引数変数は参照元と同じ対象のエンティティ変数から読み出されます。
+            if (expr.arg.kind !== "entityVarRef") {
+                this.error(expr.arg.pos, "エンティティ変数の詳細値引数は vars.<name> で指定してください");
+            } else {
+                this.checkVarName(expr.arg.name, expr.arg.pos);
+            }
+        }
+        return def.result as V;
     }
 
     private checkPropertyRead(expr: Extract<DslExpr, { kind: "propertyRead" }>): V {

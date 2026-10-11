@@ -336,8 +336,47 @@ class DslCompiler(
                     if (stmt.op != DslAssignOp.ASSIGN) {
                         error(stmt.pos, "エンティティ変数は = 代入のみ使用できます")
                     }
-                    lowerVarWrite(VariableScope.ENTITY, t.name, exprTypes.getValue(stmt.value), stmt.value,
-                        entityTarget = targetSpecOf(t.entity))
+                    when (val v = stmt.value) {
+                        // `e.vars.x = vars.src` は対象ごとに同一Entity内の
+                        // 変数から複写する COPY 操作へ写像します。
+                        is DslEntityVarRef -> {
+                            val node = node(CommandType.VARIABLE)
+                            node.params["scope"] = VariableScope.ENTITY.name
+                            node.params["operation"] = VariableOperation.COPY.name
+                            node.params["changeMode"] = VariableChangeMode.ASSIGN.name
+                            node.params["name"] = modelName(t.name)
+                            node.params["source"] = modelName(v.name)
+                            node.targetSpec = targetSpecOf(t.entity)
+                            stmtChain(node)
+                        }
+                        // `e.vars.x = vars.src.prop` は対象Entity自身の変数を
+                        // 参照元に取る PROPERTY 生成へ写像します。引数は
+                        // 同じ対象の変数名（`vars.<name>`）です。
+                        is DslPropertyRead -> if (v.source is DslEntityVarRef) {
+                            val def = ValueProperties.definition(v.name)
+                                ?: error(v.pos, "不明な詳細値 '${v.name}' です")
+                            val node = node(CommandType.VARIABLE)
+                            node.params["scope"] = VariableScope.ENTITY.name
+                            node.params["operation"] = VariableOperation.SET.name
+                            node.params["changeMode"] = VariableChangeMode.PROPERTY.name
+                            node.params["name"] = modelName(t.name)
+                            node.params["type"] = def.result.name
+                            node.params["propertySource"] = modelName(v.source.name)
+                            node.params["property"] = v.name
+                            (v.arg as? DslEntityVarRef)?.let {
+                                node.params["propertyArg"] = modelName(it.name)
+                            }
+                            node.targetSpec = targetSpecOf(t.entity)
+                            stmtChain(node)
+                        } else {
+                            // PROPERTY の参照元は対象Entity自身の変数に限定されます。
+                            // 実行内・ワールド変数の詳細値は値欄を通らないため
+                            // 写像できません。
+                            error(v.pos, "エンティティ変数への書き込みでは、詳細値の参照元は vars.<name> で指定してください")
+                        }
+                        else -> lowerVarWrite(VariableScope.ENTITY, t.name, exprTypes.getValue(v), v,
+                            entityTarget = targetSpecOf(t.entity))
+                    }
                 }
             }
         }
