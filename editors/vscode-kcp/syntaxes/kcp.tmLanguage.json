@@ -126,7 +126,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.kcp",
-          "match": "\\b(location|item|block|target|random|myworld_spawn|orientation|player|exists|signal|gamemode)\\b(?=\\s*\\()"
+          "match": "\\b(location|item|block|target|random|myworld_spawn|orientation|player|exists|signal|gamemode|pow|sin|cos|tan|asin|acos|atan)\\b(?=\\s*\\()"
         },
         {
           "name": "entity.name.function.kcp",

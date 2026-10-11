@@ -12,6 +12,7 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.MyworldSpawnKind
+import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.redstoneSignalSpec
@@ -36,6 +37,18 @@ import java.util.UUID
  * 持つ場合に投げられ、呼び出し側は DSL 表示を諦めて GUI 表示へ戻ります。
  */
 class DslPrintException(message: String) : Exception(message)
+
+/**
+ * モデル計算式（CALCULATE 欄）を後置記法から復元した式木です。
+ * DSL への描画時に優先度に応じて括弧を補い、`^` は `pow(a, b)` の
+ * 関数形へ写像します。
+ */
+private sealed interface CalcNode
+private data class CLit(val value: Double) : CalcNode
+private data class CRef(val name: String, val temporary: Boolean) : CalcNode
+private data class CNeg(val operand: CalcNode) : CalcNode
+private data class CBin(val op: Char, val left: CalcNode, val right: CalcNode) : CalcNode
+private data class CFn(val name: String, val arg: CalcNode) : CalcNode
 
 /**
  * 実行モデル（CommandGraph）を canonical な DSL テキストへ復元するプリンタです。
@@ -96,6 +109,8 @@ class DslPrinter(
         var indent = 0
         /** コンパイラ生成一時変数 `dsl.tmpN` の定義式（展開済みテキスト）です。 */
         val tempDefs = mutableMapOf<String, String>()
+        /** 計算式として実体化された `dsl.tmpN` の式木です。参照箇所で優先度に応じた括弧を補います。 */
+        val tempCalcDefs = mutableMapOf<String, CalcNode>()
         /** DSL へ出力済みの変数名です（var 宣言と再代入の切り分け）。 */
         val declared = mutableSetOf<String>()
 
@@ -206,13 +221,12 @@ class DslPrinter(
 
         private fun emitTempSet(n: CommandNode) {
             val name = n.string("name")
-            val expr = tempSetExpr(n)
             if (name.startsWith(TEMP_PREFIX)) {
                 // 生成一時変数は文として出さず、参照箇所で展開します。
-                tempDefs[name] = expr
+                recordTemp(n)
                 return
             }
-            emitExecWrite(n, name, expr)
+            emitExecWrite(n, name, tempSetExpr(n))
         }
 
         /**
@@ -323,7 +337,80 @@ class DslPrinter(
             val rhs = m.groupValues[4]
             val isSelf = if (scope == VariableScope.EXECUTION) execName == name else worldName == name
             if (!isSelf) return null
-            return "$op= ${expandRefs(rhs)}"
+            return "$op= ${calcToDsl(rhs)}"
+        }
+
+        // ---- 計算式（CALCULATE）の式復元 ----
+
+        /**
+         * CALCULATE 式欄を後置記法から式木へ復元します。
+         * 解釈不能な入力は null です。
+         */
+        private fun calcTreeOf(raw: String): CalcNode? {
+            val postfix = NumericExpression.parse(raw).expression?.postfix() ?: return null
+            val stack = ArrayDeque<CalcNode>()
+            for (t in postfix) {
+                when (t) {
+                    is NumericExpression.PostfixToken.Literal -> stack.addLast(CLit(t.value))
+                    is NumericExpression.PostfixToken.Reference -> stack.addLast(CRef(t.name, t.temporary))
+                    is NumericExpression.PostfixToken.Operator -> {
+                        if (stack.size < 2) return null
+                        val r = stack.removeLast()
+                        val l = stack.removeLast()
+                        stack.addLast(CBin(t.value, l, r))
+                    }
+                    is NumericExpression.PostfixToken.Function -> {
+                        if (stack.isEmpty()) return null
+                        stack.addLast(CFn(t.name, stack.removeLast()))
+                    }
+                }
+            }
+            return stack.singleOrNull()
+        }
+
+        /** 式木の DSL 優先度です（加減=1・乗除=2・単項=3・原子=4）。`^` は `pow` 関数形のため原子です。 */
+        private fun calcPrec(n: CalcNode): Int = when (n) {
+            is CBin -> when (n.op) {
+                '+', '-' -> 1
+                '*' , '/' -> 2
+                else -> 4
+            }
+            is CNeg -> 3
+            // 一時変数は定義式へ展開されるため、その式の優先度を引き継ぎます。
+            is CRef -> if (n.temporary) tempCalcDefs[n.name]?.let(::calcPrec) ?: 4 else 4
+            else -> 4
+        }
+
+        /**
+         * 式木を DSL の数値式へ描画します。`ctxPrec` は外側の演算子の優先度で、
+         * それより低い式は括弧で保護します。`^` は位置成分と文法が衝突するため
+         * `pow(a, b)` の関数形へ写像します。
+         */
+        private fun renderCalc(n: CalcNode, ctxPrec: Int): String {
+            val text = when (n) {
+                is CLit -> num(n.value)
+                is CRef -> if (n.temporary) {
+                    tempCalcDefs[n.name]?.let { renderCalc(it, 0) } ?: valueName(n.name)
+                } else {
+                    worldRef(n.name)
+                }
+                is CNeg -> "-${renderCalc(n.operand, 3)}"
+                is CBin -> when (n.op) {
+                    '^' -> "pow(${renderCalc(n.left, 0)}, ${renderCalc(n.right, 0)})"
+                    else -> {
+                        val p = calcPrec(n)
+                        "${renderCalc(n.left, p)} ${n.op} ${renderCalc(n.right, p + 1)}"
+                    }
+                }
+                is CFn -> "${n.name}(${renderCalc(n.arg, 0)})"
+            }
+            return if (calcPrec(n) < ctxPrec) "($text)" else text
+        }
+
+        /** CALCULATE の式欄を DSL の数値式へ戻します。解釈不能時は参照展開へ退避します。 */
+        private fun calcToDsl(raw: String): String {
+            val tree = calcTreeOf(raw) ?: return expandRefs(raw)
+            return renderCalc(tree, 0)
         }
 
         /** TEMP_SET／VARIABLE の値を式テキストへ復元します。 */
@@ -338,9 +425,7 @@ class DslPrinter(
                     val arg = n.string("propertyArg").takeIf(String::isNotBlank)
                     if (arg != null) "$src.$prop(${valueName(arg)})" else "$src.$prop"
                 }
-                VariableChangeMode.CALCULATE.name ->
-                    // 式欄が純数値のときは他のスカラ経路と同じく正規形へ揃えます。
-                    expandRefs(n.string("value")).let { it.toDoubleOrNull()?.let(::num) ?: it }
+                VariableChangeMode.CALCULATE.name -> calcToDsl(n.string("value"))
                 VariableChangeMode.RANDOM.name -> randomExpr(n.string("range"))
                 else -> assignExpr(n, typeName)
             }
@@ -602,13 +687,22 @@ class DslPrinter(
                 if (guard-- <= 0) throw DslPrintException("枝先の走査が上限を超えました")
                 val n = graph.nodes[cur] ?: return null
                 if (n.type == CommandType.TEMP_SET && n.string("name").startsWith(TEMP_PREFIX)) {
-                    tempDefs.getOrPut(n.string("name")) { tempSetExpr(n) }
+                    recordTemp(n)
                     cur = n.next
                     continue
                 }
                 return n
             }
             return null
+        }
+
+        /** `dsl.tmpN` 実体化ノードの定義を記録します。計算式は式木も保持します。 */
+        private fun recordTemp(n: CommandNode) {
+            val name = n.string("name")
+            tempDefs.getOrPut(name) { tempSetExpr(n) }
+            if (n.string("changeMode") == VariableChangeMode.CALCULATE.name) {
+                calcTreeOf(n.string("value"))?.let { tempCalcDefs.putIfAbsent(name, it) }
+            }
         }
 
         /**
@@ -624,7 +718,7 @@ class DslPrinter(
                 if (n.type == CommandType.CONDITION) return EdgeTarget(cur, true)
                 if (n.type == CommandType.MERGE) return EdgeTarget(cur, false)
                 if (n.type == CommandType.TEMP_SET && n.string("name").startsWith(TEMP_PREFIX)) {
-                    tempDefs.getOrPut(n.string("name")) { tempSetExpr(n) }
+                    recordTemp(n)
                     cur = n.next
                     continue
                 }

@@ -847,6 +847,80 @@ class DslCompilerTest {
     }
 
     @Test
+    fun `pow と三角関数が計算式へ写像される`() {
+        val graph = compile(
+            """
+            program "t" ;
+                var a: number = 2;
+                var b: number = pow(a, 3);
+                var c: number = sin(a);
+                var d: number = a * cos(b);
+            
+            """.trimIndent(),
+        )
+        assertValid(graph)
+        // pow は `^`、sin は関数形へ写像します。リテラル被演算子は
+        // CALCULATE の契約（変数同士に限定）により一時変数へ実体化されます。
+        val b = graph.nodes.values.first { it.string("name") == "b" }
+        assertEquals("CALCULATE", b.string("changeMode"))
+        assertEquals("%{a}% ^ %{dsl.tmp1}%", b.string("value"))
+        val c = graph.nodes.values.first { it.string("name") == "c" }
+        assertEquals("sin(%{a}%)", c.string("value"))
+        val d = graph.nodes.values.first { it.string("name") == "d" }
+        assertEquals("%{a}% * %{dsl.tmp2}%", d.string("value"))
+    }
+
+    @Test
+    fun `pow は条件式の中でも利用できる`() {
+        val graph = compile(
+            """
+            program "t" ;
+                var a: number = 2;
+                if (pow(a, 2) > 3) { wait(1); }
+            
+            """.trimIndent(),
+        )
+        assertValid(graph)
+    }
+
+    @Test
+    fun `pow の引数は2個の位置引数のみ`() {
+        val ex = assertThrows(DslCheckException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var b: number = pow(2);
+                
+                """.trimIndent(),
+            )
+        }
+        assertTrue(ex.message?.contains("位置引数") == true)
+        assertThrows(DslCheckException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var b: number = sin(x = 1, y = 2);
+                
+                """.trimIndent(),
+            )
+        }
+    }
+
+    @Test
+    fun `pow の引数は number 型のみ`() {
+        val ex = assertThrows(DslCheckException::class.java) {
+            compile(
+                """
+                program "t" ;
+                    var b: number = pow("a", 2);
+                
+                """.trimIndent(),
+            )
+        }
+        assertTrue(ex.message?.contains("number") == true)
+    }
+
+    @Test
     fun `vars という変数名は予約名として拒否される`() {
         val ex = assertThrows(DslCheckException::class.java) {
             compile(

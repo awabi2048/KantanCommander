@@ -41,6 +41,13 @@ object DslCatalogGenerator {
         )))
         add("valueTypes", strArray(ValueType.entries.map { it.name.lowercase() }))
         add("specialPositions", strArray(listOf("disk", "captured")))
+        // 数値関数です。`pow` は `^` 演算子の関数形（位置成分 `^x` と衝突するため）、
+        // 三角関数はモデルの式言語と同名です。引数は位置引数のみで全て number 型です。
+        add("numericFunctions", JsonObject().apply {
+            addProperty("pow", 2)
+            me.awabi2048.kantancommander.model.NumericExpression.TRIGONOMETRIC_FUNCTIONS
+                .sorted().forEach { addProperty(it, 1) }
+        })
         add("reservedNames", strArray(DslChecker.RESERVED_NAMES.toList()))
         add("gamemodeConstants", strArray(DslChecker.GAMEMODE_NAMES.toList()))
         add("targetKinds", strArray(DslChecker.TARGET_KINDS.toList()))

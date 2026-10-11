@@ -21,6 +21,7 @@ import me.awabi2048.kantancommander.model.TriggerBlockIdentity
 import me.awabi2048.kantancommander.model.TriggerClickSide
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.TriggerLeverState
+import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.ValueProperties
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -515,6 +516,24 @@ class DslCompiler(
                     ValuePlan.RandomRange("${fmt(min)}..${fmt(max)}")
                 }
                 "myworld_spawn" -> ValuePlan.LocationValue(positionSpecOf(expr, pre))
+                // 数値関数はモデルの計算式言語へそのまま写像します。
+                // `pow` は `^`（右結合）へ、三角関数は `sin(x)` 等の関数形へ。
+                // 被演算子は CALCULATE がリテラルを拒否するため operandRef 経由で
+                // 変数参照へ実体化します。
+                "pow" -> {
+                    if (expected != ValueType.NUMBER) {
+                        error(expr.pos, "pow(...) は number 型へだけ代入できます")
+                    }
+                    ValuePlan.Calculate(
+                        "${operandRef(expr.args[0].value, pre)} ^ ${operandRef(expr.args[1].value, pre)}",
+                    )
+                }
+                in NumericExpression.TRIGONOMETRIC_FUNCTIONS -> {
+                    if (expected != ValueType.NUMBER) {
+                        error(expr.pos, "${expr.name}(...) は number 型へだけ代入できます")
+                    }
+                    ValuePlan.Calculate("${expr.name}(${operandRef(expr.args[0].value, pre)})")
+                }
                 else -> error(expr.pos, "'${expr.name}' の値は代入できません")
             }
             is DslSpecialPosition -> ValuePlan.LocationValue(specialPositionSpec(expr))
@@ -597,6 +616,17 @@ class DslCompiler(
             }
             is DslLoopCount ->
                 "\${" + SystemVariableNames.CURRENT_LOOP_COUNT + "}"
+            is DslCallExpr -> {
+                // 数値関数はスカラ欄へ直接書けないため、計算ノードで一時変数へ
+                // 実体化して参照します。
+                if (expr.name != "pow" && expr.name !in NumericExpression.TRIGONOMETRIC_FUNCTIONS) {
+                    error(expr.pos, "'${expr.name}' の値はここでは使えません")
+                }
+                val temp = freshTemp()
+                pre += varNode(VariableScope.EXECUTION, temp, ValueType.NUMBER,
+                    valuePlan(expr, ValueType.NUMBER, pre))
+                "%{$temp}%"
+            }
             else -> error(expr.pos, "この式はここでは使えません")
         }
 

@@ -792,8 +792,31 @@ export class Checker {
             case "orientation":
                 this.checkOrientation(expr);
                 return "entity";
-            default:
+            default: {
+                // `pow`・三角関数はモデルの数値式言語へそのまま写像します。
+                // `a ^ b` は位置成分 `^x` と文法が衝突するため `pow(a, b)` の関数形です。
+                const arity = this.catalog.numericFunctions[expr.name];
+                if (arity !== undefined) {
+                    this.checkNumericFunction(expr, arity);
+                    return "number";
+                }
                 return this.error(expr.pos, `不明な呼出し '${expr.name}' です`);
+            }
+        }
+    }
+
+    /**
+     * `pow(a, b)`・`sin(x)` 等の数値関数を検証します。モデルの式言語は
+     * 位置引数のみのため、名前付き引数・個数違いは拒否します。
+     */
+    private checkNumericFunction(expr: DslCallExpr, arity: number) {
+        if (expr.args.length !== arity || expr.args.some((a) => a.name !== null)) {
+            this.error(expr.pos, `'${expr.name}' の引数は ${arity} 個の位置引数で指定してください`);
+        }
+        for (const arg of expr.args) {
+            if (this.checkExpr(arg.value) !== "number") {
+                this.error(arg.pos, `'${expr.name}' の引数は number 型が必要です`);
+            }
         }
     }
 

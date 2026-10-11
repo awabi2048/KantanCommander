@@ -225,6 +225,16 @@ test("vars.<name> の詳細値と引数を検証する", () => {
     assert.match(err(`program "t";\nvar l: location = null;\n${decl}\np.vars.d = vars.src.distance(l);`)[0].message, /vars\.<name>/);
 });
 
+test("pow・三角関数は number の位置引数のみ", () => {
+    assert.deepEqual(err('program "t";\nvar a: number = 1;\nvar b: number = pow(a, 2);'), []);
+    assert.deepEqual(err('program "t";\nvar a: number = 1;\nvar c: number = sin(a) + a * cos(a);'), []);
+    assert.match(err('program "t";\nvar b: number = pow(2);')[0].message, /位置引数/);
+    assert.match(err('program "t";\nvar b: number = sin(x = 1, y = 2);')[0].message, /位置引数/);
+    assert.match(err('program "t";\nvar b: number = pow("a", 2);')[0].message, /number 型/);
+    // `^` 演算子は DSL では位置成分専用のため、式では受理しません。
+    assert.throws(() => require("../out/parser").parse('program "t";\nvar b: number = 2 ^ 3;'));
+});
+
 test("vars は予約名・実行内変数の詳細値はエンティティ変数へ書き込めない", () => {
     const decl = 'var p: entity = target(kind = "nearest_player");';
     assert.match(err('program "t";\nvar vars: number = 1;')[0].message, /予約された名前/);

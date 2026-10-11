@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.dsl
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.EventTriggerArguments
 import me.awabi2048.kantancommander.model.EventTriggerKind
+import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.ValueProperties
 import me.awabi2048.kantancommander.model.ValueType
 
@@ -578,7 +579,29 @@ class DslChecker(
         "random" -> { checkRandomCall(expr); ValueType.NUMBER }
         "myworld_spawn" -> { checkConstructor(expr, MYWORLD_ARGS); ValueType.LOCATION }
         "orientation" -> { checkOrientation(expr); ValueType.ENTITY }
+        // `pow`・三角関数はモデルの数値式言語へそのまま写像します。
+        // `a ^ b` は位置成分 `^x` と文法が衝突するため `pow(a, b)` の関数形です。
+        "pow" -> { checkNumericFunction(expr, 2); ValueType.NUMBER }
+        in NumericExpression.TRIGONOMETRIC_FUNCTIONS -> {
+            checkNumericFunction(expr, 1)
+            ValueType.NUMBER
+        }
         else -> error(expr.pos, "不明な呼出し '${expr.name}' です")
+    }
+
+    /**
+     * `pow(a, b)`・`sin(x)` 等の数値関数を検証します。モデルの式言語は
+     * 位置引数のみのため、名前付き引数・個数違いは拒否します。
+     */
+    private fun checkNumericFunction(expr: DslCallExpr, arity: Int) {
+        if (expr.args.size != arity || expr.args.any { it.name != null }) {
+            error(expr.pos, "'${expr.name}' の引数は ${arity} 個の位置引数で指定してください")
+        }
+        for (arg in expr.args) {
+            if (checkExpr(arg.value) != ValueType.NUMBER) {
+                error(arg.pos, "'${expr.name}' の引数は number 型が必要です")
+            }
+        }
     }
 
     /**

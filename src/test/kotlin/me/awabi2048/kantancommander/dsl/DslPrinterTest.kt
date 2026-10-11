@@ -527,6 +527,44 @@ class DslPrinterTest {
     }
 
     @Test
+    fun `数値関数と累乗が往復する`() {
+        val text = roundTrip(
+            """
+            program "t" ;
+                var a: number = 2;
+                var b: number = pow(a, 3);
+                var c: number = sin(a) + a * cos(b);
+                var d: number = pow(a + 1, pow(2, a));
+            
+            """.trimIndent(),
+        )
+        assertTrue(text.contains("pow(a, 3)"), text)
+        assertTrue(text.contains("sin(a)"), text)
+        assertTrue(text.contains("cos(b)"), text)
+        assertTrue(text.contains("pow(a + 1, pow(2, a))"), text)
+    }
+
+    @Test
+    fun `複合式の一時変数展開で括弧が保持される`() {
+        // `a * (b + c)` は `%{a}% * %{t}%`（t=`b + c`）へ低級化されます。
+        // 参照箇所への単純な文字列展開は `a * b + c` と意味を変えるため、
+        // 式木から優先度を見て括弧を補います。
+        val text = roundTrip(
+            """
+            program "t" ;
+                var a: number = 1;
+                var b: number = 2;
+                var c: number = 3;
+                var d: number = a * (b + c);
+                var e: number = a - (b - c);
+            
+            """.trimIndent(),
+        )
+        assertTrue(text.contains("a * (b + c)"), text)
+        assertTrue(text.contains("a - (b - c)"), text)
+    }
+
+    @Test
     fun `エンティティ変数の読み取りが往復する`() {
         val text = roundTrip(
             """

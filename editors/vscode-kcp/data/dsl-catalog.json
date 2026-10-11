@@ -31,6 +31,15 @@
     "disk",
     "captured"
   ],
+  "numericFunctions": {
+    "pow": 2,
+    "acos": 1,
+    "asin": 1,
+    "atan": 1,
+    "cos": 1,
+    "sin": 1,
+    "tan": 1
+  },
   "reservedNames": [
     "disk",
     "captured",

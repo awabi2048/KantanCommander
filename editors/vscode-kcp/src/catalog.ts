@@ -49,6 +49,8 @@ export interface Catalog {
     triggerStates: string[];
     eventKinds: string[];
     varNamePattern: string;
+    /** 数値関数の引数個数です（`pow`=2・三角関数=1、いずれも位置引数の number）。 */
+    numericFunctions: Record<string, number>;
     maxCommandTimeSeconds: number;
     tickSeconds: number;
     commands: Record<string, CatalogCommand>;

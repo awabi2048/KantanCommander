@@ -19,7 +19,11 @@ export interface Suggestion {
 
 const STMT_KEYWORDS = ["var", "if", "repeat", "break", "continue", "return", "call", "del"];
 const DECL_KEYWORDS = ["import", "trigger", "defarg"];
-const VALUE_CALLS = ["location", "item", "block", "target", "random", "myworld_spawn", "orientation"];
+const VALUE_CALLS = [
+    "location", "item", "block", "target", "random", "myworld_spawn", "orientation",
+    // 数値関数（モデルの計算式言語へ写像。pow は `^` の関数形）。
+    "pow", "sin", "cos", "tan", "asin", "acos", "atan",
+];
 const COND_CALLS = ["player", "exists", "signal"];
 const TRIGGER_NAMES = ["timer", "redstone", "event"];
 
