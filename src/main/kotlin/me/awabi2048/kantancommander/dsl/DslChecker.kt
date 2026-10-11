@@ -861,7 +861,9 @@ class DslChecker(
         internal val TRIGGER_SIDES = setOf("left", "right")
         internal val TRIGGER_STATES = setOf("on", "off")
 
-        internal val namePattern = Regex("[a-z][a-z0-9_]*")
+        // モデルの変数名上限（64文字）と同じ長さへ揃えます。`_` は `-` へ写像するため
+        // DSL 名の長さはモデル名と一致し、超過名はここで拒否します。
+        internal val namePattern = Regex("[a-z][a-z0-9_]{0,63}")
         /** 予約位置式・システム変数と衝突するため変数名として使えない識別子です。 */
         internal val RESERVED_NAMES = setOf("disk", "captured", "loop", "vars")
     }

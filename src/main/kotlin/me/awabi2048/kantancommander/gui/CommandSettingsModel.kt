@@ -1337,10 +1337,10 @@ object CommandSettingsModel {
     fun setParameter(node: CommandNode, key: String, value: String) {
         require(key.isNotBlank()) { "設定キーが空です" }
         if (node.type == CommandType.VARIABLE && key == "name") {
-            require(CommandValueRules.isVariableName(value)) { "予約済みまたは不正な変数名です" }
+            require(CommandValueRules.isDeclarableName(value)) { "予約済みまたは不正な変数名です" }
         }
         if (node.type == CommandType.TEMP_SET && key == "name") {
-            require(CommandValueRules.isVariableName(TemporaryTemplate.normalized(value))) { "予約済みまたは不正な変数名です" }
+            require(CommandValueRules.isDeclarableName(TemporaryTemplate.normalized(value))) { "予約済みまたは不正な変数名です" }
         }
         if (node.type == CommandType.TEMP_SET && key == "tempType") {
             val type = requireNotNull(ValueType.parse(value)) { "不正な一時変数型です" }

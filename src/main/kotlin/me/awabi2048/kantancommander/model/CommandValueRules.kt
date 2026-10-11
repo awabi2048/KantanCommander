@@ -66,6 +66,12 @@ object CommandValueRules {
 
     fun isVariableName(raw: String): Boolean = SystemVariableNames.isUserName(raw)
 
+    /**
+     * ユーザーが新規宣言できる変数名かを返します。
+     * DSL と一意に往復できない `.`・`_` を含む名前を入力境界で拒否します。
+     */
+    fun isDeclarableName(raw: String): Boolean = SystemVariableNames.isDeclarableName(raw)
+
     /** 一時変数の `%{name}%` 参照記法かを返します。 */
     fun isTemporaryReference(raw: String): Boolean = TemporaryTemplate.isSingleReference(raw)
 

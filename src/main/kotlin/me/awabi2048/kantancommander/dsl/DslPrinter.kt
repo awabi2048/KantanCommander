@@ -125,7 +125,7 @@ class DslPrinter(
             if (WORLD_USE.containsMatchIn(body)) decls.append("import world;\n")
             triggerDecl(trigger)?.let { decls.append(it).append('\n') }
             arguments.forEach { arg ->
-                decls.append("defarg ").append(varNameText(arg.name))
+                decls.append("defarg ").append(varNameText(arg.name, "arg"))
                     .append(": ").append(arg.type.name.lowercase()).append(";\n")
             }
             if (decls.isNotEmpty()) out.append(decls)
@@ -245,8 +245,8 @@ class DslPrinter(
                 VariableOperation.DELETE -> {
                     val target = when (scope) {
                         VariableScope.EXECUTION -> varNameText(name)
-                        VariableScope.WORLD -> "world.${varNameText(name)}"
-                        VariableScope.ENTITY -> "${entityTargetText(n)}.vars.${varNameText(name)}"
+                        VariableScope.WORLD -> "world.${varNameText(name, "world")}"
+                        VariableScope.ENTITY -> "${entityTargetText(n)}.vars.${varNameText(name, "entityvar")}"
                     }
                     line("del $target;")
                 }
@@ -255,16 +255,16 @@ class DslPrinter(
                     // ENTITY の複写元は同一対象のエンティティ変数 `vars.<name>` です。
                     val src = n.string("source")
                     val srcText = when (scope) {
-                        VariableScope.WORLD -> "world.${varNameText(src)}"
+                        VariableScope.WORLD -> "world.${varNameText(src, "world")}"
                         VariableScope.EXECUTION -> valueName(src)
-                        VariableScope.ENTITY -> "vars.${dslName(src)}"
+                        VariableScope.ENTITY -> "vars.${dslName(src, "entityvar")}"
                     }
                     emitVarAssign(n, scope, name, srcText)
                 }
                 else -> when (scope) {
                     VariableScope.EXECUTION -> emitExecWrite(n, name, variableExpr(n))
                     VariableScope.WORLD -> {
-                        val dsl = "world.${varNameText(name)}"
+                        val dsl = "world.${varNameText(name, "world")}"
                         val calc = compoundAssign(n, name, scope)
                         when {
                             calc != null -> line("$dsl $calc;")
@@ -280,11 +280,11 @@ class DslPrinter(
                             val src = n.string("propertySource")
                             val prop = n.string("property")
                             val arg = n.string("propertyArg").takeIf(String::isNotBlank)
-                            val expr = "vars.${dslName(src)}.$prop" +
-                                (arg?.let { "(vars.${dslName(it)})" } ?: "")
-                            line("${entityTargetText(n)}.vars.${varNameText(name)} = $expr;")
+                            val expr = "vars.${dslName(src, "entityvar")}.$prop" +
+                                (arg?.let { "(vars.${dslName(it, "entityvar")})" } ?: "")
+                            line("${entityTargetText(n)}.vars.${varNameText(name, "entityvar")} = $expr;")
                         } else {
-                            line("${entityTargetText(n)}.vars.${varNameText(name)} = ${variableExpr(n)};")
+                            line("${entityTargetText(n)}.vars.${varNameText(name, "entityvar")} = ${variableExpr(n)};")
                         }
                     }
                 }
@@ -307,8 +307,8 @@ class DslPrinter(
         private fun emitVarAssign(n: CommandNode, scope: VariableScope, name: String, expr: String) {
             when (scope) {
                 VariableScope.EXECUTION -> emitExecWrite(n, name, expr)
-                VariableScope.WORLD -> line("world.${varNameText(name)} = $expr;")
-                VariableScope.ENTITY -> line("${entityTargetText(n)}.vars.${varNameText(name)} = $expr;")
+                VariableScope.WORLD -> line("world.${varNameText(name, "world")} = $expr;")
+                VariableScope.ENTITY -> line("${entityTargetText(n)}.vars.${varNameText(name, "entityvar")} = $expr;")
             }
         }
 
@@ -840,7 +840,7 @@ class DslPrinter(
             val declaredNames = declared.mapTo(mutableSetOf()) { it.name }
             val args = mutableListOf<String>()
             for (argument in declared) {
-                val label = dslName(argument.name)
+                val label = dslName(argument.name, "arg")
                 val variable = n.string("argvar_${argument.name}").takeIf(String::isNotBlank)
                 val literal = n.string("arg_${argument.name}").takeIf(String::isNotBlank)
                 args += "$label = " + when {
@@ -862,7 +862,7 @@ class DslPrinter(
                 }
                 if (argName in declaredNames) continue
                 val raw = n.string(key).takeIf(String::isNotBlank) ?: continue
-                args += "${dslName(argName)} = ${if (isVariable) valueName(raw) else scalarText(raw)}"
+                args += "${dslName(argName, "arg")} = ${if (isVariable) valueName(raw) else scalarText(raw)}"
             }
             val receiver = n.string("returnName").takeIf(String::isNotBlank)?.let { r ->
                 if (VariableScope.parse(n.string("returnScope")) == VariableScope.WORLD) {
@@ -1383,7 +1383,7 @@ class DslPrinter(
         /** `${name}` 参照の DSL 表記です。システム変数は `loop.count` へ写像します。 */
         private fun worldRef(name: String): String =
             if (name == SystemVariableNames.CURRENT_LOOP_COUNT) "loop.count"
-            else "world.${dslName(name)}"
+            else "world.${dslName(name, "world")}"
 
         /** 変数名を DSL の識別子へ戻します（`dsl.tmpN` は定義式へ展開）。 */
         private fun valueName(name: String): String =
@@ -1420,16 +1420,29 @@ class DslPrinter(
         private fun valueNameOrWorld(raw: String): String =
             if (raw.startsWith("world.")) raw else valueName(raw)
 
-        /** モデル変数名を DSL 識別子へ逆写像します（`-`→`_`、`.`→`_`）。 */
-        private fun dslName(model: String): String {
+        /**
+         * モデル変数名を DSL 識別子へ逆写像します（`-`→`_`、`.`→`_`）。
+         *
+         * `.`・`_` を含むモデル名は `-` を含む名前と同じ DSL 識別子へ潰れるため、
+         * 同名へ写像された異なるモデル名を検出した時点で拒否します（沈黙の変数統合を
+         * 防ぐためです）。実行内変数と呼出し引数は別名前列で追跡します。
+         */
+        private val dslNameClaims = mutableMapOf<String, MutableMap<String, String>>()
+
+        private fun dslName(model: String, bucket: String = "var"): String {
             val dsl = DslNames.dslName(model)
             if (!NAME_PATTERN.matches(dsl)) unsupported("変数名 '$model'")
+            val claims = dslNameClaims.getOrPut(bucket) { mutableMapOf() }
+            val owner = claims.putIfAbsent(dsl, model)
+            if (owner != null && owner != model) {
+                unsupported("変数名 '$owner' と '$model'（DSL ではいずれも '$dsl' になります）")
+            }
             return dsl
         }
 
         /** 変数名を名前位置のテキストへ戻します。空名（未命名スロット）は `null` です。 */
-        private fun varNameText(model: String): String =
-            if (model.isBlank()) "null" else dslName(model)
+        private fun varNameText(model: String, bucket: String = "var"): String =
+            if (model.isBlank()) "null" else dslName(model, bucket)
 
         private fun typeName(raw: String): String = raw.lowercase()
 
@@ -1462,7 +1475,7 @@ class DslPrinter(
     private companion object {
         /** コンパイラ生成の一時変数接頭辞です。DSL 識別子は `.` を含めないため一意です。 */
         const val TEMP_PREFIX = "dsl.tmp"
-        val NAME_PATTERN = Regex("[a-z][a-z0-9_]*")
+        val NAME_PATTERN = Regex("[a-z][a-z0-9_]{0,63}")
         val EXEC_REF = Regex("%\\{([A-Za-z][A-Za-z0-9_.-]{0,63})}%")
         val WORLD_REF = Regex("\\$\\{([A-Za-z][A-Za-z0-9_.-]{0,63})}")
         /** 実行内・ワールド変数の参照を一括で拾う正規表現です。 */

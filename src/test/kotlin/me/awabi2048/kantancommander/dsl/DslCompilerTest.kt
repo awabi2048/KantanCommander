@@ -953,4 +953,14 @@ class DslCompilerTest {
         val variable = nodes.first { it.type == CommandType.TEMP_SET && it.string("tempType") == "NUMBER" }
         assertEquals("", variable.string("name"))
     }
+
+    @Test
+    fun `変数名はモデルと同じ64文字まで`() {
+        val ok = "a" + "b".repeat(63)
+        val ng = "a" + "b".repeat(64)
+        compile("program \"t\";\nvar $ok: number = 1;")
+        assertThrows(DslCheckException::class.java) {
+            compile("program \"t\";\nvar $ng: number = 1;")
+        }
+    }
 }

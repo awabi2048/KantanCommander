@@ -35,6 +35,9 @@ class WorldVariableStore(
     @Synchronized
     fun set(worldId: UUID, name: String, value: TypedValue) {
         require(value.isValid()) { "invalid variable value" }
+        // ワールド変数は共有ストアのため、DSL へ一意に往復できない名前の
+        // 書き込みは参照先の分裂を招きます。読み取りは既存データのため広く受理します。
+        require(CommandValueRules.isDeclarableName(name.trim())) { "invalid variable name" }
         val normalized = normalizedName(name)
         val current = state(worldId)
         val declared = current.definitions[normalized]
@@ -61,6 +64,7 @@ class WorldVariableStore(
     @Synchronized
     fun define(worldId: UUID, name: String, value: TypedValue): Boolean {
         require(value.isValid()) { "invalid variable value" }
+        require(CommandValueRules.isDeclarableName(name.trim())) { "invalid variable name" }
         val normalized = normalizedName(name)
         val current = state(worldId)
         if (normalized in current.definitions) return false

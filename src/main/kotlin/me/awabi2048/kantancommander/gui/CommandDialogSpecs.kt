@@ -1000,8 +1000,10 @@ internal object CommandDialogSpecs {
     val variableName = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE,
         64,
+        // 宣言名は DSL と一意に往復できる形（`-` のみ、`.`・`_` 不可）へ限ります。
+        // 参照先として既存名を選ぶ場面ではなく、ここへ入力する名前自体が新規宣言です。
         validate = { raw ->
-            if (!CommandValueRules.isVariableName(raw)) {
+            if (!CommandValueRules.isDeclarableName(raw)) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_VARIABLE_NAME
             } else null
         },

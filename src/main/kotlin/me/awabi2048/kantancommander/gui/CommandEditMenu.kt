@@ -2869,7 +2869,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             ),
             save = { values, openRevision ->
                 val raw = values.getValue("value").trim()
-                if (raw.isNotEmpty() && !CommandValueRules.isVariableName(raw)) return@showTextForm false
+                if (raw.isNotEmpty() && !CommandValueRules.isDeclarableName(raw)) return@showTextForm false
                 updateNode(player, route, expectedRevision = openRevision) {
                     if (raw.isEmpty()) {
                         it.params.remove("returnName")

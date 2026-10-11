@@ -77,7 +77,7 @@
     "entity_click",
     "block_click"
   ],
-  "varNamePattern": "[a-z][a-z0-9_]*",
+  "varNamePattern": "[a-z][a-z0-9_]{0,63}",
   "maxCommandTimeSeconds": 86400.0,
   "tickSeconds": 0.05,
   "commands": {

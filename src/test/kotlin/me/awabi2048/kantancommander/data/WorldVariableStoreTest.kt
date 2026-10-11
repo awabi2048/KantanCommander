@@ -186,8 +186,8 @@ class WorldVariableStoreTest {
 
         // 上限ちょうどの値は受理されます。
         val atLimit = "a".repeat(CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH)
-        store.set(world, "at_limit", TypedValue(ValueType.STRING, stringValue = atLimit))
-        assertEquals(atLimit, store.get(world, "at_limit")?.stringValue)
+        store.set(world, "at-limit", TypedValue(ValueType.STRING, stringValue = atLimit))
+        assertEquals(atLimit, store.get(world, "at-limit")?.stringValue)
     }
 
     @Test

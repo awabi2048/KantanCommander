@@ -580,4 +580,28 @@ class DslPrinterTest {
         assertTrue(text.contains("e.vars.d = vars.src.health;"))
         assertTrue(text.contains("e.vars.dist = vars.src.distance(vars.loc);"))
     }
+
+    @Test
+    fun `DSL で同名へ潰れる変数名の共存は拒否される`() {
+        // モデルでは `a-b` と `a.b` を区別できますが、DSL ではいずれも `a_b` です。
+        // 一方の変数へ沈黙のうち統合されるのを防ぐため、印刷時に衝突を検出します。
+        fun define(name: String) = CommandNode(
+            type = CommandType.VARIABLE,
+            params = linkedMapOf(
+                "scope" to "EXECUTION", "name" to name, "type" to "NUMBER",
+                "operation" to "DEFINE", "changeMode" to "ASSIGN", "value" to "1",
+            ),
+        )
+        val n1 = define("a-b")
+        val n2 = define("a.b")
+        n1.next = n2.id
+        val graph = CommandGraph(
+            entryNodeId = n1.id,
+            nodes = linkedMapOf(n1.id to n1, n2.id to n2),
+        )
+        val ex = assertThrows<DslPrintException> {
+            DslPrinter().print(graph, "t")
+        }
+        assertTrue(ex.message!!.contains("a_b"), "衝突した DSL 名を報告します")
+    }
 }
