@@ -201,9 +201,6 @@ class DslChecker(
                 if (stmt.value is DslCallResult) {
                     checkCallArgs(stmt.value.diskId, stmt.value.args)
                     exprTypes?.put(stmt.value, stmt.type)
-                } else if (isBlankVarRef(stmt.value)) {
-                    // `var x: T = _` は未命名スロット参照です。宣言型へ合わせます。
-                    exprTypes?.put(stmt.value, stmt.type)
                 } else if (stmt.value !is DslNull) {
                     val actual = checkExpr(stmt.value)
                     if (actual != stmt.type) {
@@ -247,9 +244,9 @@ class DslChecker(
                     }
                     is DslAssignTarget.EntityVariable -> {
                         checkVarName(t.name, t.pos)
-                        // `null.vars.x`（対象未設定）・`_.vars.x`（未命名変数の対象）は
-                        // GUI の未設定状態に対応するため、対象の型検査を行いません。
-                        if (t.entity !is DslNull && !isBlankVarRef(t.entity)) {
+                        // `null.vars.x`（対象未設定）は GUI の未設定状態に対応するため、
+                        // 対象の型検査を行いません。
+                        if (t.entity !is DslNull) {
                             val entityType = checkExpr(t.entity)
                             if (entityType != ValueType.ENTITY) {
                                 error(t.entity.pos, "エンティティ変数の対象は entity 型が必要です（${entityType.dslName()} 型）")
@@ -296,10 +293,6 @@ class DslChecker(
                     // 実行内・ワールド変数の詳細値は値欄を通らないため写像できません。
                     stmt.value is DslPropertyRead && stmt.target is DslAssignTarget.EntityVariable ->
                         error(stmt.value.pos, "エンティティ変数への書き込みでは、詳細値の参照元は vars.<name> で指定してください")
-                    // `x = _` は未命名スロットからの読み出しです。型は未定義のため
-                    // 代入先の型として記録し、低級化側は型に応じた空名 spec を書きます。
-                    isBlankVarRef(stmt.value) ->
-                        (targetType ?: ValueType.STRING).also { exprTypes?.put(stmt.value, it) }
                     else -> checkExpr(stmt.value)
                 }
                 if (stmt.op == DslAssignOp.ASSIGN) {
@@ -311,11 +304,6 @@ class DslChecker(
                     if (stmt.target is DslAssignTarget.EntityVariable) {
                         // エンティティ変数は読み出し経路を持たず、自己参照の複合代入は表現不能です。
                         error(stmt.pos, "エンティティ変数への複合代入はモデルが未対応のため使えません")
-                    }
-                    if (isBlankVarRef(stmt.value)) {
-                        // 計算式の被演算子は `%{name}%` 参照であり、空名は参照として
-                        // 書けないため複合代入では未命名スロットを受理しません。
-                        error(stmt.value.pos, "複合代入に未命名スロット '_' は使えません")
                     }
                     if (targetType != ValueType.NUMBER || valueType != ValueType.NUMBER) {
                         error(stmt.pos, "複合代入は number 型同士でのみ使えます")
@@ -347,8 +335,8 @@ class DslChecker(
                     }
                     is DslAssignTarget.EntityVariable -> {
                         checkVarName(t.name, t.pos)
-                        // 代入と同様に対象未設定（`null.vars.x`）・未命名対象（`_.vars.x`）を許容します。
-                        if (t.entity !is DslNull && !isBlankVarRef(t.entity)) {
+                        // 代入と同様に対象未設定（`null.vars.x`）を許容します。
+                        if (t.entity !is DslNull) {
                             val entityType = checkExpr(t.entity)
                             if (entityType != ValueType.ENTITY) {
                                 error(t.entity.pos, "エンティティ変数の対象は entity 型が必要です（${entityType.dslName()} 型）")
@@ -359,8 +347,7 @@ class DslChecker(
             }
             is DslIf -> {
                 // `if (null)` は条件 subject 未設定の CONDITION ノードへ写像します。
-                // `if (_)` は左辺変数未設定の比較（variable="" の真偽評価）です。
-                if (stmt.condition !is DslNull && !isBlankVarRef(stmt.condition)) {
+                if (stmt.condition !is DslNull) {
                     val cond = checkExpr(stmt.condition)
                     if (cond != ValueType.BOOLEAN) error(stmt.condition.pos, "if の条件は boolean 型が必要です（${cond.dslName()} 型）")
                 }
@@ -454,12 +441,7 @@ class DslChecker(
         is DslNumberLiteral -> ValueType.NUMBER
         is DslStringLiteral -> { checkStringLiteral(expr); ValueType.STRING }
         is DslBooleanLiteral -> ValueType.BOOLEAN
-        is DslVarRef -> vars[expr.name] ?: run {
-            // `_`（未命名スロット）は GUI の「名前未入力のまま変数参照を選択」
-            // した状態に対応し、型を持たないため文脈ごとの検査に委ねます。
-            if (expr.name.isEmpty()) ValueType.STRING
-            else error(expr.pos, "未定義の変数 '${expr.name}' です")
-        }
+        is DslVarRef -> vars[expr.name] ?: error(expr.pos, "未定義の変数 '${expr.name}' です")
         is DslWorldRef -> {
             requireWorld(expr.pos, "ワールド変数の参照")
             checkVarName(expr.name, expr.pos)
@@ -506,43 +488,28 @@ class DslChecker(
     }
 
     private fun checkBinary(expr: DslBinary): ValueType {
-        // `_`（未命名スロット）は型を持たないため、比較では対向側の型として扱います。
-        // `variable=""` の条件欄を持つ GUI の未設定比較を表現できます。
-        val leftBlank = isBlankVarRef(expr.left)
-        val rightBlank = isBlankVarRef(expr.right)
-        val left = if (leftBlank) null else checkExpr(expr.left)
-        val right = if (rightBlank) null else checkExpr(expr.right)
+        val left = checkExpr(expr.left)
+        val right = checkExpr(expr.right)
         fun fail(): Nothing = error(
             expr.pos,
-            "'${expr.op.symbol()}' は ${left?.dslName() ?: "未命名"} 型と ${right?.dslName() ?: "未命名"} 型には使えません",
+            "'${expr.op.symbol()}' は ${left.dslName()} 型と ${right.dslName()} 型には使えません",
         )
         return when (expr.op) {
             DslBinaryOp.ADD, DslBinaryOp.SUB, DslBinaryOp.MUL, DslBinaryOp.DIV ->
-                // 計算式の被演算子は `%{name}%` 参照であり空名は書けないため拒否します。
-                if (leftBlank || rightBlank) {
-                    error(expr.pos, "計算式では未命名スロット '_' は使えません")
-                } else if (left == ValueType.NUMBER && right == ValueType.NUMBER) ValueType.NUMBER else fail()
+                if (left == ValueType.NUMBER && right == ValueType.NUMBER) ValueType.NUMBER else fail()
             // モデルの数値式言語は剰余を持たないため、% は写像不能です。
             DslBinaryOp.MOD -> error(expr.pos, "剰余演算（%）はモデルが未対応のため使えません")
             DslBinaryOp.EQ, DslBinaryOp.NE -> {
                 // モデルの条件が比較できるのは NUMBER／BOOLEAN／STRING の等値と、
                 // `pos.block == block(...)` 形式のブロック照合だけです。
-                val l = left ?: right
-                val r = right ?: left
-                val allowed = when {
-                    l != null && l == r && l in COMPARABLE_TYPES -> true
-                    leftBlank && rightBlank -> true
+                val allowed = left == right && left in COMPARABLE_TYPES ||
                     left == ValueType.BLOCK && right == ValueType.BLOCK &&
-                        expr.left is DslPropertyRead && expr.left.name == "block" &&
-                        expr.right is DslCallExpr && expr.right.name == "block" -> true
-                    else -> false
-                }
+                    expr.left is DslPropertyRead && expr.left.name == "block" &&
+                    expr.right is DslCallExpr && expr.right.name == "block"
                 if (allowed) ValueType.BOOLEAN else fail()
             }
             DslBinaryOp.LT, DslBinaryOp.LE, DslBinaryOp.GT, DslBinaryOp.GE ->
-                if ((left ?: ValueType.NUMBER) == ValueType.NUMBER &&
-                    (right ?: ValueType.NUMBER) == ValueType.NUMBER
-                ) ValueType.BOOLEAN else fail()
+                if (left == ValueType.NUMBER && right == ValueType.NUMBER) ValueType.BOOLEAN else fail()
             DslBinaryOp.AND, DslBinaryOp.OR ->
                 if (left == ValueType.BOOLEAN && right == ValueType.BOOLEAN) ValueType.BOOLEAN else fail()
         }
@@ -577,13 +544,10 @@ class DslChecker(
     }
 
     private fun checkPropertyRead(expr: DslPropertyRead): ValueType {
-        // `_.prop` は参照元変数の名前未入力（propertySource=""）に対応します。
-        // 参照元が型を持たないため、詳細値の適用可能型検査を省略します。
-        val blankSource = isBlankVarRef(expr.source)
-        val sourceType = if (blankSource) null else checkExpr(expr.source)
+        val sourceType = checkExpr(expr.source)
         val def = ValueProperties.definition(expr.name)
             ?: error(expr.pos, "不明な詳細値 '${expr.name}' です")
-        if (sourceType != null && sourceType !in def.sources) {
+        if (sourceType !in def.sources) {
             error(expr.pos, "${sourceType.dslName()} 型からは詳細値 '${expr.name}' を取得できません")
         }
         when {
@@ -592,12 +556,9 @@ class DslChecker(
             def.argType != null && expr.arg == null ->
                 error(expr.pos, "詳細値 '${expr.name}' には ${def.argType.dslName()} 型の引数が必要です")
             def.argType != null -> {
-                val arg = expr.arg!!
-                if (!isBlankVarRef(arg)) {
-                    val argType = checkExpr(arg)
-                    if (argType != def.argType) {
-                        error(expr.arg.pos, "詳細値 '${expr.name}' の引数は ${def.argType.dslName()} 型が必要です")
-                    }
+                val argType = checkExpr(expr.arg!!)
+                if (argType != def.argType) {
+                    error(expr.arg.pos, "詳細値 '${expr.name}' の引数は ${def.argType.dslName()} 型が必要です")
                 }
             }
         }
@@ -654,8 +615,7 @@ class DslChecker(
      */
     private fun checkTargetCondCall(expr: DslCallExpr, playerExtras: Boolean) {
         val direct = expr.args.firstOrNull { it.name == "target" }
-        // `target = _` は変数参照を選んだまま名前未入力の対象指定です。
-        if (direct != null && direct.value !is DslNull && !isBlankVarRef(direct.value)) {
+        if (direct != null && direct.value !is DslNull) {
             val type = checkExpr(direct.value)
             if (type != ValueType.ENTITY) {
                 error(direct.pos, "target は entity 型が必要です（${type.dslName()} 型）")
@@ -671,7 +631,7 @@ class DslChecker(
                 arg.name == "target" -> Unit // 上で型検証済み
                 // `at` は判定位置（conditionPositionSpec）です。
                 arg.name == "at" -> {
-                    if (!isBlankVarRef(arg.value) && checkExpr(arg.value) != ValueType.LOCATION) {
+                    if (checkExpr(arg.value) != ValueType.LOCATION) {
                         error(arg.pos, "引数 'at' は location 型が必要です")
                     }
                 }
@@ -743,7 +703,7 @@ class DslChecker(
         if (arg.name != null && arg.name != "target") {
             error(arg.pos, "orientation の引数名は target です")
         }
-        if (!isBlankVarRef(arg.value) && checkExpr(arg.value) != ValueType.ENTITY) {
+        if (checkExpr(arg.value) != ValueType.ENTITY) {
             error(arg.pos, "orientation の対象は entity 型が必要です")
         }
     }
@@ -828,12 +788,8 @@ class DslChecker(
      * 小文字 snake_case（`[a-z][a-z0-9_]*`）に限定することで、
      * `_`→`-` の写像が一意に定まります。
      */
-    /** `_`（空名）への変数参照かを判定します。型を持たない未命名スロットです。 */
-    private fun isBlankVarRef(expr: DslExpr): Boolean =
-        expr is DslVarRef && expr.name.isEmpty()
-
     private fun checkVarName(name: String, pos: DslPos) {
-        // 空文字列は `null`・`_` 指定による未命名スロットで、命名規則の対象外です。
+        // 空文字列は `null` 指定による未命名スロットで、命名規則の対象外です。
         if (name.isEmpty()) return
         if (!namePattern.matches(name)) {
             error(pos, "変数名 '${name}' は小文字の snake_case（[a-z][a-z0-9_]*）で指定してください")

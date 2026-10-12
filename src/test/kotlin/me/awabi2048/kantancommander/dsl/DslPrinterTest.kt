@@ -523,8 +523,7 @@ class DslPrinterTest {
         )
         assertTrue(text.contains("if (null)"))
         assertTrue(text.contains("pos = null"))
-        // 空の変数名は `_`（未命名スロット）へ正規化されます。
-        assertTrue(text.contains("var _: number"))
+        assertTrue(text.contains("var null: number"))
     }
 
     @Test
@@ -609,49 +608,49 @@ class DslPrinterTest {
     @Test
     fun `未命名スロットが往復する`() {
         // GUI で変数ノード・変数参照欄を名前未入力のまま保存した状態に対応します。
-        // `_` は未命名スロットで、内部では空文字列の名前として保持されます。
+        // `null` は未命名スロットで、内部では空文字列の名前として保持されます。
         val text = roundTrip(
             """
             program "t" ;
                 import world;
-                var _: number = 0;
-                _ = 1;
-                var world._: number = 0;
-                world._ = 2;
-                del _;
-                setblock(pos = _, block = block(id = "minecraft:stone"));
+                var null: number = 0;
+                null = 1;
+                var world.null: number = 0;
+                world.null = 2;
+                del null;
+                setblock(pos = null, block = block(id = "minecraft:stone"));
                 var s: string = "";
-                s = _;
+                s = null;
             
             """.trimIndent(),
             checkExecutable = false,
         )
-        assertTrue(text.contains("var _: number"), text)
-        assertTrue(text.contains("_ = 1;"), text)
-        assertTrue(text.contains("var world._: number"), text)
-        assertTrue(text.contains("world._ = 2;"), text)
-        assertTrue(text.contains("del _;"), text)
-        assertTrue(text.contains("pos = _"), text)
-        // 値位置の `_` は参照として書けないため型の空値（string は ""）へ正規化されます。
+        assertTrue(text.contains("var null: number"), text)
+        assertTrue(text.contains("null = 1;"), text)
+        assertTrue(text.contains("var world.null: number"), text)
+        assertTrue(text.contains("world.null = 2;"), text)
+        assertTrue(text.contains("del null;"), text)
+        assertTrue(text.contains("pos = null"), text)
+        // 値位置の `null` は型の空値（string は ""）へ正規化されます。
         assertTrue(text.contains("s = \"\";"), text)
     }
 
     @Test
     fun `対象未設定のエンティティ変数が往復する`() {
         // GUI で ENTITY スコープの対象エンティティを選ばず保存した状態に対応します。
-        // `null.vars.x` は対象未設定、`_.vars.x` は対象の変数名未入力です。
+        // `null.vars.x` は対象未設定、`null.vars.null` は対象・変数名とも未設定です。
         val text = roundTrip(
             """
             program "t" ;
                 null.vars.x = 0;
-                null.vars._ = 1;
+                null.vars.null = 1;
                 del null.vars.x;
             
             """.trimIndent(),
             checkExecutable = false,
         )
         assertTrue(text.contains("null.vars.x = 0;"), text)
-        assertTrue(text.contains("null.vars._ = 1;"), text)
+        assertTrue(text.contains("null.vars.null = 1;"), text)
         assertTrue(text.contains("del null.vars.x;"), text)
     }
 

@@ -188,13 +188,12 @@ class DslParser(text: String) {
     }
 
     /**
-     * 変数名の位置を読みます。`null`・`_` は未命名（GUI の空名スロット）を表し、
+     * 変数名の位置を読みます。`null` は未命名（GUI の空名スロット）を表し、
      * 内部では空文字列として保持します。
      */
     private fun parseVarName(missingMessage: String): String {
         accept(DslTokenKind.NULL)?.let { return "" }
-        val t = expect(DslTokenKind.IDENT, missingMessage)
-        return if (t.text == "_") "" else t.text
+        return expect(DslTokenKind.IDENT, missingMessage).text
     }
 
     private fun parseVarDecl(): DslStmt {
@@ -467,7 +466,13 @@ class DslParser(text: String) {
             expr = when (peekKind()) {
                 DslTokenKind.DOT -> {
                     val dot = advance()
-                    val name = expect(DslTokenKind.IDENT, "'.' の後に詳細値名を書いてください")
+                    // `vars.null` は名前未設定のエンティティ変数参照です。
+                    // 詳細値名は識別子のみで、`null` は vars. の名前位置でのみ受理します。
+                    val name = if (expr is DslVarRef && expr.name == "vars" && peekKind() == DslTokenKind.NULL) {
+                        advance().let { DslToken(DslTokenKind.IDENT, "", it.pos) }
+                    } else {
+                        expect(DslTokenKind.IDENT, "'.' の後に詳細値名を書いてください")
+                    }
                     val arg = if (accept(DslTokenKind.LPAREN) != null) {
                         val a = parseExpr()
                         expect(DslTokenKind.RPAREN, "')' を書いてください")
@@ -479,8 +484,7 @@ class DslParser(text: String) {
                     if (expr is DslVarRef && expr.name == "loop" && name.text == "count" && arg == null) {
                         DslLoopCount(dot.pos)
                     } else if (expr is DslVarRef && expr.name == "vars" && arg == null) {
-                        // `vars._` は名前未設定のエンティティ変数参照です。
-                        DslEntityVarRef(if (name.text == "_") "" else name.text, dot.pos)
+                        DslEntityVarRef(name.text, dot.pos)
                     } else {
                         DslPropertyRead(expr, name.text, arg, dot.pos)
                     }
@@ -544,8 +548,6 @@ class DslParser(text: String) {
             peekKind() == DslTokenKind.LPAREN -> DslCallExpr(name.text, parseArgs(), name.pos)
             // 実行コンテキストが供給する予約位置式です（制御ブロック位置・捕捉位置）。
             name.text == "disk" || name.text == "captured" -> DslSpecialPosition(name.text, name.pos)
-            // `_` は未命名スロット（名前未入力の変数）への参照です。
-            name.text == "_" -> DslVarRef("", name.pos)
             else -> DslVarRef(name.text, name.pos)
         }
     }

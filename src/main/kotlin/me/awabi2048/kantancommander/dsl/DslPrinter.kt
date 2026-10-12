@@ -1074,9 +1074,12 @@ class DslPrinter(
                 // 条件 subject 未設定は `null` 条件へ写像します。
                 "" -> "null"
                 ConditionSubject.VARIABLE.name -> {
-                    // 左辺の変数が未設定の条件は `_`（未命名スロット）として表し、
-                    // 演算子・比較値を保持します。
-                    val lhs = if (c.string("variable").isBlank()) "_" else conditionLhs(c.string("variable"))
+                    // 左辺の変数が未設定の条件は比較形を構成できないため、
+                    // 条件全体を `null`（未設定）へ写像します。
+                    if (c.string("variable").isBlank()) {
+                        return "null"
+                    }
+                    val lhs = conditionLhs(c.string("variable"))
                     val op = c.string("operator", "==")
                     val rhs = conditionValue(c.string("value"))
                     // `X == true` は `X`、`X != true` は `!X` に正規化します。
@@ -1231,8 +1234,12 @@ class DslPrinter(
                 if (spec.x == null && spec.y == null && spec.z == null &&
                     spec.yaw == null && spec.pitch == null
                 ) {
+                    // 参照変数名が空のときは `null`（spec 未設定と同じ未設定扱い）です。
                     name
                 } else {
+                    if (spec.tempName.isNullOrBlank()) {
+                        unsupported("成分付き位置の変数参照が未設定です")
+                    }
                     "$name ${component(spec.x, spec.semanticsX)} ${component(spec.y, spec.semanticsY)} ${component(spec.z, spec.semanticsZ)}"
                 }
             }
@@ -1431,14 +1438,11 @@ class DslPrinter(
         private val dslNameClaims = mutableMapOf<String, MutableMap<String, String>>()
 
         private fun dslName(model: String, bucket: String = "var"): String {
-            // 空名（GUI の名前未入力スロット）は `_` へ写像します。`_` は DSL の
-            // 命名規則で宣言不能なためユーザー変数名と衝突しませんが、モデル名
-            // `-` 等が `_` へ潰れる場合は従来どおり衝突として拒否します。
-            if (model.isBlank()) return "_"
+            // 空名（GUI の名前未入力スロット）は `null` へ写像します。
+            if (model.isBlank()) return "null"
             val dsl = DslNames.dslName(model)
             if (!NAME_PATTERN.matches(dsl)) unsupported("変数名 '$model'")
-            // `_` は空名の占有として事前登録し、`-` 等の実名が同名へ潰れる場合を検出します。
-            val claims = dslNameClaims.getOrPut(bucket) { mutableMapOf("_" to "") }
+            val claims = dslNameClaims.getOrPut(bucket) { mutableMapOf() }
             val owner = claims.putIfAbsent(dsl, model)
             if (owner != null && owner != model) {
                 unsupported("変数名 '$owner' と '$model'（DSL ではいずれも '$dsl' になります）")
@@ -1446,7 +1450,7 @@ class DslPrinter(
             return dsl
         }
 
-        /** 変数名を名前位置のテキストへ戻します。空名（未命名スロット）は `_` です。 */
+        /** 変数名を名前位置のテキストへ戻します。空名（未命名スロット）は `null` です。 */
         private fun varNameText(model: String, bucket: String = "var"): String = dslName(model, bucket)
 
         private fun typeName(raw: String): String = raw.lowercase()

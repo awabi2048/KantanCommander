@@ -8,7 +8,9 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -249,6 +251,12 @@ class DslLegacyConversionTest {
                 if (k == "operation" && n.type == CommandType.VARIABLE &&
                     n.string("scope") == "ENTITY" && (v == "DEFINE" || v == "SET")
                 ) return@filter false
+                // 変数比較条件の左辺変数が未設定のものは比較形を構成できず、
+                // DSL では `if (null)`（subject 未設定）へ圧縮されるため
+                // 比較欄を比較対象から外します。
+                if (n.type == CommandType.CONDITION && n.string("subject") == "VARIABLE" &&
+                    n.string("variable").isBlank() && k in UNSET_COND_KEYS
+                ) return@filter false
                 val d = defaults[k] ?: return@filter true
                 normalizeNumbers(v) != normalizeNumbers(d)
             }
@@ -315,29 +323,37 @@ class DslLegacyConversionTest {
                 specList.remove(n.blockToSpec)
             }
         }
-        return specList.filterNotNull()
-            .joinToString(",") { normalizeNumbers(TEMP_REF.replace(canonicalSpec(it).toString(), "TMP")) }
+        // spec 欄は「実効的に空（参照変数名が未設定）」を spec 未設定（null）と
+        // 同一の意味として比較します。DSL では両者とも `arg = null` へ写像します。
+        return specList.joinToString(",") { spec ->
+            spec?.let(::canonicalSpec)
+                ?.let { normalizeNumbers(TEMP_REF.replace(it.toString(), "TMP")) }
+                ?: "null"
+        }
     }
 
     /**
      * spec 中の TEMPORARY 対象参照を正規形へ揃えます。
      * kind=TEMPORARY は変数参照であるため選択条件（sort・距離等）は意味を
      * 持たず、GUI 操作履歴として残っている値を比較から外します。
+     * 参照変数名が未設定の TEMPORARY spec は解決不能であり、spec 未設定
+     * （null）と同一の意味として null へ圧縮します。
      */
-    private fun canonicalSpec(spec: Any): Any = when (spec) {
-        is TargetSpec -> if (spec.kind == TargetKind.TEMPORARY) {
-            // 参照変数名の未入力は欄の空欄（null）・空文字の両方で保存され得るため
-            // 正規化します（DSL の `_` はいずれにも写像します）。
-            TargetSpec(kind = TargetKind.TEMPORARY, tempName = spec.tempName?.ifBlank { null })
-        } else spec
-        is PositionSpec -> spec.copy(
-            tempName = spec.tempName?.ifBlank { null },
-            target = spec.target?.let { canonicalSpec(it) as TargetSpec },
-        )
-        is FacingSpec -> spec.copy(
-            tempName = spec.tempName?.ifBlank { null },
-            target = spec.target?.let { canonicalSpec(it) as TargetSpec },
-        )
+    private fun canonicalSpec(spec: Any): Any? = when (spec) {
+        is TargetSpec -> when {
+            spec.kind == TargetKind.TEMPORARY && spec.tempName.isNullOrBlank() -> null
+            spec.kind == TargetKind.TEMPORARY ->
+                TargetSpec(kind = TargetKind.TEMPORARY, tempName = spec.tempName)
+            else -> spec
+        }
+        is PositionSpec -> {
+            val c = spec.copy(target = spec.target?.let { canonicalSpec(it) as TargetSpec? })
+            if (c.kind == PositionKind.TEMPORARY && c.tempName.isNullOrBlank()) null else c
+        }
+        is FacingSpec -> {
+            val c = spec.copy(target = spec.target?.let { canonicalSpec(it) as TargetSpec? })
+            if (c.kind == FacingKind.TEMPORARY && c.tempName.isNullOrBlank()) null else c
+        }
         else -> spec
     }
 
@@ -403,6 +419,9 @@ class DslLegacyConversionTest {
 
         /** ENTITY_OPERATION の排他的な値欄です（entityDataPath の種別で1つだけ有効）。 */
         val ENTITY_OP_VALUE_KEYS = setOf("propertyValue", "attributeValue", "tagEntries")
+
+        /** 左辺変数が未設定の変数比較条件で意味を失う欄です。 */
+        val UNSET_COND_KEYS = setOf("subject", "operator", "value", "variable")
 
         /** `dsl.tmpN` 生成一時変数の参照（シグネチャ比較で番号を潰す）です。 */
         val TEMP_REF = Regex("%\\{dsl\\.tmp\\d+}%|dsl\\.tmp\\d+")

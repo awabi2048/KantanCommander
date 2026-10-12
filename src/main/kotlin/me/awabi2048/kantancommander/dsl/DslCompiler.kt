@@ -454,9 +454,7 @@ class DslCompiler(
                 ValueType.BLOCK -> ValuePlan.BlockValue(null, expr.name)
                 ValueType.LOCATION -> ValuePlan.LocationValue(PositionSpec(PositionKind.TEMPORARY, tempName = modelName(expr.name)))
                 ValueType.ENTITY -> ValuePlan.EntityValue(TargetSpec(TargetKind.TEMPORARY, tempName = modelName(expr.name)))
-                // スカラー型の `_`（未命名スロット）参照は `%{""}%` として書けないため、
-                // 値未設定（空値）へ写像します。
-                else -> if (expr.name.isEmpty()) ValuePlan.AssignText("") else ValuePlan.AssignText(execRef(expr.name))
+                else -> ValuePlan.AssignText(execRef(expr.name))
             }
             is DslWorldRef -> when (expected) {
                 ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> ValuePlan.AssignText(worldRef(expr.name))
@@ -599,8 +597,7 @@ class DslCompiler(
             is DslNumberLiteral -> fmt(expr.value)
             is DslBooleanLiteral -> expr.value.toString()
             is DslStringLiteral -> stringTemplate(expr, pre)
-            // `_`（未命名スロット）は `%{""}%` と書けないため空文字へ写像します。
-            is DslVarRef -> if (expr.name.isEmpty()) "" else execRef(expr.name)
+            is DslVarRef -> execRef(expr.name)
             is DslWorldRef -> worldRef(expr.name)
             is DslConst -> constValue(expr)
             is DslUnary -> when (expr.op) {
@@ -851,8 +848,7 @@ class DslCompiler(
          * 実体化して `%{t}%` を返します。
          */
         private fun lhsVariable(expr: DslExpr, pre: MutableList<CommandNode>): String = when (expr) {
-            // `_`（未命名スロット）は `%{""}%` と書けないため、条件の変数欄を空欄にします。
-            is DslVarRef -> if (expr.name.isEmpty()) "" else execRef(expr.name)
+            is DslVarRef -> execRef(expr.name)
             is DslWorldRef -> modelName(expr.name)
             else -> {
                 val temp = freshTemp()

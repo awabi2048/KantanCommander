@@ -242,34 +242,25 @@ test("vars は予約名・実行内変数の詳細値はエンティティ変数
     assert.match(err(`program "t";\n${decl}\np.vars.x += 1;`)[0].message, /複合代入/);
 });
 
-test("未命名スロット '_' は宣言・書込・削除・spec 参照で受理される", () => {
-    // `_` は GUI の名前未入力スロットに対応し、内部では空名として扱います。
-    assert.deepEqual(err('program "t";\nvar _: number = 0;'), []);
-    assert.deepEqual(err('program "t";\n_ = 1;'), []);
-    assert.deepEqual(err('program "t";\ndel _;'), []);
-    assert.deepEqual(err('program "t";\nimport world;\nvar world._: number = 0;\nworld._ = 1;'), []);
-    // spec の変数参照位置・条件左辺でも受理します。
-    assert.deepEqual(err('program "t";\nsetblock(pos = _, block = block(id = "minecraft:stone"));'), []);
-    assert.deepEqual(err('program "t";\nif (_ <= 0) { return; }'), []);
-    assert.deepEqual(err('program "t";\nif (_) { return; }'), []);
-    // 計算式の被演算子（`%{name}%` 参照）としては書けないため拒否します。
-    assert.match(err('program "t";\nvar n: number = 0;\nn += _;')[0].message, /未命名スロット/);
-    assert.match(err('program "t";\nvar n: number = _ + 1;')[0].message, /未命名スロット/);
+test("未命名スロット null は宣言・書込・削除・spec 参照で受理される", () => {
+    // 変数名位置の `null` は GUI の名前未入力スロットに対応し、内部では空名として扱います。
+    assert.deepEqual(err('program "t";\nvar null: number = 0;'), []);
+    assert.deepEqual(err('program "t";\nnull = 1;'), []);
+    assert.deepEqual(err('program "t";\ndel null;'), []);
+    assert.deepEqual(err('program "t";\nimport world;\nvar world.null: number = 0;\nworld.null = 1;'), []);
+    // spec 欄の `null` は spec 未設定を表します。
+    assert.deepEqual(err('program "t";\nsetblock(pos = null, block = block(id = "minecraft:stone"));'), []);
 });
 
 test("null.vars.x は対象未設定のエンティティ変数書き込み", () => {
     assert.deepEqual(err('program "t";\nnull.vars.x = 0;'), []);
-    assert.deepEqual(err('program "t";\nnull.vars._ = 0;'), []);
+    assert.deepEqual(err('program "t";\nnull.vars.null = 0;'), []);
     assert.deepEqual(err('program "t";\ndel null.vars.x;'), []);
-    // `_.vars.x`（対象の変数名未入力）も受理します。
-    assert.deepEqual(err('program "t";\n_.vars.x = 0;'), []);
 });
 
 test("条件の対象未設定 target = null を受理する", () => {
     assert.deepEqual(err('program "t";\nif (player(target = null)) { return; }'), []);
     assert.deepEqual(err('program "t";\nif (exists(target = null)) { return; }'), []);
-    // `target = _`（変数参照の名前未入力）も受理します。
-    assert.deepEqual(err('program "t";\nif (exists(target = _)) { return; }'), []);
     // kind 系引数との併用は引き続き拒否します。
     assert.match(err('program "t";\nif (exists(target = null, kind = "nearest_player")) { return; }')[0].message, /併用できません/);
 });
