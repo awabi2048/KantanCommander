@@ -109,6 +109,54 @@ object KantanLayoutBridge {
         )
     }
 
+    /**
+     * JAR 同梱の `.html` リソースを解析から診断付きコンパイルまで一続きで処理します。
+     *
+     * マークアップは `gesture-gui` 配下の `.html` リソースに保持し、Kotlin 側での文字列生成はしません。
+     * cc-system 同梱の基底スタイルシート（語彙 class）を既定で適用します。
+     * それ以外の振る舞いは [compileHtml] と同一です。
+     *
+     * @param resourcePath クラスパス上のリソース位置です（例 `"gesture-gui/confirm.html"`）。
+     */
+    fun compileHtmlResource(
+        resourcePath: String,
+        environment: GestureGuiHtmlEnvironment,
+        onAction: (GestureGuiActionContext) -> Unit,
+        documentName: String = resourcePath.substringAfterLast('/'),
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        extraActionIds: Set<String> = emptySet(),
+        customRenderers: Map<String, com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomRenderer> = emptyMap(),
+    ): Compiled {
+        val parsed = GestureGuiLayoutFacade.parseHtmlResource(
+            resourcePath,
+            KantanLayoutBridge::class.java.classLoader,
+            environment,
+            documentName,
+            panel,
+        )
+        val actions = collectActions(parsed.document.root) + extraActionIds
+        val resolved = GestureGuiLayoutFacade.layout(
+            parsed.document,
+            knownActionIds = actions,
+            source = documentName,
+        )
+        val compiled = GestureGuiLayoutFacade.compile(
+            resolved,
+            screenId = "kantan-html-bridge",
+            actionHandlers = actions.associateWith { onAction },
+            customRenderers = customRenderers,
+            source = documentName,
+        )
+        val diagnostics = (parsed.diagnostics + compiled.diagnostics).distinct()
+        if (diagnostics.isNotEmpty()) onDiagnostics(diagnostics)
+        return Compiled(
+            elements = compiled.view.definition.elements,
+            visuals = compiled.view.visuals,
+            diagnostics = diagnostics,
+        )
+    }
+
     /** 文書内の action ID を重複なく集めます。 */
     fun collectActions(root: GestureGuiNode): Set<String> {
         val actions = linkedSetOf<String>()

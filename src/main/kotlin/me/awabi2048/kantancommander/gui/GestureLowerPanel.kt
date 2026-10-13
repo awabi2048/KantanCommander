@@ -5983,8 +5983,8 @@ class GestureLowerPanel(
 
 
     /**
-     * CONFIRM の宣言実装です。旧 `buildConfirm` と同じ文言・座標・要素 ID を用い、
-     * 既存の画面定義・パネル・子画面縮尺・操作振分け（`view()`）をそのまま利用します。
+     * CONFIRM の宣言実装です。構造・素材は `gesture-gui/confirm.html` と標準テーマが保持し、
+     * ここでは文言解決と操作振分け（`view()`）だけを行います。
      */
     private fun buildConfirmNew(state: GestureEditorState, player: Player): GestureGuiView {
         val overwrite = state.confirmKind != GestureConfirmKind.DELETE
@@ -6011,12 +6011,8 @@ class GestureLowerPanel(
             )),
             no = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_CANCEL)),
         )
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeConfirm.document(
-                texts,
-                Bukkit.createBlockData(DeclarativeConfirm.YES_BACKGROUND_MATERIAL),
-                Bukkit.createBlockData(DeclarativeConfirm.NO_BACKGROUND_MATERIAL),
-            ),
+        val compiled = DeclarativeConfirm.compile(
+            texts,
             onAction,
             onDiagnostics = { diagnostics ->
                 plugin.logger.fine("[KantanCommander][DeclarativeConfirm] $diagnostics")
