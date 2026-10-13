@@ -28,7 +28,7 @@ kotlin {
 val providedDeps = listOf(
     "io.papermc.paper:paper-api:26.2.build.129-stable",
     "org.jetbrains.kotlin:kotlin-stdlib:2.3.20",
-    "com.awabi2048:CC-System:26.930.5",
+    "com.awabi2048:CC-System:26.1011.1",
     "net.dmulloy2:ProtocolLib:5.4.0",
     "com.moulberry.axiom:AxiomPaper:5.0.1",
     "awabi2048:my-world-manager:26.905.2",
