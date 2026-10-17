@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "me.awabi2048"
-version = "26.1017.1"
+version = "26.1017.2"
 
 repositories {
     mavenLocal()
@@ -28,7 +28,7 @@ kotlin {
 val providedDeps = listOf(
     "io.papermc.paper:paper-api:26.2.build.129-stable",
     "org.jetbrains.kotlin:kotlin-stdlib:2.3.20",
-    "com.awabi2048:CC-System:26.1017.1",
+    "com.awabi2048:CC-System:26.1017.2",
     "net.dmulloy2:ProtocolLib:5.4.0",
     "com.moulberry.axiom:AxiomPaper:5.0.1",
     "awabi2048:my-world-manager:26.905.2",

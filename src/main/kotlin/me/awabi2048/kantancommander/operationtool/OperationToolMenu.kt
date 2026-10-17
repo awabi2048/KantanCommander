@@ -18,7 +18,6 @@ import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.data.AssetReferenceScanner
 import me.awabi2048.kantancommander.data.EntityGroupStore
 import me.awabi2048.kantancommander.gui.DisabledGuiVisualPolicy
 import me.awabi2048.kantancommander.gui.KcGui
@@ -169,11 +168,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 showGroupDialog(context.player)
                 MenuActionResult.Success(MenuUpdate.None)
             },
-            ACTION_GROUP_CLEANUP to MenuActionHandler { context ->
-                if (!checkManage(context.player)) return@MenuActionHandler MenuActionResult.Ignored
-                showGroupCleanupDialog(context.player)
-                MenuActionResult.Success(MenuUpdate.None)
-            },
         ),
     )
 
@@ -289,17 +283,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 )
             }
         }
-        // 未参照のEntity Groupの一括回収は選択状態と無関係のため常に出します。
-        val cleanupLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_GROUP_CLEANUP)
-        elements += KcGui.menuEntry(
-            player = player,
-            slot = GROUP_CLEANUP_SLOT,
-            material = Material.HOPPER,
-            name = cleanupLabel,
-            style = GuiNameStyle.PRIMARY,
-            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_GROUP_CLEANUP),
-            actions = listOf(GuiMenuActionIntent.AnyClick(ACTION_GROUP_CLEANUP, cleanupLabel)),
-        )
         elements += KcGui.elements.backEntry(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TITLE_ENTITY)), elements)
     }
@@ -971,66 +954,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    /**
-     * 未参照Entity Groupの一括回収確認です。
-     *
-     * script が参照しなくなった群だけを対象とし、実行中・編集中への自動GCは
-     * 行わない設計のため、明示操作として確認へ接続します。
-     */
-    private fun showGroupCleanupDialog(player: Player) {
-        val dialogId = "wand-group-cleanup-${UUID.randomUUID()}"
-        pendingDialogs[player.uniqueId] = dialogId
-        dialogs.show(
-            player,
-            MenuDialogRequest(
-                owner = OWNER,
-                id = dialogId,
-                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_GROUP_CLEANUP_TITLE)),
-                body = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_GROUP_CLEANUP_BODY)
-                    .map { Component.text(it) },
-                inputs = emptyList(),
-                confirm = MenuDialogButton(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
-                    MenuDialogHandler { target, _ ->
-                        if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
-                        cleanupGroups(target)
-                    },
-                ),
-                cancel = MenuDialogButton(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
-                    MenuDialogHandler { target, _ ->
-                        takeDialog(target, dialogId)
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
-                ),
-            ),
-        )
-    }
-
-    /**
-     * script から参照されないEntity Groupを一括削除します。
-     *
-     * 参照集合は保存済み全scriptのコマンド設定から走査します。スコープを
-     * 持たないEntity Groupは全スコープ共通のため、参照走査も全体で行います。
-     */
-    private fun cleanupGroups(player: Player): MenuActionResult {
-        if (!checkManage(player)) return MenuActionResult.Ignored
-        val referenced = AssetReferenceScanner.groupNames(plugin.scripts.listAll())
-        val removed = runCatching { plugin.entityGroups.deleteUnreferenced(referenced) }.getOrNull()
-        return if (removed != null) {
-            feedback(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUPS_DELETED,
-                mapOf("count" to removed.size),
-                NamedTextColor.YELLOW,
-            )
-            MenuActionResult.Success(MenuUpdate.Replace(MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap())))
-        } else {
-            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_FAILED, emptyMap(), NamedTextColor.RED)
-            MenuActionResult.Success(MenuUpdate.None)
-        }
-    }
-
     /** 建造物一覧のルートです。表示対象スコープはワールド名で固定します。 */
     private fun structuresRoute(worldName: String, page: Int): MenuRoute = MenuRoute(
         OWNER,
@@ -1109,7 +1032,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         private const val ACTION_TAG_REMOVE = "wand-tag-remove"
         private const val ACTION_DELETE = "wand-delete"
         private const val ACTION_GROUP_CREATE = "wand-group-create"
-        private const val ACTION_GROUP_CLEANUP = "wand-group-cleanup"
 
         private const val INPUT_NAME = "name"
         private const val INPUT_TAG = "tag"
@@ -1125,9 +1047,6 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
 
         /** 建造物一覧の入口です。45スロット画面の操作列の中央左です。 */
         private const val STRUCTURE_LIST_SLOT = 20
-
-        /** 未参照Entity Groupの回収入口です。操作列の右端です。 */
-        private const val GROUP_CLEANUP_SLOT = 28
 
         /** タグ一覧を描画する専用スロットです。45スロット画面の3行目・操作列の中央です。 */
         private const val TAG_LIST_SLOT = 20
