@@ -2328,9 +2328,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /**
      * issue #11: 保存済み建造物の読み込み・設置を実行します。
      *
-     * 設置位置は structurePlacePositionSpec を優先し、未設定時は単一の実行起点を
-     * 既定値とします。設置範囲は建造物の大きさ・回転から算出し、fill と同じく
-     * 1座標でも保護対象なら設置前に全体を失敗させます。
+     * 設置位置は structurePlacePositionSpec を優先し、未設定時は全実行起点を
+     * 既定値とします。コマンド固有位置は対象由来を含む位置集合として解決し、
+     * 各位置へ独立に試行します。設置範囲は建造物の大きさ・回転から算出し、
+     * fill と同じく1座標でも保護対象ならその位置は失敗とします。
+     * 保護衝突・体積超過は位置単位の失敗として記録し、残りは設置します。
+     *
+     * 建造物はMyWorld単位のスコープへ閉じているため、スコープは位置ごとの
+     * ワールドから解決します。複数位置がワールドを跨ぐ場合でも、各位置の
+     * ワールドに属するスコープの同名建造物を使います。
      */
     private fun executeStructurePlace(
         node: CommandNode,
@@ -2340,28 +2346,40 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         attempts: MultiAttemptRecorder,
     ): Boolean {
         val name = node.string("structure")
-        val location = commandPositionOrExecution(node.structurePlacePositionSpec, session, context, origins)
-            ?: return false
         val rotation = StructureRotation.from(node.string("rotation", StructureRotation.NONE.value))
             ?.toBukkit() ?: return false
         val mirror = StructureMirror.from(node.string("mirror", StructureMirror.NONE.value))
             ?.toBukkit() ?: return false
-        val world = location.world ?: return false
-        // 原点オフセット・回転・反転を設置と同じ順で適用し、保護判定範囲を
-        // 実際の設置範囲と一致させます。
-        val bounds = plugin.structures.boundsAt(name, location, rotation, mirror) ?: return false
-        if (bounds.volume() !in 1L..MAX_BLOCK_OPERATION_VOLUME) return false
-        if (BlockOperationProtectionPolicy.hasProtectedBlock(
-                bounds.minX,
-                bounds.maxX,
-                bounds.minY,
-                bounds.maxY,
-                bounds.minZ,
-                bounds.maxZ,
-            ) { coordinate -> plugin.placements.isRegistered(world, coordinate.x, coordinate.y, coordinate.z) }
-        ) return false
-        val placed = plugin.structures.place(name, location, rotation, mirror)
-        attempts.record(placed)
+        // コマンド固有位置がなければ起点集合を使い、各位置を独立に試行します。
+        val locations = node.structurePlacePositionSpec?.let {
+            actionOrigins(it, session, context) ?: return false
+        } ?: origins
+        // 同一ワールドへのスコープ解決を繰り返さないための結果共有です。
+        val scopeCache = mutableMapOf<String, me.awabi2048.kantancommander.structure.StructureScope>()
+        locations.forEach { location ->
+            val placed = runCatching {
+                val world = location.world ?: error("world is unavailable")
+                val scope = scopeCache.getOrPut(world.name) {
+                    me.awabi2048.kantancommander.structure.StructureScopes.forWorld(world.name)
+                }
+                // 原点オフセット・回転・反転を設置と同じ順で適用し、保護判定範囲を
+                // 実際の設置範囲と一致させます。
+                val bounds = plugin.structures.boundsAt(scope, name, location, rotation, mirror)
+                    ?: error("structure is unavailable")
+                if (bounds.volume() !in 1L..MAX_BLOCK_OPERATION_VOLUME) error("structure volume exceeds limit")
+                if (BlockOperationProtectionPolicy.hasProtectedBlock(
+                        bounds.minX,
+                        bounds.maxX,
+                        bounds.minY,
+                        bounds.maxY,
+                        bounds.minZ,
+                        bounds.maxZ,
+                    ) { coordinate -> plugin.placements.isRegistered(world, coordinate.x, coordinate.y, coordinate.z) }
+                ) error("placement is protected")
+                plugin.structures.place(scope, name, location, rotation, mirror)
+            }.getOrDefault(false)
+            attempts.record(placed)
+        }
         return attempts.overall
     }
 

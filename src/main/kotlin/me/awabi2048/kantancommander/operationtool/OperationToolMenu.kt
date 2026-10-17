@@ -18,12 +18,18 @@ import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.data.AssetReferenceScanner
 import me.awabi2048.kantancommander.data.EntityGroupStore
+import me.awabi2048.kantancommander.gui.DisabledGuiVisualPolicy
 import me.awabi2048.kantancommander.gui.KcGui
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.RegionMath
 import me.awabi2048.kantancommander.model.SpatialVector
+import me.awabi2048.kantancommander.structure.StructureSaveOptions
 import me.awabi2048.kantancommander.structure.StructureSaveResult
+import me.awabi2048.kantancommander.structure.StructureScope
+import me.awabi2048.kantancommander.structure.StructureScopes
 import me.awabi2048.kantancommander.structure.StructureStore
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -55,6 +61,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     init {
         runtime.register(areaDefinition())
         runtime.register(entityDefinition())
+        runtime.register(structuresDefinition())
     }
 
     /**
@@ -126,6 +133,14 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 showStructureDialog(context.player)
                 MenuActionResult.Success(MenuUpdate.None)
             },
+            ACTION_STRUCTURE_LIST to MenuActionHandler { context ->
+                if (!checkManage(context.player)) return@MenuActionHandler MenuActionResult.Ignored
+                // 一覧は「エリアが置かれているワールドのスコープ」を見せます。
+                // 未選択時は操作者の現ワールド基準です。
+                val worldName = plugin.operationTool.sessions().get(context.player.uniqueId)
+                    ?.pos1?.worldName ?: context.player.world.name
+                MenuActionResult.Success(MenuUpdate.Navigate(structuresRoute(worldName, 0)))
+            },
         ),
     )
 
@@ -152,6 +167,11 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             ACTION_GROUP_CREATE to MenuActionHandler { context ->
                 if (!checkManage(context.player)) return@MenuActionHandler MenuActionResult.Ignored
                 showGroupDialog(context.player)
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+            ACTION_GROUP_CLEANUP to MenuActionHandler { context ->
+                if (!checkManage(context.player)) return@MenuActionHandler MenuActionResult.Ignored
+                showGroupCleanupDialog(context.player)
                 MenuActionResult.Success(MenuUpdate.None)
             },
         ),
@@ -186,6 +206,17 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STATUS_AREA), areaText),
                 GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STATUS_ORIGIN), originText),
             ),
+        )
+        // 建造物一覧はエリア選択の有無にかかわらず開けます。一覧側は
+        // 選択エリアのワールド（未選択時は現ワールド）のスコープを見せます。
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = STRUCTURE_LIST_SLOT,
+            material = Material.BOOKSHELF,
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_STRUCTURE_LIST),
+            style = GuiNameStyle.PRIMARY,
+            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_STRUCTURE_LIST),
+            actions = listOf(GuiMenuActionIntent.AnyClick(ACTION_STRUCTURE_LIST, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_STRUCTURE_LIST))),
         )
         if (session != null && session.hasValidArea()) {
             elements += KcGui.menuEntry(
@@ -258,8 +289,202 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                 )
             }
         }
+        // 未参照のEntity Groupの一括回収は選択状態と無関係のため常に出します。
+        val cleanupLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_ACTION_GROUP_CLEANUP)
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = GROUP_CLEANUP_SLOT,
+            material = Material.HOPPER,
+            name = cleanupLabel,
+            style = GuiNameStyle.PRIMARY,
+            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_GROUP_CLEANUP),
+            actions = listOf(GuiMenuActionIntent.AnyClick(ACTION_GROUP_CLEANUP, cleanupLabel)),
+        )
         elements += KcGui.elements.backEntry(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TITLE_ENTITY)), elements)
+    }
+
+    private fun structuresDefinition(): InventoryMenuDefinition = InventoryMenuDefinition(
+        owner = OWNER,
+        id = STRUCTURES_MENU_ID,
+        renderer = { context -> renderStructures(context.player, context.route) },
+        actions = mapOf(
+            ACTION_STRUCTURE_PREVIOUS to MenuActionHandler { context ->
+                val page = context.route.payload[STRUCTURE_PAGE]?.toIntOrNull() ?: 0
+                val worldName = context.route.payload[STRUCTURE_WORLD] ?: context.player.world.name
+                MenuActionResult.Success(MenuUpdate.Replace(structuresRoute(worldName, page - 1)))
+            },
+            ACTION_STRUCTURE_NEXT to MenuActionHandler { context ->
+                val page = context.route.payload[STRUCTURE_PAGE]?.toIntOrNull() ?: 0
+                val worldName = context.route.payload[STRUCTURE_WORLD] ?: context.player.world.name
+                MenuActionResult.Success(MenuUpdate.Replace(structuresRoute(worldName, page + 1)))
+            },
+            ACTION_STRUCTURE_DELETE to MenuActionHandler { context ->
+                if (!checkManage(context.player)) return@MenuActionHandler MenuActionResult.Ignored
+                val name = context.payload[STRUCTURE_NAME]
+                    ?.takeIf(StructureStore.NAME_PATTERN::matches)
+                    ?: return@MenuActionHandler MenuActionResult.Ignored
+                val worldName = context.route.payload[STRUCTURE_WORLD] ?: context.player.world.name
+                val page = context.route.payload[STRUCTURE_PAGE]?.toIntOrNull() ?: 0
+                showStructureDeleteDialog(context.player, worldName, name, page)
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+        ),
+    )
+
+    /**
+     * スコープ内の建造物一覧です。
+     *
+     * 各エントリは保存時オプション（エンティティ・空気除去）をデータ行へ示し、
+     * クリックで個別削除の確認ダイアログを開きます。スコープはルート経由で
+     * 固定するため、一覧を開いた後に別ワールドへ移動しても表示対象は変わりません。
+     */
+    private fun renderStructures(player: Player, route: MenuRoute): InventoryMenuView {
+        val layout = KcGui.layouts.pagedList54()
+        val worldName = route.payload[STRUCTURE_WORLD] ?: player.world.name
+        val scope = StructureScopes.forWorld(worldName)
+        val names = plugin.structures.list(scope)
+        val total = ((names.size + layout.itemSlots.size - 1) / layout.itemSlots.size).coerceAtLeast(1)
+        val page = (route.payload[STRUCTURE_PAGE]?.toIntOrNull() ?: 0).coerceIn(0, total - 1)
+        val elements = mutableListOf<MenuElement>()
+        val deleteLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_STRUCTURE_DELETE_TITLE)
+        names.drop(page * layout.itemSlots.size).take(layout.itemSlots.size).forEachIndexed { index, name ->
+            val meta = plugin.structures.metadataOf(scope, name)
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = layout.itemSlots[index],
+                material = Material.STRUCTURE_BLOCK,
+                name = name,
+                style = GuiNameStyle.PRIMARY,
+                role = GuiElementRole.CONTENT,
+                data = listOf(
+                    GuiMenuEntryData(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_OPTION_ENTITIES),
+                        optionLabel(player, meta.includeEntities),
+                    ),
+                    GuiMenuEntryData(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_OPTION_REMOVE_AIR),
+                        optionLabel(player, meta.removeAir),
+                    ),
+                ),
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DESC_STRUCTURE_ENTRY),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick(
+                        ACTION_STRUCTURE_DELETE,
+                        deleteLabel,
+                        mapOf(STRUCTURE_NAME to name),
+                    ),
+                ),
+            )
+        }
+        if (names.isEmpty()) {
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = layout.itemSlots.first(),
+                material = Material.PAPER,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURES_EMPTY),
+                style = GuiNameStyle.MUTED,
+                role = GuiElementRole.CONTENT,
+            )
+        }
+        elements += structureNavigation(player, layout.previousPageSlot, page > 0, "<", ACTION_STRUCTURE_PREVIOUS)
+        elements += structureNavigation(player, layout.nextPageSlot, page < total - 1, ">", ACTION_STRUCTURE_NEXT)
+        // ページ情報と管理単位を併記します。スコープはワールド単位ではなく
+        // MyWorld単位（非MyWorldはグローバル）であることを明示します。
+        val scopeLabel = KcI18n.text(
+            player,
+            if (scope is StructureScope.MyWorld) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_SCOPE_MYWORLD
+            } else {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_SCOPE_GLOBAL
+            },
+        )
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = layout.infoSlot,
+            material = Material.BOOK,
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_PAGE),
+            style = GuiNameStyle.MUTED,
+            role = GuiElementRole.CONTENT,
+            data = listOf(
+                GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_PAGE), "${page + 1}/$total"),
+                GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_FIELD_SCOPE), scopeLabel),
+            ),
+        )
+        elements += KcGui.elements.backEntry(player, layout.backSlot)
+        return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_TITLE_STRUCTURES)), elements)
+    }
+
+    /** 保存時オプションのON/OFF表示です。一覧のデータ行へ使います。 */
+    private fun optionLabel(player: Player, enabled: Boolean): String = KcI18n.text(
+        player,
+        if (enabled) {
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_OPTION_ON
+        } else {
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_OPTION_OFF
+        },
+    )
+
+    /** ページ操作部品です。範囲外は無効部品で位置だけを維持します。 */
+    private fun structureNavigation(player: Player, slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {
+        return if (enabled) {
+            KcGui.menuEntry(
+                player = player,
+                slot = slot,
+                material = Material.ARROW,
+                name = name,
+                role = GuiElementRole.NAVIGATION,
+                actions = listOf(GuiMenuActionIntent.AnyClick(actionId, name)),
+            )
+        } else {
+            KcGui.entry(player, slot, DisabledGuiVisualPolicy.material, "", role = GuiElementRole.DECORATION)
+        }
+    }
+
+    /**
+     * 建造物の個別削除確認です。
+     *
+     * 参照中の全プログラムが次回実行時に失敗するため、確認なしの削除は行いません。
+     */
+    private fun showStructureDeleteDialog(player: Player, worldName: String, name: String, page: Int) {
+        val dialogId = "wand-structure-delete-${UUID.randomUUID()}"
+        pendingDialogs[player.uniqueId] = dialogId
+        dialogs.show(
+            player,
+            MenuDialogRequest(
+                owner = OWNER,
+                id = dialogId,
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_STRUCTURE_DELETE_TITLE)),
+                body = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_STRUCTURE_DELETE_BODY, mapOf("name" to name))
+                    .map { Component.text(it) },
+                inputs = emptyList(),
+                confirm = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                    MenuDialogHandler { target, _ ->
+                        if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
+                        deleteStructure(target, worldName, name, page)
+                    },
+                ),
+                cancel = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                    MenuDialogHandler { target, _ ->
+                        takeDialog(target, dialogId)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+            ),
+        )
+    }
+
+    private fun deleteStructure(player: Player, worldName: String, name: String, page: Int): MenuActionResult {
+        val scope = StructureScopes.forWorld(worldName)
+        return if (plugin.structures.delete(scope, name)) {
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_DELETED, mapOf("name" to name), NamedTextColor.YELLOW)
+            MenuActionResult.Success(MenuUpdate.Replace(structuresRoute(worldName, page)))
+        } else {
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED, emptyMap(), NamedTextColor.RED)
+            MenuActionResult.Success(MenuUpdate.Replace(structuresRoute(worldName, page)))
+        }
     }
 
     /**
@@ -315,7 +540,31 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         val descriptionKey: com.awabi2048.ccsystem.api.localization.LocalizationKey<List<String>>,
     )
 
+    /**
+     * 建造物保存の第1段階（名前入力）です。
+     *
+     * 名前確定後は、同名既存なら上書き確認、なければそのまま第2段階の
+     * 保存オプション入力へ進みます。体積上限はこの時点で早期に拒否します。
+     */
     private fun showStructureDialog(player: Player) {
+        val session = plugin.operationTool.sessions().get(player.uniqueId)
+        val bounds = session?.areaBounds()
+        val first = session?.pos1
+        if (bounds == null || first == null) return
+        // 配置時に必ず失敗する構造物を保存済みとして残さないため、
+        // 保存段階で配置と同じ体積上限を適用します。dx等は範囲（辺長-1）です。
+        val volume = (bounds.dx + 1.0) * (bounds.dy + 1.0) * (bounds.dz + 1.0)
+        if (volume > MAX_BLOCK_OPERATION_VOLUME) {
+            feedback(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_TOO_LARGE,
+                mapOf("max" to MAX_BLOCK_OPERATION_VOLUME),
+                NamedTextColor.RED,
+            )
+            return
+        }
+        val worldName = first.worldName
+        val scope = StructureScopes.forWorld(worldName)
         val dialogId = "wand-structure-${UUID.randomUUID()}"
         pendingDialogs[player.uniqueId] = dialogId
         dialogs.show(
@@ -344,7 +593,12 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
-                        saveStructure(target, name)
+                        if (plugin.structures.exists(scope, name)) {
+                            showStructureOverwriteDialog(target, name, worldName)
+                        } else {
+                            showStructureOptionsDialog(target, name, worldName)
+                        }
+                        MenuActionResult.Success(MenuUpdate.None)
                     },
                 ),
                 cancel = MenuDialogButton(
@@ -358,11 +612,109 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    private fun saveStructure(player: Player, name: String): MenuActionResult {
+    /**
+     * 同名建造物がスコープ内に既存の場合の上書き確認です。
+     *
+     * 同名での上書きは参照中の全プログラムの出力へ即座に影響するため、
+     * 確認なしの上書きは行いません。確認時は第2段階へ進みます。
+     */
+    private fun showStructureOverwriteDialog(player: Player, name: String, worldName: String) {
+        val dialogId = "wand-structure-overwrite-${UUID.randomUUID()}"
+        pendingDialogs[player.uniqueId] = dialogId
+        dialogs.show(
+            player,
+            MenuDialogRequest(
+                owner = OWNER,
+                id = dialogId,
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_STRUCTURE_OVERWRITE_TITLE)),
+                body = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_STRUCTURE_OVERWRITE_BODY, mapOf("name" to name))
+                    .map { Component.text(it) },
+                inputs = emptyList(),
+                confirm = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                    MenuDialogHandler { target, _ ->
+                        if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
+                        showStructureOptionsDialog(target, name, worldName)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+                cancel = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                    MenuDialogHandler { target, _ ->
+                        takeDialog(target, dialogId)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+            ),
+        )
+    }
+
+    /**
+     * 建造物保存の第2段階（保存オプション）です。
+     *
+     * 「エンティティを含める」「空気を取り除く」の2トグルを選ばせます。
+     * 既定はどちらもOFF（従来どおりブロックのみ・空気も上書き）です。
+     */
+    private fun showStructureOptionsDialog(player: Player, name: String, worldName: String) {
+        val dialogId = "wand-structure-options-${UUID.randomUUID()}"
+        pendingDialogs[player.uniqueId] = dialogId
+        dialogs.show(
+            player,
+            MenuDialogRequest(
+                owner = OWNER,
+                id = dialogId,
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_STRUCTURE_OPTIONS_TITLE)),
+                body = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_STRUCTURE_OPTIONS_BODY)
+                    .map { Component.text(it) },
+                inputs = listOf(
+                    MenuDialogInput.BooleanInput(
+                        id = INPUT_INCLUDE_ENTITIES,
+                        label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_OPTION_ENTITIES)),
+                        initial = false,
+                    ),
+                    MenuDialogInput.BooleanInput(
+                        id = INPUT_REMOVE_AIR,
+                        label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_STRUCTURE_OPTION_REMOVE_AIR)),
+                        initial = false,
+                    ),
+                ),
+                confirm = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                    MenuDialogHandler { target, response ->
+                        if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
+                        saveStructure(
+                            target,
+                            name,
+                            worldName,
+                            StructureSaveOptions(
+                                includeEntities = response.booleanValue(INPUT_INCLUDE_ENTITIES),
+                                removeAir = response.booleanValue(INPUT_REMOVE_AIR),
+                            ),
+                        )
+                    },
+                ),
+                cancel = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                    MenuDialogHandler { target, _ ->
+                        takeDialog(target, dialogId)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+            ),
+        )
+    }
+
+    /**
+     * 選択エリアを建造物として保存します。
+     *
+     * スコープは保存対象エリアのワールドから解決し、同スコープの同名は
+     * 呼び出し側の上書き確認を経て置き換えます。
+     */
+    private fun saveStructure(player: Player, name: String, worldName: String, options: StructureSaveOptions): MenuActionResult {
         val session = plugin.operationTool.sessions().get(player.uniqueId)
         val bounds = session?.areaBounds()
         val first = session?.pos1
-        if (bounds == null || first == null) {
+        if (bounds == null || first == null || first.worldName != worldName) {
             return MenuActionResult.Success(MenuUpdate.Close)
         }
         // 権限は現在ワールドではなく保存対象エリアのワールドで判定します。
@@ -371,17 +723,18 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED, emptyMap(), NamedTextColor.RED)
             return MenuActionResult.Success(MenuUpdate.Close)
         }
+        val scope = StructureScopes.forWorld(first.worldName)
         val from = Location(world, bounds.minimum.x, bounds.minimum.y, bounds.minimum.z)
         val to = Location(world, bounds.minimum.x + bounds.dx, bounds.minimum.y + bounds.dy, bounds.minimum.z + bounds.dz)
         // Qキーで指定された原点は、領域内のブロックの場合だけ保存へ引き渡します。
-        val originLocation = session?.origin
+        val originLocation = session.origin
             ?.takeIf { origin ->
                 origin.worldName == first.worldName && RegionMath.contains(
                     origin.position, bounds.minimum, bounds.dx, bounds.dy, bounds.dz,
                 )
             }
             ?.let { Location(world, it.position.x, it.position.y, it.position.z) }
-        return when (plugin.structures.save(name, from, to, originLocation)) {
+        return when (plugin.structures.save(scope, name, from, to, originLocation, options)) {
             StructureSaveResult.Saved -> {
                 feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_SAVED, mapOf("name" to name), NamedTextColor.GREEN)
                 MenuActionResult.Success(MenuUpdate.Close)
@@ -389,6 +742,10 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             StructureSaveResult.InvalidName -> {
                 feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME, emptyMap(), NamedTextColor.RED)
                 MenuActionResult.Success(MenuUpdate.None)
+            }
+            StructureSaveResult.TooLarge -> {
+                feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_TOO_LARGE, mapOf("max" to MAX_BLOCK_OPERATION_VOLUME), NamedTextColor.RED)
+                MenuActionResult.Success(MenuUpdate.Close)
             }
             StructureSaveResult.Failed -> {
                 feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED, emptyMap(), NamedTextColor.RED)
@@ -615,6 +972,76 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
+     * 未参照Entity Groupの一括回収確認です。
+     *
+     * script が参照しなくなった群だけを対象とし、実行中・編集中への自動GCは
+     * 行わない設計のため、明示操作として確認へ接続します。
+     */
+    private fun showGroupCleanupDialog(player: Player) {
+        val dialogId = "wand-group-cleanup-${UUID.randomUUID()}"
+        pendingDialogs[player.uniqueId] = dialogId
+        dialogs.show(
+            player,
+            MenuDialogRequest(
+                owner = OWNER,
+                id = dialogId,
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_GROUP_CLEANUP_TITLE)),
+                body = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_WAND_DIALOG_GROUP_CLEANUP_BODY)
+                    .map { Component.text(it) },
+                inputs = emptyList(),
+                confirm = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                    MenuDialogHandler { target, _ ->
+                        if (!takeDialog(target, dialogId)) return@MenuDialogHandler MenuActionResult.Ignored
+                        cleanupGroups(target)
+                    },
+                ),
+                cancel = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                    MenuDialogHandler { target, _ ->
+                        takeDialog(target, dialogId)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+            ),
+        )
+    }
+
+    /**
+     * script から参照されないEntity Groupを一括削除します。
+     *
+     * 参照集合は保存済み全scriptのコマンド設定から走査します。スコープを
+     * 持たないEntity Groupは全スコープ共通のため、参照走査も全体で行います。
+     */
+    private fun cleanupGroups(player: Player): MenuActionResult {
+        if (!checkManage(player)) return MenuActionResult.Ignored
+        val referenced = AssetReferenceScanner.groupNames(plugin.scripts.listAll())
+        val removed = runCatching { plugin.entityGroups.deleteUnreferenced(referenced) }.getOrNull()
+        return if (removed != null) {
+            feedback(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUPS_DELETED,
+                mapOf("count" to removed.size),
+                NamedTextColor.YELLOW,
+            )
+            MenuActionResult.Success(MenuUpdate.Replace(MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap())))
+        } else {
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_FAILED, emptyMap(), NamedTextColor.RED)
+            MenuActionResult.Success(MenuUpdate.None)
+        }
+    }
+
+    /** 建造物一覧のルートです。表示対象スコープはワールド名で固定します。 */
+    private fun structuresRoute(worldName: String, page: Int): MenuRoute = MenuRoute(
+        OWNER,
+        STRUCTURES_MENU_ID,
+        mapOf(
+            STRUCTURE_WORLD to worldName,
+            STRUCTURE_PAGE to page.coerceAtLeast(0).toString(),
+        ),
+    )
+
+    /**
      * 選択集合のうち現在ワールドで操作可能なEntityを返します。
      *
      * ロード済みで死亡・無効が確認できたEntityのみ選択集合から外し、未ロードや
@@ -671,18 +1098,36 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
         const val OWNER = "kantan"
         const val AREA_MENU_ID = "wand-area"
         const val ENTITY_MENU_ID = "wand-entity"
+        const val STRUCTURES_MENU_ID = "wand-structures"
 
         private const val ACTION_SAVE_STRUCTURE = "wand-save-structure"
+        private const val ACTION_STRUCTURE_LIST = "wand-structure-list"
+        private const val ACTION_STRUCTURE_DELETE = "wand-structure-delete"
+        private const val ACTION_STRUCTURE_PREVIOUS = "wand-structure-previous"
+        private const val ACTION_STRUCTURE_NEXT = "wand-structure-next"
         private const val ACTION_TAG_ADD = "wand-tag-add"
         private const val ACTION_TAG_REMOVE = "wand-tag-remove"
         private const val ACTION_DELETE = "wand-delete"
         private const val ACTION_GROUP_CREATE = "wand-group-create"
+        private const val ACTION_GROUP_CLEANUP = "wand-group-cleanup"
 
         private const val INPUT_NAME = "name"
         private const val INPUT_TAG = "tag"
+        private const val INPUT_INCLUDE_ENTITIES = "include_entities"
+        private const val INPUT_REMOVE_AIR = "remove_air"
+
+        private const val STRUCTURE_WORLD = "world"
+        private const val STRUCTURE_PAGE = "page"
+        private const val STRUCTURE_NAME = "name"
 
         private const val ACTION_SLOT_SINGLE = 22
         private val ENTITY_ACTION_SLOTS = listOf(19, 21, 23, 25)
+
+        /** 建造物一覧の入口です。45スロット画面の操作列の中央左です。 */
+        private const val STRUCTURE_LIST_SLOT = 20
+
+        /** 未参照Entity Groupの回収入口です。操作列の右端です。 */
+        private const val GROUP_CLEANUP_SLOT = 28
 
         /** タグ一覧を描画する専用スロットです。45スロット画面の3行目・操作列の中央です。 */
         private const val TAG_LIST_SLOT = 20

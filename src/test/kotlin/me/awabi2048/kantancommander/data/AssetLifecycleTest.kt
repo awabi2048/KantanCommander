@@ -59,7 +59,10 @@ class AssetLifecycleTest {
             directory,
         )
 
-        val removed = store.deleteUnreferenced(setOf("used_house"))
+        val removed = store.deleteUnreferenced(
+            me.awabi2048.kantancommander.structure.StructureScope.Global,
+            setOf("used_house"),
+        )
 
         assertEquals(listOf("old_house"), removed)
         assertTrue(File(directory, "used_house.nbt").isFile)
