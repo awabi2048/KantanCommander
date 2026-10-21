@@ -4913,7 +4913,12 @@ class GestureLowerPanel(
         GestureSettingScreen.STRUCTURE_NAME -> buildList {
             // 保存済みの建造物を候補として列挙します。存在しない場合は追加保存の
             // 手順を示すため、空候補には新規作成用の固定項目だけを出します。
-            val existing = plugin.structures.list()
+            // 建造物はMyWorld単位のスコープへ閉じているため、スクリプトの配置先
+            // ワールドのスコープだけを列挙します。未配置では操作者の現ワールド基準です。
+            val scopeWorld = plugin.placements.findByScript(context.scriptId).firstOrNull()?.world
+                ?: player.world.name
+            val scope = me.awabi2048.kantancommander.structure.StructureScopes.forWorld(scopeWorld)
+            val existing = plugin.structures.list(scope)
             existing.forEach { name ->
                 add(
                     SettingChoice(

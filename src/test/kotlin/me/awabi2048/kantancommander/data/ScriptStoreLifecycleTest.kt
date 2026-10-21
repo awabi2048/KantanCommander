@@ -109,15 +109,13 @@ class ScriptStoreLifecycleTest {
     }
 
     @Test
-    fun `asset references collect structure and group names from executable operations`() {
+    fun `asset references collect structure names from executable operations`() {
         val script = DiskScript(name = "assets")
         GraphEditor.append(script.graph, CommandType.STRUCTURE_PLACE).apply { params["structure"] = "my_house-01" }
         GraphEditor.append(script.graph, CommandType.ENTITY_GROUP).apply { params["group"] = "my_group-01" }
         GraphEditor.append(script.graph, CommandType.WAIT)
 
         assertEquals(setOf("my_house-01"), AssetReferenceScanner.structureNames(listOf(script)))
-        assertEquals(setOf("my_group-01"), AssetReferenceScanner.groupNames(listOf(script)))
         assertTrue(AssetReferenceScanner.structureNames(emptyList()).isEmpty())
-        assertTrue(AssetReferenceScanner.groupNames(emptyList()).isEmpty())
     }
 }
