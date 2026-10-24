@@ -5924,9 +5924,6 @@ class GestureLowerPanel(
         val parallel = pageTypes.size > 1
         val data = PickerData(
             categories = categories.map { PickerCategory(KcI18n.text(player, it.labelKey), it == selectedCategory) },
-            tabBackgrounds = categories.map {
-                Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(it == selectedCategory))
-            },
             description = Component.text(
                 KcI18n.list(player, selectedCategory.descriptionKey)
                     .filter(String::isNotBlank)
@@ -5956,7 +5953,6 @@ class GestureLowerPanel(
                 )
                 PickerCard(type.name, KcI18n.text(player, type.key), hoverLines, hover.x, hover.y)
             },
-            cardBackgrounds = pageTypes.map { Bukkit.createBlockData(Material.CYAN_TERRACOTTA) },
             pager = if (pageCount > 1) PickerPager(
                 arrows = listOf(page - 1 to "◀", page + 1 to "▶").map { (targetPage, glyph) ->
                     val available = targetPage in 0 until pageCount
@@ -5965,19 +5961,15 @@ class GestureLowerPanel(
                         glyph = Component.text(glyph).color(
                             if (available) NamedTextColor.WHITE else NamedTextColor.GRAY,
                         ),
-                        background = Bukkit.createBlockData(
-                            if (available) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
-                        ),
                         available = available,
                     )
                 },
                 status = Component.text("${page + 1}/$pageCount"),
             ) else null,
             closeLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)),
-            closeBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
         )
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativePicker.document(data),
+        val compiled = DeclarativePicker.compile(
+            data,
             onAction,
             onDiagnostics = { diagnostics ->
                 plugin.logger.fine("[KantanCommander][DeclarativePicker] $diagnostics")

@@ -116,7 +116,14 @@ object KantanLayoutBridge {
      * cc-system 同梱の基底スタイルシート（語彙 class）を既定で適用します。
      * それ以外の振る舞いは [compileHtml] と同一です。
      *
+     * 件数や内容が実行時に決まる一覧（カード・タブ・ページャ等）は、マークアップ側が
+     * 配置済みの空容器（ID 付き `div` 等）だけを持ち、[injections] で要素 ID を指定して
+     * ノードを注入します。注入ノードの要素 ID は呼び出し側が意味値を付けられるため、
+     * `lower-type:<key>` のようなデータ入り ID をそのまま維持できます。
+     *
      * @param resourcePath クラスパス上のリソース位置です（例 `"gesture-gui/confirm.html"`）。
+     * @param injections 注入先の容器 ID から、追加する子ノード一覧への対応表です。
+     *   容器の既存子ノードは残りません。
      */
     fun compileHtmlResource(
         resourcePath: String,
@@ -127,6 +134,7 @@ object KantanLayoutBridge {
         onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         extraActionIds: Set<String> = emptySet(),
         customRenderers: Map<String, com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomRenderer> = emptyMap(),
+        injections: Map<String, List<GestureGuiNode>> = emptyMap(),
     ): Compiled {
         val parsed = GestureGuiLayoutFacade.parseHtmlResource(
             resourcePath,
@@ -135,9 +143,12 @@ object KantanLayoutBridge {
             documentName,
             panel,
         )
-        val actions = collectActions(parsed.document.root) + extraActionIds
+        val document = injections.entries.fold(parsed.document) { doc, (containerId, children) ->
+            withChildrenInjected(doc, containerId, children)
+        }
+        val actions = collectActions(document.root) + extraActionIds
         val resolved = GestureGuiLayoutFacade.layout(
-            parsed.document,
+            document,
             knownActionIds = actions,
             source = documentName,
         )
@@ -155,6 +166,49 @@ object KantanLayoutBridge {
             visuals = compiled.view.visuals,
             diagnostics = diagnostics,
         )
+    }
+
+    /**
+     * 文書内の指定 ID を持つ容器へ子ノードを注入した文書を返します。
+     *
+     * マークアップの静的構造と実行時決定の一覧内容を分離するための移植口です。
+     * 注入先が見つからない場合は誤った ID を見逃さないようエラーとします。
+     */
+    fun withChildrenInjected(
+        document: GestureGuiDocument,
+        containerId: String,
+        children: List<GestureGuiNode>,
+    ): GestureGuiDocument {
+        var injected = false
+
+        fun withChildren(node: GestureGuiNode, newChildren: List<GestureGuiNode>): GestureGuiNode = when (node) {
+            is GestureGuiBox -> node.copy(children = newChildren)
+            is GestureGuiColumn -> node.copy(children = newChildren)
+            is GestureGuiRow -> node.copy(children = newChildren)
+            is GestureGuiGrid -> node.copy(children = newChildren)
+            is GestureGuiOverlay -> node.copy(children = newChildren)
+            else -> error("ID $containerId は子要素を持てないノードです: ${node::class.simpleName}")
+        }
+
+        fun visit(node: GestureGuiNode): GestureGuiNode {
+            if (node.id == containerId) {
+                injected = true
+                return withChildren(node, children)
+            }
+            return when (node) {
+                is GestureGuiBox -> node.copy(children = node.children.map(::visit))
+                is GestureGuiColumn -> node.copy(children = node.children.map(::visit))
+                is GestureGuiRow -> node.copy(children = node.children.map(::visit))
+                is GestureGuiGrid -> node.copy(children = node.children.map(::visit))
+                is GestureGuiOverlay -> node.copy(children = node.children.map(::visit))
+                is GestureGuiViewport -> node.copy(content = visit(node.content))
+                else -> node
+            }
+        }
+
+        val newRoot = visit(document.root)
+        require(injected) { "注入先の容器 ID が文書内に見つかりません: $containerId" }
+        return document.copy(root = newRoot)
     }
 
     /** 文書内の action ID を重複なく集めます。 */

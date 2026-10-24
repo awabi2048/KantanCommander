@@ -29,8 +29,9 @@ object KantanGuiTheme {
         outlines: Map<String, BlockData> = emptyMap(),
         items: Map<String, ItemStack> = emptyMap(),
         textSizes: Map<String, Double> = emptyMap(),
+        theme: com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme = GestureGuiThemes.standard(),
     ): GestureGuiThemedEnvironment = GestureGuiThemedEnvironment(
-        theme = GestureGuiThemes.standard(),
+        theme = theme,
         textById = { components[it] },
         hoverById = { hovers[it] },
         guardById = { guards[it] },

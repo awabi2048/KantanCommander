@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!--
+  コマンド種別 PICKER（左の分類タブ列＋右の説明・種別カード格子・ページャ）です。
+
+  件数・内容が実行時に決まる一覧部分（タブ・カード・ページャ）は空の容器だけを持ち、
+  Kotlin 側が KantanLayoutBridge の injections でノードを注入します。
+  ここには画面の区画・配置・語彙だけを記述します。
+
+  旧 buildPicker（絶対座標版）との対応:
+  - 左レール: タブ列は上揃え、閉じるは下端固定（旧 SETTINGS_TAB_TOP_Y=0.38 / ACTION_Y=-0.43）
+  - 右領域: 説明・カード格子・ページャは中央揃えの縦並び（旧 x=0.28 の列）
+  - タブ: 高さ0.10・幅0.47・選択中は右へ15%伸長（部品 tab が左端固定で再現）
+  - カード: 2列・0.66×0.10（旧 LEFT/RIGHT_COLUMN_X・CARD_TOP_Y ピッチ0.11）
+  - 正規化点: タブ・閉じるの左端は枠内へ 0.017 だけ内側へ寄せています
+    （旧値 -1.0325 は枠線への食い込みで、宣言配置では内容域端 -1.0157 に揃えます）。
+-->
+<style>
+  /* 左レール: 分類タブを上段へ、閉じるを下端へ固定します。 */
+  .picker-rail {
+    position: absolute; left: 0; top: 0; width: 0.72; height: 100%;
+    display: flex; flex-direction: column; justify-content: space-between;
+    align-items: flex-start; padding: 0.055 0 0.005 0;
+  }
+  .picker-tabs {
+    display: flex; flex-direction: column; gap: 0.01; align-items: flex-start;
+  }
+  #lower-close-picker {
+    width: 0.47; height: 0.10; background: back; font-size: 0.006; line-width: 90;
+  }
+
+  /* 右領域: 説明・カード格子を上揃えの組にし、ページャを下端へ固定します。 */
+  .picker-main {
+    position: absolute; left: 0.5757; top: 0; width: 1.44; height: 100%;
+    display: flex; flex-direction: column; justify-content: space-between;
+    align-items: center; padding: 0.10 0 0.005 0;
+  }
+  .picker-top {
+    display: flex; flex-direction: column; align-items: center; gap: 0.09;
+    width: 100%;
+  }
+  #picker-description-body {
+    text-align: center; font-size: 0.0043; line-width: 280; width: 100%;
+  }
+  /* カード格子は注入ノード（2列 grid）を中央へ置きます。 */
+  .picker-cards {
+    display: flex; justify-content: center; width: 100%;
+  }
+  .picker-pager {
+    display: flex; flex-direction: row; justify-content: center;
+    align-items: center; gap: 0.02; height: 0.10;
+  }
+</style>
+
+<section class="screen">
+  <div class="picker-rail">
+    <div id="picker-tabs" class="picker-tabs"></div>
+    <button id="lower-close-picker" action="lower-close-picker" gestures="click"></button>
+  </div>
+  <div class="picker-main">
+    <div class="picker-top">
+      <p id="picker-description-body"></p>
+      <div id="picker-cards" class="picker-cards"></div>
+    </div>
+    <div id="picker-pager" class="picker-pager"></div>
+  </div>
+</section>
