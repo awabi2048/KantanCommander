@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.gui.declarative
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
@@ -22,6 +23,23 @@ class DiskCallSettingsDocumentTest {
         BlockData::class.java.classLoader,
         arrayOf(BlockData::class.java),
     ) { _, _, _ -> null } as BlockData
+
+    /** 実素材化に Bukkit を要するため、全フィールドをスタブ素材で埋めたテーマです。 */
+    private fun stubTheme(): GestureGuiTheme = GestureGuiTheme(
+        surface = blockData(),
+        accent = blockData(),
+        accentDeep = blockData(),
+        danger = blockData(),
+        back = blockData(),
+        on = blockData(),
+        off = blockData(),
+        outlineSelected = blockData(),
+        outlineSet = blockData(),
+        disabled = blockData(),
+        divider = blockData(),
+        scrim = blockData(),
+        scrimDanger = blockData(),
+    )
 
     private fun data(argumentNames: List<String>, pageCount: Int = 1): DiskCallSettingsData = DiskCallSettingsData(
         title = Component.text("title"),
@@ -50,9 +68,11 @@ class DiskCallSettingsDocumentTest {
 
     @Test
     fun `argument and return element ids are kept`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeDiskCall.settingsDocument(data(listOf("count", "where")), panel),
+        val compiled = DeclarativeDiskCall.settingsCompiled(
+            data(listOf("count", "where")),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val ids = compiled.elements.map { it.elementId }.toSet()
@@ -68,18 +88,19 @@ class DiskCallSettingsDocumentTest {
 
     @Test
     fun `empty arguments and pager render without diagnostics`() {
-        val empty = KantanLayoutBridge.compile(
-            DeclarativeDiskCall.settingsDocument(data(emptyList()), panel),
+        val empty = DeclarativeDiskCall.settingsCompiled(
+            data(emptyList()),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(empty.diagnostics.isEmpty(), "diagnostics: ${empty.diagnostics}")
 
-        val paged = KantanLayoutBridge.compile(
-            DeclarativeDiskCall.settingsDocument(
-                data(listOf("a", "b", "c"), pageCount = 2).copy(page = 0),
-                panel,
-            ),
+        val paged = DeclarativeDiskCall.settingsCompiled(
+            data(listOf("a", "b", "c"), pageCount = 2).copy(page = 0),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(paged.diagnostics.isEmpty(), "diagnostics: ${paged.diagnostics}")
         assertTrue(paged.elements.any { it.elementId.startsWith("lower-disk-arg-page:") })

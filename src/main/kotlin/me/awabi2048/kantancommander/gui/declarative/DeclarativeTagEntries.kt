@@ -1,14 +1,15 @@
 package me.awabi2048.kantancommander.gui.declarative
 
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
-import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiThemes
 import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
@@ -61,31 +62,18 @@ data class TagListData(
  * クリック領域に削除操作を吸わせません。
  */
 object DeclarativeTagEntries {
-    fun tagDocument(data: TagListData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = data.title,
-            // タブ列以外は補完なしで即時反映します。
-            interpolationTicks = 0,
-            size = 0.0060,
-            lineWidth = 200,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "tag-list-title",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
-        )
-        DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
-            body = data.description,
-            detail = null,
-            centerX = 0.0,
-            hoverY = GestureLowerPanel.CHILD_HOVER_Y,
-        )
+    fun tagCompiled(
+        data: TagListData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeChildScreen.regions(panel)
+        val content = mutableListOf<GestureGuiNode>()
+        val band = mutableListOf<GestureGuiNode>()
         if (data.emptyLabel != null) {
-            nodes += GestureGuiText(
+            content += GestureGuiText(
                 text = data.emptyLabel,
                 interpolationTicks = 0,
                 size = 0.0052,
@@ -94,7 +82,13 @@ object DeclarativeTagEntries {
                 id = "tag-list-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, 0.0, GestureSettingChildLayoutPolicy.TOP_CHOICE_Y, 1.0, 0.0052 * 3.0),
+                absolute = placed(
+                    regions.content,
+                    0.0,
+                    GestureSettingChildLayoutPolicy.TOP_CHOICE_Y,
+                    1.0,
+                    0.0052 * 3.0,
+                ),
             )
         } else {
             data.entries.forEachIndexed { index, entry ->
@@ -113,98 +107,76 @@ object DeclarativeTagEntries {
                 val cy = GestureSettingChildLayoutPolicy.topY(row)
                 val modeAction = "lower-tag-mode:$index"
                 // 名札のクリックはモード切替と同義にし、無反応行を作りません。
-                nodes += GestureGuiBlock(
-                    blockData = data.entryBackground,
-                    interpolationTicks = 0,
-                    width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.TAG_CARD_WIDTH),
-                    height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
-                    id = "lower-tag-card:$index",
-                    actionId = modeAction,
-                    acceptedGestures = GestureGuiClickPolicy.CLICK,
-                    hover = DeclarativeSettings.hoverSpecOf(entry.hover),
-                    outline = GestureGuiOutline(data.edgeBackground),
-                    absolute = placed(
-                        frame,
-                        cardCx,
-                        cy,
-                        GestureLowerPanel.TAG_CARD_WIDTH,
-                        GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-tag-card:$index",
+                        actionId = modeAction,
+                        label = Component.text(entry.tag),
+                        background = data.entryBackground,
+                        cx = cardCx,
+                        cy = cy,
+                        w = GestureLowerPanel.TAG_CARD_WIDTH,
+                        h = GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                        labelDy = -0.012,
+                        labelSize = 0.0045,
+                        labelWidth = 100,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = entry.hover,
+                        visualTag = "tag-card-$index",
+                        outline = data.edgeBackground,
                     ),
                 )
-                nodes += GestureGuiText(
-                    text = Component.text(entry.tag),
-                    interpolationTicks = 0,
-                    size = 0.0045,
-                    lineWidth = 100,
-                    alignment = GestureGuiTextAlignment.CENTER,
-                    id = "tag-list-label-$index",
-                    width = GestureGuiSizeSpec.Fixed(1.0),
-                    height = GestureGuiSizeSpec.Auto,
-                    absolute = placed(frame, cardCx, cy - 0.012, 1.0, 0.0045 * 3.0),
-                )
-                nodes += GestureGuiBlock(
-                    blockData = entry.modeBackground,
-                    interpolationTicks = 0,
-                    width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.TAG_MODE_WIDTH),
-                    height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
-                    id = "lower-tag-mode-button:$index",
-                    actionId = modeAction,
-                    acceptedGestures = GestureGuiClickPolicy.CLICK,
-                    hover = DeclarativeSettings.hoverSpecOf(entry.modeHover),
-                    absolute = placed(
-                        frame,
-                        modeCx,
-                        cy,
-                        GestureLowerPanel.TAG_MODE_WIDTH,
-                        GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-tag-mode-button:$index",
+                        actionId = modeAction,
+                        label = entry.modeGlyph,
+                        background = entry.modeBackground,
+                        cx = modeCx,
+                        cy = cy,
+                        w = GestureLowerPanel.TAG_MODE_WIDTH,
+                        h = GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                        labelDy = -0.012,
+                        labelSize = 0.0048,
+                        labelWidth = 40,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = entry.modeHover,
+                        visualTag = "tag-mode-$index",
                     ),
                 )
-                nodes += GestureGuiText(
-                    text = entry.modeGlyph,
-                    interpolationTicks = 0,
-                    size = 0.0048,
-                    lineWidth = 40,
-                    alignment = GestureGuiTextAlignment.CENTER,
-                    id = "tag-list-mode-label-$index",
-                    width = GestureGuiSizeSpec.Fixed(1.0),
-                    height = GestureGuiSizeSpec.Auto,
-                    absolute = placed(frame, modeCx, cy - 0.012, 1.0, 0.0048 * 3.0),
-                )
-                nodes += GestureGuiBlock(
-                    blockData = data.deleteBackground,
-                    interpolationTicks = 0,
-                    width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH),
-                    height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
-                    id = "lower-tag-delete:$index",
-                    actionId = "lower-tag-delete:$index",
-                    acceptedGestures = GestureGuiClickPolicy.CLICK,
-                    hover = DeclarativeSettings.hoverSpecOf(entry.deleteHover),
-                    absolute = placed(
-                        frame,
-                        deleteCx,
-                        cy,
-                        GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH,
-                        GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-tag-delete:$index",
+                        label = Component.text("🗑", NamedTextColor.WHITE),
+                        background = data.deleteBackground,
+                        cx = deleteCx,
+                        cy = cy,
+                        w = GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH,
+                        h = GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                        labelDy = -0.012,
+                        labelSize = 0.0048,
+                        labelWidth = 40,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = entry.deleteHover,
+                        visualTag = "tag-delete-$index",
                     ),
-                )
-                nodes += GestureGuiText(
-                    text = Component.text("🗑", NamedTextColor.WHITE),
-                    interpolationTicks = 0,
-                    size = 0.0048,
-                    lineWidth = 40,
-                    alignment = GestureGuiTextAlignment.CENTER,
-                    id = "tag-list-delete-label-$index",
-                    width = GestureGuiSizeSpec.Fixed(1.0),
-                    height = GestureGuiSizeSpec.Auto,
-                    absolute = placed(frame, deleteCx, cy - 0.012, 1.0, 0.0048 * 3.0),
                 )
             }
             if (data.pageCount > 1) {
                 // 下端操作行は［追加］［戻る］が占めるため、ページャーは
                 // その直上の帯へ固定します。件数・ページで位置は変わりません。
                 DeclarativeSettings.pagerSection(
-                    nodes,
-                    frame,
+                    band,
+                    regions.band,
                     idPrefix = "tag-list",
                     elementPrefix = "lower-tag-page",
                     page = data.page,
@@ -225,9 +197,10 @@ object DeclarativeTagEntries {
                 )
             }
         }
+        val footerLeft = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footerLeft,
+            regions.footerLeft,
             SettingsActionCard(
                 elementId = "lower-tag-create",
                 label = data.createLabel,
@@ -244,14 +217,26 @@ object DeclarativeTagEntries {
                 visualTag = "tag-list-create",
             ),
         )
+        val footerRight = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.backSection(
-            nodes,
-            frame,
+            footerRight,
+            regions.footerRight,
             label = data.backLabel,
             background = data.backBackground,
             centerX = GestureChoicePane.CHILD.backX,
             width = GestureChoicePane.CHILD.backWidth,
         )
-        return DeclarativeSettings.document(nodes, panel)
+        return DeclarativeChildScreen.compile(
+            title = data.title,
+            description = data.description,
+            content = content,
+            band = band,
+            footerLeft = footerLeft,
+            footerRight = footerRight,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
+        )
     }
 }

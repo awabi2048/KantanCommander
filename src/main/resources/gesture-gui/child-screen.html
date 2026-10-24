@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!--
+  子画面の共通骨格（タイトル・常設説明・本文領域・帯・下端操作行）です。
+
+  件数・内容が実行時に決まる部分（候補カード・一覧行・ページャ・操作カード）は
+  空の容器だけを持ち、Kotlin 側が KantanLayoutBridge の injections でノードを
+  注入します。ここには領域の区画・配置だけを記述します。
+
+  旧 buildWorldVariables 系（絶対座標版）との対応:
+  - タイトル: 中心 (0, 0.36)・常設説明: 中心 (0, 0.23)（CHILD_HEADER_Y / CHILD_HOVER_Y）
+  - 本文領域: 全幅・上端は先頭候補行の上端 0.13（TOP_CHOICE_Y + CHOICE_HEIGHT/2）
+  - 帯: 中心 (0, -0.29)・高 0.10（下端操作行の直上、pagerBandY と同じ高さ）
+  - 下端操作行: 左右列セル 0.92×0.10・中心 ±0.53 / -0.43（BACK_Y・BACK_HEIGHT）
+  常設説明の要素 ID（setting-description-hover）はホバー置換先として維持します。
+-->
+<style>
+  /* タイトル・常設説明は画面上部へ中央揃えで固定します。 */
+  .child-title {
+    position: absolute; left: 0.5157; top: 0.1163; width: 1.0;
+    text-align: center; font-size: 0.006; line-width: 200;
+  }
+  .child-description {
+    position: absolute; left: 0.5157; top: 0.2489; width: 1.0;
+    text-align: center; font-size: 0.0043; line-width: 280;
+  }
+
+  /* 本文領域は全幅で、候補行・一覧行を上端から並べます。 */
+  .child-content {
+    position: absolute; left: 0; top: 0.3553; width: 100%; height: 0.47;
+  }
+
+  /* 帯は下端操作行の直上に固定します。使用画面だけ注入します。 */
+  .child-band {
+    position: absolute; left: 0.5257; top: 0.7253; width: 0.98; height: 0.10;
+  }
+
+  /* 下端操作行は左右の列セルに分かれます。中身は画面ごとに注入します。 */
+  .child-footer-left {
+    position: absolute; left: 0.0257; top: 0.8653; width: 0.92; height: 0.10;
+  }
+  .child-footer-right {
+    position: absolute; left: 1.0857; top: 0.8653; width: 0.92; height: 0.10;
+  }
+</style>
+
+<section id="child-screen-root" class="screen">
+  <p id="child-title" class="child-title"></p>
+  <p id="setting-description-hover" class="child-description"></p>
+  <div id="child-content" class="child-content"></div>
+  <div id="child-band" class="child-band"></div>
+  <div id="child-footer-left" class="child-footer-left"></div>
+  <div id="child-footer-right" class="child-footer-right"></div>
+</section>

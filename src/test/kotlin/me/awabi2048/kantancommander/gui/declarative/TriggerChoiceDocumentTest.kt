@@ -5,6 +5,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.TriggerConditionDraft
 import me.awabi2048.kantancommander.model.EventTriggerConditions
@@ -33,6 +34,23 @@ class TriggerChoiceDocumentTest {
         arrayOf(BlockData::class.java),
     ) { _, _, _ -> null } as BlockData
 
+    /** 実素材化に Bukkit を要するため、全フィールドをスタブ素材で埋めたテーマです。 */
+    private fun stubTheme(): GestureGuiTheme = GestureGuiTheme(
+        surface = blockData(),
+        accent = blockData(),
+        accentDeep = blockData(),
+        danger = blockData(),
+        back = blockData(),
+        on = blockData(),
+        off = blockData(),
+        outlineSelected = blockData(),
+        outlineSet = blockData(),
+        disabled = blockData(),
+        divider = blockData(),
+        scrim = blockData(),
+        scrimDanger = blockData(),
+    )
+
     private fun data(vararg names: String): TriggerChoiceData = TriggerChoiceData(
         title = Component.text("title"),
         description = Component.text("description"),
@@ -52,9 +70,11 @@ class TriggerChoiceDocumentTest {
 
     @Test
     fun `kind document keeps dispatch element ids`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeTriggers.kindDocument(data("TIMER", "REDSTONE", "EVENT"), panel),
+        val compiled = DeclarativeTriggers.kindCompiled(
+            data("TIMER", "REDSTONE", "EVENT"),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val ids = compiled.elements.map { it.elementId }.toSet()
@@ -96,16 +116,15 @@ class TriggerChoiceDocumentTest {
             "BLOCK_CLICK",
         )
         // 7件は1ページ（2列×4行）へ収まり、ページャは出しません。
-        val single = KantanLayoutBridge.compile(
-            DeclarativeTriggers.eventDocument(
-                data(*names.toTypedArray()).copy(
-                    page = 0,
-                    pagerAvailableBackground = blockData(),
-                    pagerDisabledBackground = blockData(),
-                ),
-                panel,
+        val single = DeclarativeTriggers.eventCompiled(
+            data(*names.toTypedArray()).copy(
+                page = 0,
+                pagerAvailableBackground = blockData(),
+                pagerDisabledBackground = blockData(),
             ),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(single.diagnostics.isEmpty(), "diagnostics: ${single.diagnostics}")
         val singleIds = single.elements.map { it.elementId }.toSet()
@@ -115,34 +134,32 @@ class TriggerChoiceDocumentTest {
 
         // 9件を超えると2ページ目へ繰り越し、下端操作行の左列へページャを置きます。
         val many = (1..10).map { "EVENT_$it" }
-        val first = KantanLayoutBridge.compile(
-            DeclarativeTriggers.eventDocument(
-                data(*many.toTypedArray()).copy(
-                    page = 0,
-                    pagerAvailableBackground = blockData(),
-                    pagerDisabledBackground = blockData(),
-                ),
-                panel,
+        val first = DeclarativeTriggers.eventCompiled(
+            data(*many.toTypedArray()).copy(
+                page = 0,
+                pagerAvailableBackground = blockData(),
+                pagerDisabledBackground = blockData(),
             ),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(first.diagnostics.isEmpty(), "diagnostics: ${first.diagnostics}")
         val firstIds = first.elements.map { it.elementId }.toSet()
         assertEquals(8, firstIds.count { it.startsWith("lower-trigger-event:") })
         assertTrue(firstIds.any { it.startsWith("lower-trigger-event-page:") })
-        val second = KantanLayoutBridge.compile(
-            DeclarativeTriggers.eventDocument(
-                data(*many.toTypedArray()).copy(
-                    options = data(*many.toTypedArray()).options.map {
-                        it.copy(selected = it.key == "EVENT_10")
-                    },
-                    page = 1,
-                    pagerAvailableBackground = blockData(),
-                    pagerDisabledBackground = blockData(),
-                ),
-                panel,
+        val second = DeclarativeTriggers.eventCompiled(
+            data(*many.toTypedArray()).copy(
+                options = data(*many.toTypedArray()).options.map {
+                    it.copy(selected = it.key == "EVENT_10")
+                },
+                page = 1,
+                pagerAvailableBackground = blockData(),
+                pagerDisabledBackground = blockData(),
             ),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(second.diagnostics.isEmpty(), "diagnostics: ${second.diagnostics}")
         val secondIds = second.elements.map { it.elementId }.toSet()

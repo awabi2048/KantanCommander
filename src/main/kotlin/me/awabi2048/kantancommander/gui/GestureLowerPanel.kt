@@ -948,7 +948,7 @@ class GestureLowerPanel(
         val pageCount = ((entries.size + pageSize - 1) / pageSize).coerceAtLeast(1)
         val page = state.tagPage.coerceIn(0, pageCount - 1)
         return finishTagListChild(
-            me.awabi2048.kantancommander.gui.declarative.DeclarativeTagEntries.tagDocument(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTagEntries.tagCompiled(
                 me.awabi2048.kantancommander.gui.declarative.TagListData(
                     title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_ENTRIES)),
                     description = tagListDescription(player),
@@ -1001,6 +1001,7 @@ class GestureLowerPanel(
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                 ),
+                onAction,
             ),
             childScreenId = childScreenId,
         )
@@ -1013,19 +1014,15 @@ class GestureLowerPanel(
                 if (index == 0) Component.text(line) else result.append(Component.newline()).append(Component.text(line))
             }
 
-    /** タグ一覧子画面の宣言区画を解決・変換し、既存の子画面定義へ載せます。 */
+    /** タグ一覧子画面の宣言済み解決結果を、既存の子画面定義へ載せます。 */
     private fun finishTagListChild(
-        document: GestureGuiDocument,
+        compiled: KantanLayoutBridge.Compiled,
         tag: String = "[DeclarativeTagList]",
         childScreenId: String = SETTING_CHILD_SCREEN_ID,
     ): GestureGuiView {
-        val compiled = KantanLayoutBridge.compile(
-            document,
-            onAction,
-            onDiagnostics = { diagnostics ->
-                plugin.logger.fine("[KantanCommander]$tag $diagnostics")
-            },
-        )
+        if (compiled.diagnostics.isNotEmpty()) {
+            plugin.logger.fine("[KantanCommander]$tag ${compiled.diagnostics}")
+        }
         return view(
             GestureLowerMode.SETTING_CHOICES,
             compiled.elements,
@@ -1047,7 +1044,7 @@ class GestureLowerPanel(
             .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SETTINGS_FIELD_FALLBACK) }
         if (entries.isEmpty()) {
             return finishVariablesChild(
-                DeclarativeVariables.variablesDocument(
+                DeclarativeVariables.variablesCompiled(
                     WorldVariablesData(
                         title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TITLE)),
                         description = Component.text(descriptionBody, NamedTextColor.GRAY),
@@ -1065,6 +1062,7 @@ class GestureLowerPanel(
                         backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                         backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                     ),
+                    onAction,
                 ),
                 GestureLowerMode.WORLD_VARIABLES,
                 "[DeclarativeVariables]",
@@ -1079,7 +1077,7 @@ class GestureLowerPanel(
             ?: WorldVariableUsageScanResult(emptyMap(), complete = true)
         val usagesByName = usageScan.usages
         return finishVariablesChild(
-            DeclarativeVariables.variablesDocument(
+            DeclarativeVariables.variablesCompiled(
                 WorldVariablesData(
                     title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TITLE)),
                     description = Component.text(descriptionBody, NamedTextColor.GRAY),
@@ -1136,6 +1134,7 @@ class GestureLowerPanel(
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                 ),
+                onAction,
             ),
             GestureLowerMode.WORLD_VARIABLES,
             "[DeclarativeVariables]",
@@ -1154,6 +1153,14 @@ class GestureLowerPanel(
         return view(mode, compiled.elements, compiled.visuals, child = true)
     }
 
+    /** 宣言済みの解決結果を、そのまま既存の子画面定義へ載せます。 */
+    private fun finishVariablesChild(compiled: KantanLayoutBridge.Compiled, mode: GestureLowerMode, tag: String): GestureGuiView {
+        if (compiled.diagnostics.isNotEmpty()) {
+            plugin.logger.fine("[KantanCommander]$tag ${compiled.diagnostics}")
+        }
+        return view(mode, compiled.elements, compiled.visuals, child = true)
+    }
+
     /** ワールド変数の型選択子画面を生成します（宣言実装）。 */
     fun buildWorldVariableTypeChild(
         state: GestureEditorState,
@@ -1167,7 +1174,7 @@ class GestureLowerPanel(
     private fun buildWorldVariableTypeNew(state: GestureEditorState, player: Player): GestureGuiView {
         val selectedType = state.pendingWorldVariableType
         return finishVariablesChild(
-            DeclarativeVariables.typeDocument(
+            DeclarativeVariables.typeCompiled(
                 WorldVariableTypeData(
                     title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_CREATE_TITLE)),
                     description = Component.text(
@@ -1202,6 +1209,7 @@ class GestureLowerPanel(
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                 ),
+                onAction,
             ),
             GestureLowerMode.WORLD_VARIABLE_TYPE,
             "[DeclarativeValueType]",
@@ -1221,7 +1229,7 @@ class GestureLowerPanel(
         val currentTrigger = script?.effectiveTrigger()
         val current = currentTrigger?.kind
         return finishVariablesChild(
-            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.kindDocument(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.kindCompiled(
                 me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
                     title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER)),
                     description = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY)),
@@ -1239,6 +1247,7 @@ class GestureLowerPanel(
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                 ),
+                onAction,
             ),
             GestureLowerMode.TRIGGER_KIND,
             "[DeclarativeTriggerKind]",
@@ -1265,7 +1274,7 @@ class GestureLowerPanel(
         val returnName = node?.string("returnName").orEmpty()
         val returnScope = node?.string("returnScope").orEmpty().ifBlank { VariableScope.EXECUTION.name }
         return finishVariablesChild(
-            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskCall.settingsDocument(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskCall.settingsCompiled(
                 me.awabi2048.kantancommander.gui.declarative.DiskCallSettingsData(
                     title = Component.text(
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS),
@@ -1323,6 +1332,7 @@ class GestureLowerPanel(
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                 ),
+                onAction,
             ),
             GestureLowerMode.DISK_CALL_SETTINGS,
             "[DeclarativeDiskCall]",
@@ -1348,7 +1358,7 @@ class GestureLowerPanel(
             requestedPage = state.triggerEventPage,
         )
         return finishVariablesChild(
-            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.eventDocument(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.eventCompiled(
                 me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
                     title = Component.text(TriggerDisplay.kindName(player, TriggerKind.EVENT)),
                     description = Component.text(
@@ -1374,6 +1384,7 @@ class GestureLowerPanel(
                     pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
                     pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
                 ),
+                onAction,
             ),
             GestureLowerMode.TRIGGER_EVENT,
             "[DeclarativeTriggerEvent]",
@@ -1705,7 +1716,7 @@ class GestureLowerPanel(
         val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
         val page = state.diskSettingsArgsPage.coerceIn(0, pageCount - 1)
         return finishVariablesChild(
-            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskSettings.settingsDocument(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskSettings.settingsCompiled(
                 me.awabi2048.kantancommander.gui.declarative.DiskSettingsData(
                     title = Component.text(
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS),
@@ -1743,6 +1754,7 @@ class GestureLowerPanel(
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
                 ),
+                onAction,
             ),
             GestureLowerMode.DISK_SETTINGS,
             "[DeclarativeDiskSettings]",
@@ -1765,7 +1777,7 @@ class GestureLowerPanel(
     ): GestureGuiView {
         val name = state.pendingWorldVariableDeleteName.orEmpty()
         return finishVariablesChild(
-            DeclarativeVariables.deleteConfirmDocument(
+            DeclarativeVariables.deleteConfirmCompiled(
                 WorldVariableDeleteData(
                     title = Component.text(
                         KcI18n.text(
@@ -1792,6 +1804,7 @@ class GestureLowerPanel(
                     ),
                     cancelBackground = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
                 ),
+                onAction,
             ),
             GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM,
             "[DeclarativeVariableDelete]",
