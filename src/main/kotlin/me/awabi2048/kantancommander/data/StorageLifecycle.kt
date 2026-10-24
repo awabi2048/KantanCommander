@@ -34,10 +34,10 @@ package me.awabi2048.kantancommander.data
  * structured format の export 互換性は維持します。
  *
  * ## 新 asset の統合
- * Structure（`.nbt`）・Entity Group（JSON 単一正本）はいずれも参照キー
- * （建造物名・群名）で script から参照されます。未参照 asset の検出は
- * [AssetReferenceScanner] で script 群を走査し、各 store の除去関数で回収します。
- * BlockEntity の独自変換・物理挙動などの asset 固有方針は各 store に残します。
+ * Structure（`.nbt`）は建造物名で script から参照されます。未参照 asset の
+ * 検出は [AssetReferenceScanner] で script 群を走査し、store の除去関数で
+ * 回収します。BlockEntity の独自変換・物理挙動などの asset 固有方針は
+ * 各 store に残します。
  */
 object StorageLifecycle {
     /** Player ごとの履歴保持上限です。上限超過は古い方から外します。 */

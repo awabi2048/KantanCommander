@@ -503,13 +503,14 @@ class OperationToolListener(
     }
 
     /**
-     * 左クリックは、選択が完了している場合だけメニュー起動の操作です。
+     * 左クリックはメニュー起動の操作です。
      *
      * AREAモードではブロックへの通常左クリックがpos1設定で、選択完了後の
-     * pos1再指定だけがスニーク+左クリックです。選択が済んでいない間は
-     * メニューを開かず操作案内だけを通知します。例外は、Box編集中の
-     * 左クリック（編集キャンセル）と、未選択時のEntity左クリック
-     * （[onAttack] で対象のタグ一覧をチャットへ出す）です。
+     * pos1再指定だけがスニーク+左クリックです。それ以外の左クリックは
+     * 選択の有無にかかわらずメニューを開き、未選択でも一覧・状態だけを
+     * 表示します。例外は、Box編集中の左クリック（編集キャンセル）と、
+     * 未選択時のEntity左クリック（[onAttack] で対象のタグ一覧をチャットへ
+     * 出す）です。
      */
     private fun onLeftClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
         when (session.mode) {
@@ -518,15 +519,6 @@ class OperationToolListener(
                 // pos1は通常左クリックで指定します。選択済みの再指定だけスニーク+左クリックです。
                 if (block != null && (!session.hasValidArea() || player.isSneaking)) {
                     setPos1(player, session, block)
-                    return
-                }
-                if (!session.hasValidArea()) {
-                    OperationToolFeedback.notifyKey(
-                        player, session,
-                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_AREA_GUIDE,
-                        emptyMap(),
-                        NamedTextColor.YELLOW,
-                    )
                     return
                 }
                 plugin.operationMenu.openArea(player)
