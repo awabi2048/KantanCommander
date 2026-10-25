@@ -185,7 +185,6 @@ class TriggerChoiceDocumentTest {
             ),
             onAction = {},
             panel = panel,
-            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val ids = compiled.elements.map { it.elementId }.toSet()
@@ -240,7 +239,6 @@ class TriggerChoiceDocumentTest {
             data,
             onAction = {},
             panel = panel,
-            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val ids = compiled.elements.map { it.elementId }.toSet()
@@ -272,7 +270,6 @@ class TriggerChoiceDocumentTest {
             data,
             onAction = {},
             panel = panel,
-            theme = stubTheme(),
         )
         val commandNodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
         DeclarativeSettings.tabColumnSection(
@@ -362,7 +359,6 @@ class TriggerChoiceDocumentTest {
             ),
             onAction = {},
             panel = panel,
-            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         assertTrue(compiled.elements.any { it.elementId == "lower-trigger-detail-confirm" })

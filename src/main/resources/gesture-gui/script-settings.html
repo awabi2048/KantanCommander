@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!--
+  プログラム全体設定画面（ノード未選択時）の骨格です。
+
+  案内文言と4枚の設定カードからなります。文言・カードとも内容が実行時に
+  決まるため空の容器だけを持ち、Kotlin 側が KantanLayoutBridge の injections で
+  ノードを注入します。ここには領域の区画・配置だけを記述します。
+
+  旧 buildScriptSettings（絶対座標版）との対応:
+  - 案内文言: 中心 (0, 0.27)（lower-hint、size 0.008・line-width 230）
+  - カード列: 2列×2行（列中心 ±0.48・行中心 0.13 / -0.16、SCRIPT_SETTING_* 系）
+-->
+<style>
+  /* 案内文言は画面の上段へ固定します。 */
+  .script-hint {
+    position: absolute; left: 0; top: 0.20; width: 100%; height: 0.14;
+  }
+
+  /* 設定カードは2列×2行で中段へ置きます。カードは実行時に注入します。 */
+  .script-cards {
+    position: absolute; left: 0; top: 0.30; width: 100%; height: 0.68;
+  }
+</style>
+
+<section id="script-settings-root" class="screen">
+  <div id="script-hint" class="script-hint"></div>
+  <div id="script-cards" class="script-cards"></div>
+</section>

@@ -4,8 +4,6 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
-import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
-import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiThemes
 
 /**
  * 親画面骨格 `gesture-gui/parent-screen.html` の共有組立口です。
@@ -51,6 +49,8 @@ internal object DeclarativeParentScreen {
      *
      * 領域に注入するノードは [regions] の枠を基準に `placed` 変換しておきます。
      * 空の領域は注入しないため、帯や下端操作行は使用画面だけが現れます。
+     * 骨格は環境解決を持たない空容器だけで構成されるため、解析結果は
+     * `compileScaffoldResource` で共有します。
      */
     fun compile(
         tabs: List<GestureGuiNode> = emptyList(),
@@ -61,10 +61,8 @@ internal object DeclarativeParentScreen {
         onAction: (GestureGuiActionContext) -> Unit,
         onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         panel: GestureGuiPanel = GestureGuiPanel(),
-        theme: GestureGuiTheme = GestureGuiThemes.standard(),
-    ): KantanLayoutBridge.Compiled = KantanLayoutBridge.compileHtmlResource(
+    ): KantanLayoutBridge.Compiled = KantanLayoutBridge.compileScaffoldResource(
         resourcePath = RESOURCE_PATH,
-        environment = KantanGuiTheme.environment(theme = theme),
         onAction = onAction,
         onDiagnostics = onDiagnostics,
         panel = panel,

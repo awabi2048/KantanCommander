@@ -5,6 +5,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.html.GestureGuiHtmlEnvironment
+import com.awabi2048.ccsystem.api.gesturegui.html.GestureGuiHtmlResult
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutFacade
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiColumn
@@ -16,6 +17,7 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiOverlay
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiRow
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiViewport
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 宣言文書から低レベル表示・操作面への共通橋渡しです。
@@ -166,6 +168,89 @@ object KantanLayoutBridge {
             visuals = compiled.view.visuals,
             diagnostics = diagnostics,
         )
+    }
+
+    /**
+     * 注入容器だけを持つ骨格リソースを、解析キャッシュ付きで解決・変換します。
+     *
+     * 文言・素材を環境解決する要素（`<p>` / `<button>` 等）を持たず、ID 付きの
+     * 空容器だけを持つ骨格に限ります。解析結果は環境に依存しない不変文書となるため、
+     * (resourcePath, panel) で共有し、頻繁な再生成（毎tickの状態画面等）でも
+     * 解析コストを重ねません。環境解決を持つ骨格は [compileHtmlResource] を使います。
+     */
+    fun compileScaffoldResource(
+        resourcePath: String,
+        injections: Map<String, List<GestureGuiNode>>,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+    ): Compiled {
+        val documentName = resourcePath.substringAfterLast('/')
+        val parsed = scaffoldParseCache.getOrPut(resourcePath to panel) {
+            GestureGuiLayoutFacade.parseHtmlResource(
+                resourcePath,
+                KantanLayoutBridge::class.java.classLoader,
+                scaffoldEnvironment,
+                documentName,
+                panel,
+            )
+        }
+        val document = injections.entries.fold(parsed.document) { doc, (containerId, children) ->
+            withChildrenInjected(doc, containerId, children)
+        }
+        val actions = collectActions(document.root)
+        val resolved = GestureGuiLayoutFacade.layout(
+            document,
+            knownActionIds = actions,
+            source = documentName,
+        )
+        val compiled = GestureGuiLayoutFacade.compile(
+            resolved,
+            screenId = "kantan-html-bridge",
+            actionHandlers = actions.associateWith { onAction },
+            source = documentName,
+        )
+        val diagnostics = (parsed.diagnostics + compiled.diagnostics).distinct()
+        if (diagnostics.isNotEmpty()) onDiagnostics(diagnostics)
+        return Compiled(
+            elements = compiled.view.definition.elements,
+            visuals = compiled.view.visuals,
+            diagnostics = diagnostics,
+        )
+    }
+
+    /** 環境非依存骨格の解析結果です。文書は不変のためそのまま共有できます。 */
+    private val scaffoldParseCache = ConcurrentHashMap<Pair<String, GestureGuiPanel>, GestureGuiHtmlResult>()
+
+    /**
+     * 容器のみ骨格の解析用環境です。
+     *
+     * `<div>`・`<section>` の容器と位置指定だけを持つ骨格は、解析時に素材・
+     * 文言・文字サイズの解決を行いません。到達しない解決口は骨格の契約違反と
+     * してエラーにし、Bukkit 非稼働の単体テストでも解析を共有できるようにします。
+     * 文言・hover・可否の既定はインターフェース既定（素の文言・なし・許可）です。
+     */
+    private val scaffoldEnvironment = object : GestureGuiHtmlEnvironment {
+        private fun unsupported(id: String?): Nothing =
+            error("容器のみ骨格へ環境解決要素は定義できません: ${id ?: "(無名)"}")
+
+        override fun buttonBackground(background: String?, classes: Set<String>, id: String?): org.bukkit.block.data.BlockData =
+            unsupported(id)
+
+        override fun containerBackground(background: String, classes: Set<String>, id: String?): org.bukkit.block.data.BlockData? =
+            unsupported(id)
+
+        override fun outlineBlock(classes: Set<String>, id: String?): org.bukkit.block.data.BlockData? =
+            unsupported(id)
+
+        override fun blockData(material: String, classes: Set<String>, id: String?): org.bukkit.block.data.BlockData =
+            unsupported(id)
+
+        override fun itemStack(reference: String, classes: Set<String>, id: String?): org.bukkit.inventory.ItemStack =
+            unsupported(id)
+
+        override fun textSize(tag: String, classes: Set<String>, id: String?): Double =
+            unsupported(id)
     }
 
     /**

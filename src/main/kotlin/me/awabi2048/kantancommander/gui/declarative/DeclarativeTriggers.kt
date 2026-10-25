@@ -100,7 +100,6 @@ object DeclarativeTriggers {
         onAction: (GestureGuiActionContext) -> Unit,
         onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         panel: GestureGuiPanel = GestureGuiPanel(),
-        theme: GestureGuiTheme = GestureGuiThemes.standard(),
     ): KantanLayoutBridge.Compiled {
         val regions = DeclarativeParentScreen.regions(panel)
         val tabs = mutableListOf<GestureGuiNode>()
@@ -173,7 +172,6 @@ object DeclarativeTriggers {
             onAction = onAction,
             onDiagnostics = onDiagnostics,
             panel = panel,
-            theme = theme,
         )
     }
 

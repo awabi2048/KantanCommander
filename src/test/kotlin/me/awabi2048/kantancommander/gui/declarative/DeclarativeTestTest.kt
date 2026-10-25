@@ -24,30 +24,28 @@ class DeclarativeTestTest {
 
     @Test
     fun `test confirmation preserves toggles and actions`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeTest.confirmDocument(
-                TestConfirmData(
-                    title = Component.text("title"),
-                    description = Component.text("desc", NamedTextColor.GRAY),
-                    toggles = listOf(
-                        TestToggleData(
-                            id = "test-confirm-debug",
-                            label = Component.text("debug on", NamedTextColor.GREEN),
-                            background = blockData(),
-                            centerY = 0.13,
-                        ),
-                        TestToggleData(
-                            id = "test-confirm-log",
-                            label = Component.text("log off", NamedTextColor.GRAY),
-                            background = blockData(),
-                            centerY = -0.02,
-                        ),
+        val compiled = DeclarativeTest.confirmCompiled(
+            TestConfirmData(
+                title = Component.text("title"),
+                description = Component.text("desc", NamedTextColor.GRAY),
+                toggles = listOf(
+                    TestToggleData(
+                        id = "test-confirm-debug",
+                        label = Component.text("debug on", NamedTextColor.GREEN),
+                        background = blockData(),
+                        centerY = 0.13,
                     ),
-                    startLabel = Component.text("start"),
-                    startBackground = blockData(),
-                    cancelLabel = Component.text("cancel"),
-                    cancelBackground = blockData(),
+                    TestToggleData(
+                        id = "test-confirm-log",
+                        label = Component.text("log off", NamedTextColor.GRAY),
+                        background = blockData(),
+                        centerY = -0.02,
+                    ),
                 ),
+                startLabel = Component.text("start"),
+                startBackground = blockData(),
+                cancelLabel = Component.text("cancel"),
+                cancelBackground = blockData(),
             ),
             onAction = {},
         )
@@ -68,16 +66,14 @@ class DeclarativeTestTest {
 
     @Test
     fun `test status has no interactions`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeTest.statusDocument(
-                title = Component.text("title"),
-                rows = listOf(
-                    CenteredLine("test-status-elapsed", Component.text("elapsed 0"), 0.21),
-                    CenteredLine("test-status-count", Component.text("count 0"), 0.00),
-                    CenteredLine("test-status-log", Component.text("log on"), -0.21),
-                ),
-                hint = Component.text("hint", NamedTextColor.GRAY),
+        val compiled = DeclarativeTest.statusCompiled(
+            title = Component.text("title"),
+            rows = listOf(
+                CenteredLine("test-status-elapsed", Component.text("elapsed 0"), 0.21),
+                CenteredLine("test-status-count", Component.text("count 0"), 0.00),
+                CenteredLine("test-status-log", Component.text("log on"), -0.21),
             ),
+            hint = Component.text("hint", NamedTextColor.GRAY),
             onAction = {},
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
@@ -88,20 +84,18 @@ class DeclarativeTestTest {
 
     @Test
     fun `test result preserves rows and complete action`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeTest.resultDocument(
-                title = Component.text("title"),
-                rows = listOf(
-                    CenteredLine("test-result-duration", Component.text("duration 0"), 0.22),
-                    CenteredLine("test-result-wait", Component.text("wait 0"), 0.09),
-                    CenteredLine("test-result-real", Component.text("real 0"), -0.02),
-                    CenteredLine("test-result-count", Component.text("count 1"), -0.15),
-                    CenteredLine("test-result-status", Component.text("ok", NamedTextColor.GREEN), -0.28),
-                    CenteredLine("test-result-cause", Component.text("cause"), -0.40),
-                ),
-                completeLabel = Component.text("done"),
-                completeBackground = blockData(),
+        val compiled = DeclarativeTest.resultCompiled(
+            title = Component.text("title"),
+            rows = listOf(
+                CenteredLine("test-result-duration", Component.text("duration 0"), 0.22),
+                CenteredLine("test-result-wait", Component.text("wait 0"), 0.09),
+                CenteredLine("test-result-real", Component.text("real 0"), -0.02),
+                CenteredLine("test-result-count", Component.text("count 1"), -0.15),
+                CenteredLine("test-result-status", Component.text("ok", NamedTextColor.GREEN), -0.28),
+                CenteredLine("test-result-cause", Component.text("cause"), -0.40),
             ),
+            completeLabel = Component.text("done"),
+            completeBackground = blockData(),
             onAction = {},
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")

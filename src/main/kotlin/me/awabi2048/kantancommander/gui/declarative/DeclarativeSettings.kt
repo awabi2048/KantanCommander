@@ -411,7 +411,7 @@ object DeclarativeSettings {
         )
     }
 
-    /** 設定項目なしの案内文を配置します。固定操作は tabsSection 側で配置します。 */
+    /** 案内文を配置します。固定操作は tabsSection 側で配置します。 */
     fun hintSection(
         nodes: MutableList<GestureGuiNode>,
         frame: ContentFrame,
@@ -419,13 +419,15 @@ object DeclarativeSettings {
         x: Double = GestureChoicePane.PARENT.centerX,
         y: Double = 0.20,
         id: String = "lower-hint",
+        size: Double = 0.010,
+        lineWidth: Int = 160,
     ) {
         nodes += GestureGuiText(
             text = hint,
             // タブ列以外は補完なしで即時反映します。
             interpolationTicks = 0,
-            size = 0.010,
-            lineWidth = 160,
+            size = size,
+            lineWidth = lineWidth,
             alignment = GestureGuiTextAlignment.CENTER,
             id = id,
             width = GestureGuiSizeSpec.Fixed(1.0),
@@ -905,30 +907,6 @@ object DeclarativeSettings {
             hover = card.attentionHover?.let(::hoverSpecOf),
             absolute = placed(frame, card.cx, card.cy, card.w, SCRIPT_CARD_HEIGHT),
         )
-    }
-
-    /** プログラム全体設定画面の文書です。案内文言と4枚のカードからなります。 */
-    fun scriptSettingsDocument(
-        hint: Component,
-        cards: List<ScriptSettingCard>,
-        panel: GestureGuiPanel = GestureGuiPanel(),
-    ): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = hint,
-            interpolationTicks = 0,
-            size = 0.008,
-            lineWidth = 230,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "lower-hint",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            // 予約箱の中心がアンカーになるよう高さを明示します。
-            height = GestureGuiSizeSpec.Fixed(0.04),
-            absolute = placed(frame, 0.0, 0.27, 1.0, 0.04),
-        )
-        cards.forEach { scriptSettingSection(nodes, frame, it) }
-        return document(nodes, panel)
     }
 
     fun document(nodes: List<GestureGuiNode>, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =

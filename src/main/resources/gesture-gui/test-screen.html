@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!--
+  テスト実行系画面（開始確認・実行状態・結果）の共通骨格です。
+
+  中央1列の画面構成で、見出し・本文行・下端操作行の区画だけを持ち、
+  文言・切替カード・状態行・操作ボタンは実行時に注入します。
+
+  旧 buildTestConfirmation／buildTestStatus／buildTestResult（絶対座標版）との対応:
+  - 見出し: タイトル 0.34〜0.39・説明 0.25 の帯（中央揃えの文言行）
+  - 本文: 切替カード・状態行・結果行（中央揃え、行ごとの中心座標は旧実装のまま）
+  - 下端操作行: 開始・取消・実行中案内・完了ボタン（-0.34 〜 -0.48 周辺）
+-->
+<style>
+  /* 見出しは画面上部の中央揃え文言帯です。 */
+  .test-header {
+    position: absolute; left: 0; top: 0.08; width: 100%; height: 0.24;
+  }
+
+  /* 本文は切替カード・状態行・結果行を置く中段です。 */
+  .test-content {
+    position: absolute; left: 0; top: 0.30; width: 100%; height: 0.62;
+  }
+
+  /* 下端操作行は開始・取消・案内・完了ボタンを置く帯です。 */
+  .test-footer {
+    position: absolute; left: 0; top: 0.62; width: 100%; height: 0.38;
+  }
+</style>
+
+<section id="test-screen-root" class="screen">
+  <div id="test-header" class="test-header"></div>
+  <div id="test-content" class="test-content"></div>
+  <div id="test-footer" class="test-footer"></div>
+</section>

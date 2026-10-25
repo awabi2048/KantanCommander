@@ -1,8 +1,9 @@
 package me.awabi2048.kantancommander.gui.declarative
 
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
@@ -40,7 +41,8 @@ data class TestConfirmData(
 )
 
 /**
- * テスト系子画面の宣言区画です。
+ * テスト系画面の宣言区画です。骨格 `gesture-gui/test-screen.html` の
+ * 「見出し・本文・下端操作行」領域へ、行文言と操作カードを注入して構築します。
  *
  * 旧 `buildTestConfirmation` 系の座標・寸法・素材・要素 ID をそのまま転記します。
  * ガード・ホバー・枠は旧実装になく、操作面は受付集合のみです。
@@ -61,16 +63,51 @@ object DeclarativeTest {
             absolute = placed(frame, 0.0, line.y, 1.0, line.size * 3.0),
         )
 
-    fun confirmDocument(data: TestConfirmData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += centered(frame, CenteredLine("test-confirm-title", data.title, 0.34, 0.008, 220))
-        nodes += centered(frame, CenteredLine("test-confirm-description", data.description, 0.25, 0.0045, 230))
+    private fun actionCard(
+        elementId: String,
+        label: Component,
+        background: BlockData,
+        cx: Double,
+        cy: Double,
+        w: Double,
+        h: Double,
+        labelSize: Double,
+        labelWidth: Int,
+        visualTag: String,
+    ): SettingsActionCard = SettingsActionCard(
+        elementId = elementId,
+        label = label,
+        background = background,
+        cx = cx,
+        cy = cy,
+        w = w,
+        h = h,
+        labelSize = labelSize,
+        labelWidth = labelWidth,
+        gestures = GestureGuiClickPolicy.CLICK,
+        guard = null,
+        hover = null,
+        visualTag = visualTag,
+    )
+
+    /** テスト開始確認画面を骨格へ注入して解決・変換します。 */
+    fun confirmCompiled(
+        data: TestConfirmData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeTestScreen.regions(panel)
+        val header = mutableListOf(
+            centered(regions.header, CenteredLine("test-confirm-title", data.title, 0.34, 0.008, 220)),
+            centered(regions.header, CenteredLine("test-confirm-description", data.description, 0.25, 0.0045, 230)),
+        )
+        val content = mutableListOf<GestureGuiNode>()
         data.toggles.forEach { toggle ->
             DeclarativeSettings.actionCardSection(
-                nodes,
-                frame,
-                SettingsActionCard(
+                content,
+                regions.content,
+                actionCard(
                     elementId = toggle.id,
                     label = toggle.label,
                     background = toggle.background,
@@ -80,17 +117,15 @@ object DeclarativeTest {
                     h = 0.12,
                     labelSize = 0.0055,
                     labelWidth = 230,
-                    gestures = GestureGuiClickPolicy.CLICK,
-                    guard = null,
-                    hover = null,
                     visualTag = toggle.id,
                 ),
             )
         }
+        val footer = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
-            SettingsActionCard(
+            footer,
+            regions.footer,
+            actionCard(
                 elementId = "test-confirm-start",
                 label = data.startLabel,
                 background = data.startBackground,
@@ -100,16 +135,13 @@ object DeclarativeTest {
                 h = 0.12,
                 labelSize = 0.005,
                 labelWidth = 100,
-                gestures = GestureGuiClickPolicy.CLICK,
-                guard = null,
-                hover = null,
                 visualTag = "test-confirm-start",
             ),
         )
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
-            SettingsActionCard(
+            footer,
+            regions.footer,
+            actionCard(
                 elementId = "test-confirm-cancel",
                 label = data.cancelLabel,
                 background = data.cancelBackground,
@@ -119,44 +151,66 @@ object DeclarativeTest {
                 h = 0.12,
                 labelSize = 0.005,
                 labelWidth = 100,
-                gestures = GestureGuiClickPolicy.CLICK,
-                guard = null,
-                hover = null,
                 visualTag = "test-confirm-cancel",
             ),
         )
-        return DeclarativeSettings.document(nodes, panel)
+        return DeclarativeTestScreen.compile(
+            header = header,
+            content = content,
+            footer = footer,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+        )
     }
 
-    fun statusDocument(
+    /** 実行状態画面を骨格へ注入して解決・変換します。毎tickの再生成を前提にします。 */
+    fun statusCompiled(
         title: Component,
         rows: List<CenteredLine>,
         hint: Component,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         panel: GestureGuiPanel = GestureGuiPanel(),
-    ): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += centered(frame, CenteredLine("test-status-title", title, 0.39, 0.007, 220))
-        rows.forEach { nodes += centered(frame, it) }
-        nodes += centered(frame, CenteredLine("test-status-hint", hint, -0.42, 0.0042, 220))
-        return DeclarativeSettings.document(nodes, panel)
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeTestScreen.regions(panel)
+        val header = mutableListOf(
+            centered(regions.header, CenteredLine("test-status-title", title, 0.39, 0.007, 220)),
+        )
+        val content = rows.map { centered(regions.content, it) }
+        val footer = mutableListOf(
+            centered(regions.footer, CenteredLine("test-status-hint", hint, -0.42, 0.0042, 220)),
+        )
+        return DeclarativeTestScreen.compile(
+            header = header,
+            content = content,
+            footer = footer,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+        )
     }
 
-    fun resultDocument(
+    /** 結果画面を骨格へ注入して解決・変換します。 */
+    fun resultCompiled(
         title: Component,
         rows: List<CenteredLine>,
         completeLabel: Component,
         completeBackground: BlockData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         panel: GestureGuiPanel = GestureGuiPanel(),
-    ): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += centered(frame, CenteredLine("test-result-title", title, 0.39, 0.008, 220))
-        rows.forEach { nodes += centered(frame, it) }
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeTestScreen.regions(panel)
+        val header = mutableListOf(
+            centered(regions.header, CenteredLine("test-result-title", title, 0.39, 0.008, 220)),
+        )
+        val content = rows.map { centered(regions.content, it) }
+        val footer = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
-            SettingsActionCard(
+            footer,
+            regions.footer,
+            actionCard(
                 elementId = "test-result-complete",
                 label = completeLabel,
                 background = completeBackground,
@@ -166,12 +220,16 @@ object DeclarativeTest {
                 h = 0.10,
                 labelSize = 0.005,
                 labelWidth = 120,
-                gestures = GestureGuiClickPolicy.CLICK,
-                guard = null,
-                hover = null,
                 visualTag = "test-result-complete",
             ),
         )
-        return DeclarativeSettings.document(nodes, panel)
+        return DeclarativeTestScreen.compile(
+            header = header,
+            content = content,
+            footer = footer,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+        )
     }
 }

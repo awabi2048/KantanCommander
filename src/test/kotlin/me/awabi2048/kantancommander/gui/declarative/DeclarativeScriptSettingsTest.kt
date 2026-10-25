@@ -53,18 +53,29 @@ class DeclarativeScriptSettingsTest {
 
     @Test
     fun `script cards keep dispatch element ids`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeSettings.scriptSettingsDocument(
-                Component.text("hint"),
-                listOf(
-                    card("lower-script-name", -0.48, 0.13, null),
-                    card("lower-script-timer", 0.48, 0.13, "unset"),
-                    card("lower-script-variables", -0.48, -0.16, null),
-                    card("lower-script-disk", 0.48, -0.16, null, guard = { _, _ -> true }),
-                ),
-                panel,
-            ),
+        val regions = DeclarativeScriptSettings.regions(panel)
+        val hintNodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
+        DeclarativeSettings.hintSection(
+            hintNodes,
+            regions.hint,
+            Component.text("hint"),
+            x = 0.0,
+            y = 0.27,
+            size = 0.008,
+            lineWidth = 230,
+        )
+        val cardNodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
+        listOf(
+            card("lower-script-name", -0.48, 0.13, null),
+            card("lower-script-timer", 0.48, 0.13, "unset"),
+            card("lower-script-variables", -0.48, -0.16, null),
+            card("lower-script-disk", 0.48, -0.16, null, guard = { _, _ -> true }),
+        ).forEach { DeclarativeSettings.scriptSettingSection(cardNodes, regions.cards, it) }
+        val compiled = DeclarativeScriptSettings.compile(
+            hint = hintNodes,
+            cards = cardNodes,
             onAction = {},
+            panel = panel,
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val elements = compiled.elements.associateBy { it.elementId }
