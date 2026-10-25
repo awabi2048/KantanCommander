@@ -3,7 +3,6 @@ package me.awabi2048.kantancommander.gui.declarative
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
@@ -88,13 +87,26 @@ object DeclarativeTriggers {
     ): KantanLayoutBridge.Compiled =
         choiceCompiled(data, "trigger-event", "trigger-event", onAction, onDiagnostics, panel, theme)
 
-    /** イベント詳細の左列は、一般コマンド設定が実際に使うタブ列で描画します。 */
-    fun detailDocument(data: TriggerDetailData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
+    /**
+     * イベント詳細の子画面を親画面骨格へ注入して組み立てます。
+     *
+     * 左列は一般コマンド設定と同じタブ列（実行位置行なし）で描画し、
+     * 戻る操作もタブ列の下端へ置きます。見出し・現在値・候補カード・確定は
+     * 右ペインの各区画へ注入します。要素 ID・操作域・ホバー契約は旧実装から
+     * 変えません。
+     */
+    fun detailCompiled(
+        data: TriggerDetailData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeParentScreen.regions(panel)
+        val tabs = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.tabColumnSection(
-            nodes,
-            frame,
+            tabs,
+            regions.tabs,
             tabs = data.tabs.mapIndexed { index, tab ->
                 val selected = index == data.selectedTab
                 SettingsTabEntry(
@@ -108,23 +120,35 @@ object DeclarativeTriggers {
                 )
             },
         )
+        // 戻る操作はタブ列の下端です。
+        DeclarativeSettings.backSection(
+            tabs,
+            regions.tabs,
+            label = data.backLabel,
+            background = data.backBackground,
+            centerX = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+            width = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+        )
+        val header = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
+            header,
+            regions.header,
             body = data.description,
             detail = data.descriptionDetail,
             centerX = GestureChoicePane.PARENT.centerX,
             hoverY = GestureLowerPanel.ACTION_DESCRIPTION_Y,
         )
         DeclarativeSettings.valueRowsSection(
-            nodes,
-            frame,
+            header,
+            regions.header,
             rows = listOf(SettingsValueRow("trigger-detail-event", data.eventLabel, data.eventName, GestureLowerPanel.SETTING_VALUE_ANCHOR_Y)) + data.values,
         )
-        DeclarativeSettings.choiceCardsSection(nodes, frame, data.choices)
+        val content = mutableListOf<GestureGuiNode>()
+        DeclarativeSettings.choiceCardsSection(content, regions.content, data.choices)
+        val footer = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footer,
+            regions.footer,
             SettingsActionCard(
                 elementId = "lower-trigger-detail-confirm",
                 label = data.confirmLabel,
@@ -141,15 +165,16 @@ object DeclarativeTriggers {
                 visualTag = "trigger-detail-confirm",
             ),
         )
-        DeclarativeSettings.backSection(
-            nodes,
-            frame,
-            label = data.backLabel,
-            background = data.backBackground,
-            centerX = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-            width = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+        return DeclarativeParentScreen.compile(
+            tabs = tabs,
+            header = header,
+            content = content,
+            footer = footer,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
         )
-        return DeclarativeSettings.document(nodes, panel)
     }
 
     /**

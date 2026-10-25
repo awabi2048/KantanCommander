@@ -81,13 +81,14 @@ object DeclarativeTagEntries {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "tag-list-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
+                // 予約箱の中心がアンカーになるよう高さを明示します。
+                height = GestureGuiSizeSpec.Fixed(0.03),
                 absolute = placed(
                     regions.content,
                     0.0,
                     GestureSettingChildLayoutPolicy.TOP_CHOICE_Y,
                     1.0,
-                    0.0052 * 3.0,
+                    0.03,
                 ),
             )
         } else {

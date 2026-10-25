@@ -1302,7 +1302,7 @@ class GestureLowerPanel(
         }
             ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
         return finishVariablesChild(
-            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.detailDocument(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.detailCompiled(
                 me.awabi2048.kantancommander.gui.declarative.TriggerDetailData(
                     eventLabel = TriggerDisplay.kindName(player, TriggerKind.EVENT),
                     eventName = Component.text(TriggerDisplay.eventName(player, event)),
@@ -1327,6 +1327,7 @@ class GestureLowerPanel(
                         suppressHighlight = false,
                     ),
                 ),
+                onAction,
             ),
             GestureLowerMode.TRIGGER_DETAIL,
             "[DeclarativeTriggerDetail]",
@@ -1528,7 +1529,9 @@ class GestureLowerPanel(
             id = "trigger-detail-value",
             label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE),
             value = Component.text(value),
-            y = SETTING_VALUE_ANCHOR_Y - 0.105,
+            // イベント行(0.27)と詳細案内(SETTING_DETAIL_ANCHOR_Y=0.17)の間へ置きます。
+            // 旧位置(0.165)は詳細案内の予約領域と食い込み、行どうしが重なっていました。
+            y = SETTING_VALUE_ANCHOR_Y - 0.055,
         )
     }
 

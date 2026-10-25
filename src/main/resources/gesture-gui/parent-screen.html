@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!--
+  親画面の共通骨格（左タブ列＋右ペイン）です。
+
+  件数・内容が実行時に決まる部分（タブ・見出し行・候補・入力カード・ページャ・
+  操作ボタン）は空の容器だけを持ち、Kotlin 側が KantanLayoutBridge の injections で
+  ノードを注入します。ここには領域の区画・配置だけを記述します。
+
+  旧 buildSettings／buildSettingChoicesParent 系（絶対座標版）との対応:
+  - タブ列: 左端から幅0.50・全高（SETTINGS_TAB_CENTER_X=-0.7975 を覆う列）
+  - 見出し: 右ペイン上部（説明・詳細案内・現在値行）
+  - 本文: 右ペイン中段（上端は先頭候補行の上端 0.14）
+  - 帯: 中心 (0.285, -0.29)・高 0.12（下揃え候補行、pagerBandY と同じ高さ）
+  - 下端操作行: 右ペイン下端（ページャ・戻る・確定、BACK_Y=-0.43 周辺）
+  注入ノードは従来の画面座標（列中心・行位置）のまま渡し、領域の枠が
+  オフセット変換だけを担います。領域枠からのはみ出しは診断対象外です。
+-->
+<style>
+  /* 左タブ列は全高を覆います。複製・削除・実行位置・戻るもこの列の下端です。 */
+  .parent-tabs {
+    position: absolute; left: 0; top: 0; width: 0.50; height: 0.98;
+  }
+
+  /* 見出しは右ペイン上部へ固定します（常設説明・詳細案内・現在値行）。 */
+  .parent-header {
+    position: absolute; left: 0.55; top: 0; width: 1.28; height: 0.44;
+  }
+
+  /* 本文領域は候補カード・入力カード・境界線を置く中段です。 */
+  .parent-content {
+    position: absolute; left: 0.55; top: 0.3453; width: 1.28; height: 0.40;
+  }
+
+  /* 帯は下端操作行の直上に固定します（下揃え候補行）。使用画面だけ注入します。 */
+  .parent-band {
+    position: absolute; left: 0.55; top: 0.7253; width: 1.28; height: 0.12;
+  }
+
+  /* 下端操作行は右ペイン下端へ固定します（ページャ・戻る・確定）。 */
+  .parent-footer {
+    position: absolute; left: 0.55; top: 0.8453; width: 1.28; height: 0.15;
+  }
+</style>
+
+<section id="parent-screen-root" class="screen">
+  <div id="parent-tabs" class="parent-tabs"></div>
+  <div id="parent-header" class="parent-header"></div>
+  <div id="parent-content" class="parent-content"></div>
+  <div id="parent-band" class="parent-band"></div>
+  <div id="parent-footer" class="parent-footer"></div>
+</section>

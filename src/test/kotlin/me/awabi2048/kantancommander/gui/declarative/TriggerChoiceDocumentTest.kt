@@ -1,11 +1,7 @@
 package me.awabi2048.kantancommander.gui.declarative
 
-import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.gui.GestureLowerPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiOverlay
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.TriggerConditionDraft
@@ -16,7 +12,6 @@ import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Proxy
@@ -171,27 +166,26 @@ class TriggerChoiceDocumentTest {
 
     @Test
     fun `detail screen exposes confirm back and command target tabs`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeTriggers.detailDocument(
-                TriggerDetailData(
-                    eventLabel = "event",
-                    eventName = Component.text("block break"),
-                    description = Component.text("description"),
-                    confirmLabel = Component.text("confirm"),
-                    backLabel = Component.text("back"),
-                    tabBackground = blockData(),
-                    selectedTabBackground = blockData(),
-                    confirmBackground = blockData(),
-                    backBackground = blockData(),
-                    tabs = listOf(
-                        TriggerDetailTab("PLAYER_FILTER", Component.text("player filter")),
-                        TriggerDetailTab("TARGET", Component.text("target")),
-                    ),
-                    selectedTab = 1,
+        val compiled = DeclarativeTriggers.detailCompiled(
+            TriggerDetailData(
+                eventLabel = "event",
+                eventName = Component.text("block break"),
+                description = Component.text("description"),
+                confirmLabel = Component.text("confirm"),
+                backLabel = Component.text("back"),
+                tabBackground = blockData(),
+                selectedTabBackground = blockData(),
+                confirmBackground = blockData(),
+                backBackground = blockData(),
+                tabs = listOf(
+                    TriggerDetailTab("PLAYER_FILTER", Component.text("player filter")),
+                    TriggerDetailTab("TARGET", Component.text("target")),
                 ),
-                panel,
+                selectedTab = 1,
             ),
             onAction = {},
+            panel = panel,
+            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val ids = compiled.elements.map { it.elementId }.toSet()
@@ -242,7 +236,12 @@ class TriggerChoiceDocumentTest {
                 ),
             ),
         )
-        val compiled = KantanLayoutBridge.compile(DeclarativeTriggers.detailDocument(data, panel), onAction = {})
+        val compiled = DeclarativeTriggers.detailCompiled(
+            data,
+            onAction = {},
+            panel = panel,
+            theme = stubTheme(),
+        )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val ids = compiled.elements.map { it.elementId }.toSet()
         assertTrue("lower-setting-choice:trigger-operation:any" in ids)
@@ -269,7 +268,12 @@ class TriggerChoiceDocumentTest {
             ),
             selectedTab = 1,
         )
-        val detailNodes = (DeclarativeTriggers.detailDocument(data, panel).root as GestureGuiBox).children
+        val detail = DeclarativeTriggers.detailCompiled(
+            data,
+            onAction = {},
+            panel = panel,
+            theme = stubTheme(),
+        )
         val commandNodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
         DeclarativeSettings.tabColumnSection(
             commandNodes,
@@ -279,26 +283,88 @@ class TriggerChoiceDocumentTest {
                 SettingsTabEntry(Component.text("target"), true, null, selectedBackground),
             ),
         )
-        // タブは操作面＋背景＋文言のOverlay構造です。操作面の配置・寸法はコマンド設定と一致させ、
-        // 背景・文言は子ノードとして比較します。
-        val detailTabs = detailNodes.filterIsInstance<GestureGuiOverlay>()
-            .filter { it.id?.startsWith("lower-trigger-detail-tab:") == true }
-        val commandTabs = commandNodes.filterIsInstance<GestureGuiOverlay>()
-        assertEquals(2, detailTabs.size)
-        detailTabs.zip(commandTabs).forEach { (detail, command) ->
-            assertEquals(command.absolute, detail.absolute)
-            assertEquals(command.width, detail.width)
-            assertEquals(command.height, detail.height)
-            val detailBg = detail.children.filterIsInstance<GestureGuiBlock>().single()
-            val commandBg = command.children.filterIsInstance<GestureGuiBlock>().single()
-            assertSame(commandBg.blockData, detailBg.blockData)
-            assertNull(detailBg.outline)
-            val detailLabel = detail.children.filterIsInstance<GestureGuiText>().single()
-            val commandLabel = command.children.filterIsInstance<GestureGuiText>().single()
-            assertEquals(commandLabel.absolute, detailLabel.absolute)
-            assertEquals(commandLabel.size, detailLabel.size)
-            assertEquals(commandLabel.width, detailLabel.width)
+        val command = KantanLayoutBridge.compile(DeclarativeSettings.document(commandNodes, panel), onAction = {})
+        assertTrue(detail.diagnostics.isEmpty(), "diagnostics: ${detail.diagnostics}")
+        // タブは操作面＋背景＋文言のOverlay構造です。操作域・背景・文言の位置は
+        // コマンド設定のタブ列と一致させます（タブ順は上からのためY降順で対応付けます）。
+        val detailTabs = listOf("PLAYER_FILTER", "TARGET").map { key ->
+            detail.elements.first { it.elementId == "lower-trigger-detail-tab:$key" }
         }
-        assertTrue(detailNodes.none { it.id == "lower-delete" || it.id == "lower-duplicate" })
+        val commandTabs = listOf("lower-tab:0", "lower-tab:1").map { id ->
+            command.elements.first { it.elementId == id }
+        }
+        detailTabs.zip(commandTabs).forEach { (detailTab, commandTab) ->
+            assertEquals(commandTab.bounds.minX, detailTab.bounds.minX, 1.0e-9)
+            assertEquals(commandTab.bounds.maxX, detailTab.bounds.maxX, 1.0e-9)
+            assertEquals(commandTab.bounds.minY, detailTab.bounds.minY, 1.0e-9)
+            assertEquals(commandTab.bounds.maxY, detailTab.bounds.maxY, 1.0e-9)
+        }
+        val detailBgs = detail.visuals.filterIsInstance<com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual.Block>()
+            .filter { it.visualId.contains("trigger-detail-tab:") && it.visualId.endsWith("-bg") }
+            .sortedByDescending { it.y }
+        val commandBgs = command.visuals.filterIsInstance<com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual.Block>()
+            .filter { it.visualId.contains("lower-tab:") && it.visualId.endsWith("-bg") }
+            .sortedByDescending { it.y }
+        assertEquals(2, detailBgs.size)
+        detailBgs.zip(commandBgs).forEach { (detailBg, commandBg) ->
+            assertEquals(commandBg.x, detailBg.x, 1.0e-9)
+            assertEquals(commandBg.y, detailBg.y, 1.0e-9)
+            assertEquals(commandBg.width, detailBg.width, 1.0e-9)
+            assertEquals(commandBg.height, detailBg.height, 1.0e-9)
+            assertNull(detailBg.outline)
+        }
+        val detailLabels = detail.visuals.filterIsInstance<com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual.Text>()
+            .filter { it.visualId.contains("trigger-detail-tab:") }
+            .sortedByDescending { it.y }
+        val commandLabels = command.visuals.filterIsInstance<com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual.Text>()
+            .filter { it.visualId.contains("visual-tab-") }
+            .sortedByDescending { it.y }
+        detailLabels.zip(commandLabels).forEach { (detailLabel, commandLabel) ->
+            assertEquals(commandLabel.x, detailLabel.x, 1.0e-9)
+            assertEquals(commandLabel.y, detailLabel.y, 1.0e-9)
+        }
+        assertEquals(2, detailLabels.size)
+        assertTrue(detail.elements.none { it.elementId == "lower-delete" || it.elementId == "lower-duplicate" })
+    }
+
+    @Test
+    fun `detail screen keeps value row and detail hint apart`() {
+        // 実運用では現在値行と詳細案内が同時に出ます。行どうしの予約領域が
+        // 重ならない配置になっていることを、診断なしの変換で確認します。
+        val compiled = DeclarativeTriggers.detailCompiled(
+            TriggerDetailData(
+                eventLabel = "event",
+                eventName = Component.text("lever"),
+                description = Component.text("description"),
+                descriptionDetail = DescriptionDetail(
+                    Component.text("open filters"),
+                    GestureLowerPanel.SETTING_DETAIL_ANCHOR_Y,
+                ),
+                confirmLabel = Component.text("confirm"),
+                backLabel = Component.text("back"),
+                tabBackground = blockData(),
+                selectedTabBackground = blockData(),
+                confirmBackground = blockData(),
+                backBackground = blockData(),
+                tabs = listOf(
+                    TriggerDetailTab("PLAYER_FILTER", Component.text("player filter")),
+                    TriggerDetailTab("TARGET", Component.text("target")),
+                ),
+                selectedTab = 1,
+                values = listOf(
+                    SettingsValueRow(
+                        "trigger-detail-value",
+                        "value",
+                        Component.text("configured"),
+                        GestureLowerPanel.SETTING_VALUE_ANCHOR_Y - 0.055,
+                    ),
+                ),
+            ),
+            onAction = {},
+            panel = panel,
+            theme = stubTheme(),
+        )
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        assertTrue(compiled.elements.any { it.elementId == "lower-trigger-detail-confirm" })
     }
 }

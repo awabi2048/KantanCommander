@@ -194,6 +194,12 @@ object DeclarativeSettings {
     /** プログラム全体設定カードの高さです（旧 `addScriptSetting` と同一）。行別ホバー配置の基準にも使います。 */
     internal const val SCRIPT_CARD_HEIGHT = 0.17
 
+    /** 値行1列分の予約幅です。ラベル列と値列が互いの領域へ重ならないよう宣言します。 */
+    internal const val VALUE_ROW_RESERVED_WIDTH = 0.58
+
+    /** 値行の予約高さです。複合表示の最小行ピッチ(0.033)内に収まる高さです。 */
+    internal const val VALUE_ROW_RESERVED_HEIGHT = 0.03
+
     /** 旧ホバー文を宣言仕様へ変換します。置換先は宣言ノード ID 基準で解決します。 */
     internal fun hoverSpecOf(hover: GestureGuiHoverText): GestureGuiHover = GestureGuiHover(
         text = hover.text,
@@ -383,13 +389,15 @@ object DeclarativeSettings {
                     id = labelId,
                     // 文言は中央揃えのため、予約幅をタブ幅へ狭めても表示位置は変わりません。
                     width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_WIDTH),
-                    height = GestureGuiSizeSpec.Auto,
+                    // 文字量測定の高さ(0.055)をそのまま予約すると次段タブの操作面へ食い込むため、
+                    // カード下端までの高さへ明示します。中央揃えのため表示位置はアンカー不変です。
+                    height = GestureGuiSizeSpec.Fixed(0.06),
                     absolute = placed(
                         cardFrame,
                         GestureLowerPanel.SETTINGS_TAB_CENTER_X,
                         cy - 0.02,
                         GestureLowerPanel.SETTINGS_TAB_WIDTH,
-                        0.0055 * 3.0,
+                        0.06,
                     ),
                 ),
             ),
@@ -421,8 +429,9 @@ object DeclarativeSettings {
             alignment = GestureGuiTextAlignment.CENTER,
             id = id,
             width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, x, y, 1.0, 0.010 * 3.0),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.04),
+            absolute = placed(frame, x, y, 1.0, 0.04),
         )
     }
 
@@ -443,8 +452,9 @@ object DeclarativeSettings {
             alignment = GestureGuiTextAlignment.CENTER,
             id = GestureLowerPanel.SETTING_DESCRIPTION_HOVER_ID,
             width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, centerX, hoverY, 1.0, 0.0043 * 3.0),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.03),
+            absolute = placed(frame, centerX, hoverY, 1.0, 0.03),
         )
         detail?.let {
             nodes += GestureGuiText(
@@ -479,9 +489,10 @@ object DeclarativeSettings {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "${row.id}-label",
                 // 2列はそれぞれの予約幅を明示し、文字が短くても値欄の領域へ重ねません。
-                width = GestureGuiSizeSpec.Fixed(0.58),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, labelX, row.y, 1.0, 0.0060 * 3.0),
+                // 予約箱は行アンカー中心・宣言幅と同じ寸法です（不一致だと中心がずれます）。
+                width = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_WIDTH),
+                height = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_HEIGHT),
+                absolute = placed(frame, labelX, row.y, VALUE_ROW_RESERVED_WIDTH, VALUE_ROW_RESERVED_HEIGHT),
             )
             nodes += GestureGuiText(
                 text = row.value,
@@ -490,9 +501,9 @@ object DeclarativeSettings {
                 lineWidth = 170,
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "${row.id}-value",
-                width = GestureGuiSizeSpec.Fixed(0.58),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, valueX, row.y, 1.0, 0.0060 * 3.0),
+                width = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_WIDTH),
+                height = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_HEIGHT),
+                absolute = placed(frame, valueX, row.y, VALUE_ROW_RESERVED_WIDTH, VALUE_ROW_RESERVED_HEIGHT),
             )
         }
     }
@@ -683,8 +694,9 @@ object DeclarativeSettings {
             alignment = GestureGuiTextAlignment.CENTER,
             id = "$idPrefix-page-status",
             width = GestureGuiSizeSpec.Fixed(statusWidth),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, centerX, centerY, statusWidth, 0.004 * 3.0),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.02),
+            absolute = placed(frame, centerX, centerY, statusWidth, 0.02),
         )
     }
 
@@ -864,9 +876,10 @@ object DeclarativeSettings {
                         alignment = GestureGuiTextAlignment.CENTER,
                         id = "${card.elementId}-label",
                         // 文言は中央揃えのため、予約幅をカード幅へ揃えても表示位置は変わりません。
+                        // 2行分の予約高さは、上下の文言どうしが食い込まない範囲に抑えます。
                         width = GestureGuiSizeSpec.Fixed(card.w),
-                        height = GestureGuiSizeSpec.Auto,
-                        absolute = placed(cardFrame, card.cx, card.cy - 0.025, card.w, 0.0052 * 3.0),
+                        height = GestureGuiSizeSpec.Fixed(0.03),
+                        absolute = placed(cardFrame, card.cx, card.cy - 0.025, card.w, 0.03),
                     ),
                 )
                 add(
@@ -878,8 +891,8 @@ object DeclarativeSettings {
                         alignment = GestureGuiTextAlignment.CENTER,
                         id = "${card.elementId}-value",
                         width = GestureGuiSizeSpec.Fixed(card.w),
-                        height = GestureGuiSizeSpec.Auto,
-                        absolute = placed(cardFrame, card.cx, card.cy + 0.015, card.w, 0.0044 * 3.0),
+                        height = GestureGuiSizeSpec.Fixed(0.03),
+                        absolute = placed(cardFrame, card.cx, card.cy + 0.015, card.w, 0.03),
                     ),
                 )
             },
@@ -910,8 +923,9 @@ object DeclarativeSettings {
             alignment = GestureGuiTextAlignment.CENTER,
             id = "lower-hint",
             width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, 0.27, 1.0, 0.008 * 3.0),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.04),
+            absolute = placed(frame, 0.0, 0.27, 1.0, 0.04),
         )
         cards.forEach { scriptSettingSection(nodes, frame, it) }
         return document(nodes, panel)

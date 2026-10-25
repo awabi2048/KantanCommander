@@ -56,7 +56,8 @@ object DeclarativeTest {
             alignment = GestureGuiTextAlignment.CENTER,
             id = line.id,
             width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(line.size * 3.0),
             absolute = placed(frame, 0.0, line.y, 1.0, line.size * 3.0),
         )
 
