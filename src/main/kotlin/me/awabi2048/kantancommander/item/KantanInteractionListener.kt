@@ -74,7 +74,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     fun suppressExternalEditorStart(event: PlayerInteractEvent) {
         if (event.action != Action.RIGHT_CLICK_BLOCK) return
         val clicked = event.clickedBlock ?: return
-        if (plugin.placements.find(clicked.location) == null) return
+        // スクリプト読込不可の配置でも外部編集の介入は抑止します。
+        if (!plugin.placements.isRegistered(clicked.world, clicked.x, clicked.y, clicked.z)) return
         if (event.hand != EquipmentSlot.HAND) {
             // 右クリックはメインハンドだけをKantanの編集入口として扱います。
             // オフハンドの同一入力は、EASやバニラのブロック操作へ漏らしません。
@@ -249,7 +250,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onBlockBreak(event: BlockBreakEvent) {
         val block = event.block
-        val placement = plugin.placements.find(block.location) ?: return
+        // スクリプト読込不可の配置も台帳登録があれば撤去対象として扱います。
+        // 破壊できないと、読込不能な実体だけが永久に残り続けます。
+        val placement = plugin.placements.registered(block.world, block.x, block.y, block.z) ?: return
         if (!plugin.placementAccess.requireManage(event.player, placement.world)) {
             event.isCancelled = true
             return
@@ -277,7 +280,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         // 通常のブロックと同じ体験にするため、位置・重なりの不適合は何も起きない扱いにし、
         // 定型のサーバーログも残さない。異常系（保存失敗等）は操作者への通知へ一本化する。
         // バニラが配置位置を保証済みのため置換可能性は再判定せず、Kantan独自の重複チェックだけ行う。
-        if (plugin.placements.find(block.location) != null) {
+        // 読込不可の配置も台帳登録があれば占有として扱い、重複配置を防ぎます。
+        if (plugin.placements.isRegistered(block.world, block.x, block.y, block.z)) {
             return false
         }
 

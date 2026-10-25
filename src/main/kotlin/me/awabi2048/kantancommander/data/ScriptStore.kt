@@ -221,6 +221,13 @@ class ScriptStore(
     fun load(id: UUID): DiskScript? = withScriptLock(id) { cached(id)?.deepCopy() }
 
     /**
+     * スクリプトの正本ファイルが残っているかを返します。
+     * 本文の読込可否は問いません。`load` が失敗してもこちらが真なら、
+     * 参照元は「削除済み」ではなく「一時的に読込不可」として扱えます。
+     */
+    fun isPersisted(id: UUID): Boolean = sourceFile(id) != null
+
+    /**
      * 最新の正本をロック内で取得し、変更・検証・保存まで一度だけ行います。
      * expectedRevisionを指定した場合、画面表示後に別の編集が成功していれば
      * 保存せずnullを返します。削除確認や入力画面の古い応答を安全に無効化する
@@ -842,9 +849,6 @@ class ScriptStore(
         val unique = declIndex.values.count { it.name == name } <= 1
         return if (unique) name else id.toString()
     }
-
-    /** 指定IDの正本ファイルが存在するかを返します（配置台帳の休止判定用）。 */
-    fun hasSourceFile(id: UUID): Boolean = sourceFile(id) != null
 
     /** issue #16: 原子書込は共通基盤へ委譲します。失敗意味は従来どおりです。 */
     private fun atomicWrite(target: File, content: String) {

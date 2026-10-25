@@ -74,11 +74,26 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     fun isRegistered(world: World, x: Int, y: Int, z: Int): Boolean =
         placements.containsKey(key(world.name, x, y, z))
 
+    /**
+     * 台帳上の配置をスクリプトの読込可否に関わらず返します。
+     * 破壊・占有確認など「登録されている実体か」だけを扱う経路に使い、
+     * スクリプトを利用する経路は [find] を使います。
+     */
+    fun registered(world: World?, x: Int, y: Int, z: Int): DiskPlacement? =
+        world?.let { placements[key(it.name, x, y, z)] }
+
     fun find(world: World?, x: Int, y: Int, z: Int): DiskPlacement? {
         world ?: return null
         val placementKey = key(world.name, x, y, z)
         val placement = placements[placementKey] ?: return null
         if (plugin.scripts.load(placement.scriptId) != null) return placement
+        // 参照先ファイルが残っている間は、破損・読込失敗を一時的なものとして保持します。
+        // 台帳だけを消すと実体ブロックを残して管理を失うため、配置は休止として残し、
+        // 浮遊表示だけを撤去します。
+        if (plugin.scripts.isPersisted(placement.scriptId)) {
+            removeDisplay(world, placement.displayId)
+            return null
+        }
         placements.remove(placementKey)
         runCatching { save() }.getOrElse { failure ->
             placements[placementKey] = placement
@@ -145,33 +160,72 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         val stale = mutableListOf<String>()
         placements.values.toList().forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
-            if (plugin.scripts.load(placement.scriptId) == null) {
-                removeDisplay(world, placement.displayId)
-                stale += placement.key
-                return@forEach
-            }
-            val block = world.getBlockAt(placement.x, placement.y, placement.z)
-            if (!PlacedBlockMaterials.isPlacedBlock(block.type)) {
-                removeDisplay(world, placement.displayId)
-                stale += placement.key
-                return@forEach
-            }
-            val oldDisplayId = placement.displayId
-            runCatching { spawnDisplay(world, placement) }
-                .onSuccess { removeDisplay(world, oldDisplayId) }
-                .onFailure { failure ->
-                    plugin.logger.log(
-                        Level.WARNING,
-                        "配置表示の復元に失敗しました: placement=${placement.key}",
-                        failure,
-                    )
-                }
+            // 未ロードチャンクはブロック読取りによる同期ロードを起こさず、
+            // 復元を ChunkLoadEvent 側へ委ねます。起動直後にイベント登録済みの
+            // リスナー経由でスクリプト読込が連鎖する経路をここで断ちます。
+            if (!world.isChunkLoaded(placement.x shr 4, placement.z shr 4)) return@forEach
+            restoreDisplayFor(world, placement, stale)
         }
+        cullStale(stale)
+        save()
+    }
+
+    /**
+     * ChunkLoadEvent でロードが確定したチャンク内の配置を復元します。
+     * 起動時に未ロードだった配置の遅延復元と、チャンク再ロード後の表示補充を兼ねます。
+     */
+    fun restoreChunkDisplays(world: World, chunkX: Int, chunkZ: Int) {
+        val stale = mutableListOf<String>()
+        placements.values.toList().forEach { placement ->
+            if (placement.world != world.name) return@forEach
+            if ((placement.x shr 4) != chunkX || (placement.z shr 4) != chunkZ) return@forEach
+            restoreDisplayFor(world, placement, stale)
+        }
+        if (stale.isEmpty()) return
+        cullStale(stale)
+        save()
+    }
+
+    /**
+     * ロード済みチャンク内の1配置を復元します。
+     *
+     * スクリプトが読めない配置は休止します。参照ファイルが残っている限り台帳は
+     * 保持して浮遊表示だけを撤去し、ファイル自体が消えた参照切れと、実体
+     * ブロックが消えた配置だけを孤立として [stale] へ積みます。
+     */
+    private fun restoreDisplayFor(world: World, placement: DiskPlacement, stale: MutableList<String>) {
+        val scriptAvailable = plugin.scripts.load(placement.scriptId) != null
+        if (!scriptAvailable && !plugin.scripts.isPersisted(placement.scriptId)) {
+            removeDisplay(world, placement.displayId)
+            stale += placement.key
+            return
+        }
+        val block = world.getBlockAt(placement.x, placement.y, placement.z)
+        if (!PlacedBlockMaterials.isPlacedBlock(block.type)) {
+            removeDisplay(world, placement.displayId)
+            stale += placement.key
+            return
+        }
+        if (!scriptAvailable) return removeDisplay(world, placement.displayId)
+        // 表示が実体として残っていれば付け直さず、欠けているときだけ補充します。
+        if (placement.displayId?.let { world.getEntity(it) } != null) return
+        runCatching { spawnDisplay(world, placement) }
+            .onFailure { failure ->
+                plugin.logger.log(
+                    Level.WARNING,
+                    "配置表示の復元に失敗しました: placement=${placement.key}",
+                    failure,
+                )
+            }
+    }
+
+    /** 孤立配置を台帳から除去し、イベント起動の登録へまとめて反映します。 */
+    private fun cullStale(stale: List<String>) {
+        var removedAny = false
         stale.forEach { key ->
             placements.remove(key)?.let { removed ->
+                removedAny = true
                 plugin.forgetActivationState(removed.key, removed.scriptId)
-                // issue #7: 起動時整理での配置除去をイベント起動の登録へ反映します。
-                plugin.refreshEventTriggerIndex()
                 // 台帳を消した後に再計算し、実体が残っている場合も拡張ブロック向けの
                 // 特殊接続を通常のバニラ形状へ戻します。
                 Bukkit.getWorld(removed.world)?.let { world ->
@@ -181,7 +235,9 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 }
             }
         }
-        save()
+        // issue #7: 配置除去はイベント起動の登録へ反映します。件数ごとの再構築を
+        // 避け、除去があったときだけ末尾で1回行います。
+        if (removedAny) plugin.refreshEventTriggerIndex()
     }
 
     fun spawnDisplay(world: World, placement: DiskPlacement): UUID {
@@ -220,7 +276,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun removeDisplay(world: World, id: UUID?) {
         if (id == null) return
-        world.entities.firstOrNull { it.uniqueId == id }?.remove()
+        world.getEntity(id)?.remove()
     }
 
     fun removeAllDisplays() {

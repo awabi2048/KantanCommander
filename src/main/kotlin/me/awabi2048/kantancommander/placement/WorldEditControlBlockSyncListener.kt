@@ -253,7 +253,8 @@ class WorldEditControlBlockSyncListener(
                 !pending.sameIdPasteConsumed &&
                 pasted.entry.placementKey in pending.removedKeys
             if (useSameId) {
-                val existing = plugin.placements.find(world, pasted.x, pasted.y, pasted.z)
+                // 占有確認は台帳登録だけを見ます。読込不可の配置も占有中として扱います。
+                val existing = plugin.placements.registered(world, pasted.x, pasted.y, pasted.z)
                 if (existing != null && existing.scriptId == pasted.entry.scriptId) return@all true
             }
             val before = pending.pasteSnapshot?.get(Triple(pasted.x, pasted.y, pasted.z))
@@ -476,7 +477,8 @@ class WorldEditControlBlockSyncListener(
             val targetBlock = world.getBlockAt(pasted.x, pasted.y, pasted.z)
             // 実体が配置素材でない場合は貼付けが成立していないため、台帳を変更しません。
             if (!PlacedBlockMaterials.isPlacedBlock(targetBlock.type)) continue
-            val existing = plugin.placements.find(world, pasted.x, pasted.y, pasted.z)
+            // 占有確認は台帳登録だけを見ます。読込不可の配置も占有中として扱います。
+            val existing = plugin.placements.registered(world, pasted.x, pasted.y, pasted.z)
             if (existing != null && existing.scriptId == relative.scriptId) continue
             // CUT同一ID再利用は切り取り確定済みの項目に限ります。
             // 未確定項目は複写経路へ迂回し、同一スクリプトの重複登録を防ぎます。
@@ -738,7 +740,8 @@ class WorldEditControlBlockSyncListener(
         }
         val ledgerNow = mutableMapOf<Triple<Int, Int, Int>, DiskPlacement?>()
         fun existingAt(point: Triple<Int, Int, Int>): DiskPlacement? = ledgerNow.getOrPut(point) {
-            plugin.placements.find(world, point.first, point.second, point.third)
+            // 占有確認は台帳登録だけを見ます。読込不可の配置も占有中として扱います。
+            plugin.placements.registered(world, point.first, point.second, point.third)
         }
         val plans = WorldEditMovePlanner.planMoveBatch(
             items = live,
