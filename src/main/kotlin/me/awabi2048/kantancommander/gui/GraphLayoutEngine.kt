@@ -816,18 +816,22 @@ object GraphLayoutEngine {
         /** 枝内に対応MERGEへ到達する経路が一つでもあるかを調べます。 */
         private fun hasPathTo(start: UUID, stop: UUID): Boolean {
             val visited = mutableSetOf<UUID>()
-            fun visit(id: UUID): Boolean {
+            // ノード連鎖の長さだけ深くなる再帰をワークリスト走査へ置き換えています。
+            val queue = ArrayDeque<UUID>()
+            queue.addLast(start)
+            while (queue.isNotEmpty()) {
+                val id = queue.removeFirst()
                 if (id == stop) return true
-                if (!visited.add(id)) return false
-                val node = graph.nodes[id] ?: return false
+                if (!visited.add(id)) continue
+                val node = graph.nodes[id] ?: continue
                 val next = when (node.type) {
                     CommandType.CONDITION -> listOfNotNull(node.trueNext, node.falseNext)
                     CommandType.FOR_START -> listOfNotNull(node.trueNext)
                     else -> listOfNotNull(node.next)
                 }
-                return next.any(::visit)
+                next.forEach(queue::addLast)
             }
-            return visit(start)
+            return false
         }
 
         /**

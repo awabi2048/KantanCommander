@@ -96,6 +96,25 @@ class GraphValidatorTest {
     }
 
     @Test
+    fun `long node chains validate iteratively without stack overflow`() {
+        // ノード連鎖の長さだけ深くなる再帰走査は、長い直線グラフで
+        // StackOverflowError に達しえました。反復走査は連鎖長に依存しません。
+        val length = 20_000
+        val nodes = (1..length).map { CommandType.DISPLAY_TEXT.newNode() }
+        nodes.zipWithNext().forEach { (current, next) -> current.next = next.id }
+        val graph = CommandGraph(
+            nodes.first().id,
+            nodes.associateByTo(linkedMapOf()) { it.id },
+        )
+
+        val errors = GraphValidator.validate(
+            graph,
+            GraphLimits(maximumNodeCount = Int.MAX_VALUE),
+        )
+        assertTrue(errors.isEmpty())
+    }
+
+    @Test
     fun `for body allows a terminal nested condition branch without treating for end as a merge`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)

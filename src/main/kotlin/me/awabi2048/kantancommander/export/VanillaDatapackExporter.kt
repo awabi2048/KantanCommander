@@ -589,10 +589,13 @@ class VanillaDatapackExporter(
         errors: MutableList<String>,
     ) {
         // 呼出し先は参照解決で辿るため、同一ディスクの再走査と循環を
-        // 同一の訪問済み集合で抑止します。
+        // 同一の訪問済み集合で抑止します。走査は呼出し連鎖の長さだけ深くなる
+        // 再帰を避けるためワークリストで行います。
         val annotated = Collections.newSetFromMap(IdentityHashMap<CommandGraph, Boolean>())
+        val pending = ArrayDeque<CommandGraph>()
+        annotated.add(graph)
+        pending.addLast(graph)
         fun annotate(current: CommandGraph) {
-            if (!annotated.add(current)) return
             current.nodes.values.forEach { node ->
                 if (node.type == CommandType.CONDITION &&
                     node.conditionSubject() == ConditionSubject.VARIABLE
@@ -621,11 +624,15 @@ class VanillaDatapackExporter(
                     }
                 }
                 if (node.type == CommandType.DISK_CALL) {
-                    expandedCallee(node)?.graph?.let(::annotate)
+                    expandedCallee(node)?.graph?.let { callee ->
+                        if (annotated.add(callee)) pending.addLast(callee)
+                    }
                 }
             }
         }
-        annotate(graph)
+        while (pending.isNotEmpty()) {
+            annotate(pending.removeFirst())
+        }
     }
 
     private fun validatePosition(
@@ -675,6 +682,7 @@ class VanillaDatapackExporter(
         output: MutableMap<String, String>,
         resetBudget: Boolean = false,
         rootFunctionName: String = prefix,
+        callDepth: Int = 0,
     ) {
         val entryCall = graph.entryNodeId?.let { "return run function kantan:${nodeFunction(prefix, it)}\n" } ?: "return 1\n"
         defineFunction(output, rootFunctionName, if (resetBudget) {
@@ -740,11 +748,18 @@ class VanillaDatapackExporter(
                     lines += "scoreboard players set ${scoreHolder(node.id)} kc_result 1"
                 }
                 node.type == CommandType.DISK_CALL -> {
-                    val snapshotPrefix = snapshotPrefix(prefix, node.id)
+                    // 深度超過と循環は検証層で拒否済みのため到達しませんが、
+                    // 万一の検証抜けでは無限展開になるため、ここでも境界を明示します。
+                    require(callDepth < maximumDiskCallDepth) {
+                        "${node.id}: 呼出し深度が上限 $maximumDiskCallDepth を超えました"
+                    }
+                    val calleePrefix = calleePrefix(prefix, node.id)
                     // 呼出し先は参照解決した正本を、その呼出し箇所専用の関数として
                     // 展開します。解決不能は検証層で拒否済みのため到達しません。
-                    expandedCallee(node)?.graph?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
-                    val call = "function kantan:$snapshotPrefix"
+                    expandedCallee(node)?.graph?.let {
+                        compileGraph(it, calleePrefix, output, resetBudget = false, callDepth = callDepth + 1)
+                    }
+                    val call = "function kantan:$calleePrefix"
                     temporaryEntityReferences(node, null).forEach { reference ->
                         lines += temporaryEntityPreparation(reference)
                     }
@@ -1955,14 +1970,22 @@ class VanillaDatapackExporter(
         warnings: MutableList<String>,
         visited: MutableSet<CommandGraph> = Collections.newSetFromMap(IdentityHashMap()),
     ) {
-        if (!visited.add(graph)) return
-        graph.nodes.values.forEach { node ->
-            if (node.type == CommandType.CAMERA_SHAKE) {
-                warnings += "$path/${node.id}: カメラシェイクはJava版データパックから省略されました"
-            }
-            if (node.type == CommandType.DISK_CALL) {
-                expandedCallee(node)?.graph?.let {
-                    collectWarnings(it, "$path/${node.id}/callee", warnings, visited)
+        // 呼出し連鎖の長さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val pending = ArrayDeque<Pair<CommandGraph, String>>()
+        visited.add(graph)
+        pending.addLast(graph to path)
+        while (pending.isNotEmpty()) {
+            val (current, currentPath) = pending.removeFirst()
+            current.nodes.values.forEach { node ->
+                if (node.type == CommandType.CAMERA_SHAKE) {
+                    warnings += "$currentPath/${node.id}: カメラシェイクはJava版データパックから省略されました"
+                }
+                if (node.type == CommandType.DISK_CALL) {
+                    expandedCallee(node)?.graph?.let { callee ->
+                        if (visited.add(callee)) {
+                            pending.addLast(callee to "$currentPath/${node.id}/callee")
+                        }
+                    }
                 }
             }
         }
@@ -2369,17 +2392,22 @@ class VanillaDatapackExporter(
 
     private fun reachableBefore(graph: CommandGraph, start: UUID?, stop: UUID?, target: UUID): Boolean {
         val visited = mutableSetOf<UUID>()
-        fun visit(id: UUID?): Boolean {
-            if (id == null || id == stop || !visited.add(id)) return false
+        // ノード連鎖の長さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val queue = ArrayDeque<UUID>()
+        start?.let(queue::addLast)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (id == stop || !visited.add(id)) continue
             if (id == target) return true
-            val node = graph.nodes[id] ?: return false
-            return when (node.type) {
-                CommandType.CONDITION -> visit(node.trueNext) || visit(node.falseNext)
-                CommandType.FOR_START -> visit(node.trueNext) || visit(node.pairedNodeId)
-                else -> visit(node.next)
+            val node = graph.nodes[id] ?: continue
+            val next = when (node.type) {
+                CommandType.CONDITION -> listOfNotNull(node.trueNext, node.falseNext)
+                CommandType.FOR_START -> listOfNotNull(node.trueNext, node.pairedNodeId)
+                else -> listOfNotNull(node.next)
             }
+            next.forEach(queue::addLast)
         }
-        return visit(start)
+        return false
     }
 
     /**
@@ -2394,8 +2422,11 @@ class VanillaDatapackExporter(
         fun add(raw: String?) {
             raw?.takeIf(String::isNotBlank)?.let { names += TemporaryTemplate.normalized(it) }
         }
+        // 呼出し先連鎖の長さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val pending = ArrayDeque<CommandGraph>()
+        visited.add(graph)
+        pending.addLast(graph)
         fun scan(current: CommandGraph) {
-            if (!visited.add(current)) return
             current.nodes.values.forEach { node ->
                 if (node.type == CommandType.TEMP_SET) add(node.string("name"))
                 node.params.values.forEach { raw ->
@@ -2439,11 +2470,15 @@ class VanillaDatapackExporter(
                     if (target.kind == TargetKind.TEMPORARY) add(target.tempName)
                 }
                 if (node.type == CommandType.DISK_CALL) {
-                    expandedCallee(node)?.graph?.let(::scan)
+                    expandedCallee(node)?.graph?.let { callee ->
+                        if (visited.add(callee)) pending.addLast(callee)
+                    }
                 }
             }
         }
-        scan(graph)
+        while (pending.isNotEmpty()) {
+            scan(pending.removeFirst())
+        }
     }
 
     private fun effectiveTarget(node: CommandNode): String {
@@ -2796,8 +2831,8 @@ class VanillaDatapackExporter(
     private fun uuidToken(id: UUID): String =
         BigInteger(id.toString().replace("-", ""), 16).toString(36)
 
-    private fun snapshotPrefix(parentPrefix: String, nodeId: UUID): String =
-        "s_${shortDigest("snapshot/$parentPrefix/$nodeId", 24)}"
+    private fun calleePrefix(parentPrefix: String, nodeId: UUID): String =
+        "s_${shortDigest("callee/$parentPrefix/$nodeId", 24)}"
 
     private fun graphFingerprint(graph: CommandGraph): String = buildString {
         append("entry=").append(graph.entryNodeId)

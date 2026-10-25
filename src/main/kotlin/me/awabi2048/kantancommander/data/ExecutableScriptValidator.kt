@@ -304,7 +304,17 @@ object ExecutableScriptValidator {
         // 検証済みディスクの再走査は検証結果が変わらないため省きます。
         diskResolver: (UUID) -> DiskScript? = { null },
         validatedDisks: MutableSet<UUID> = mutableSetOf(),
+        graphDepth: Int = 0,
     ) {
+        // 呼出し連鎖・折り畳み入れ子は diskId・identity の経路検出で循環を
+        // 止めますが、検証自体のJVM再帰も上限を設けて絶対に暴走させません。
+        if (graphDepth > MAX_GRAPH_DEPTH) {
+            errors += ScriptValidationError(
+                path, null, emptySet(), "グラフの入れ子・呼出し連鎖が深すぎます",
+                code = ErrorCode.GRAPH_DEPTH_EXCEEDED, phase = phase,
+            )
+            return
+        }
         if (!visited.add(graph)) {
             errors += ScriptValidationError(
                 path, null, emptySet(), "グラフが循環参照しています",
@@ -373,6 +383,7 @@ object ExecutableScriptValidator {
                             triggerSeeds = callSeeds,
                             diskResolver = diskResolver,
                             validatedDisks = validatedDisks,
+                            graphDepth = graphDepth + 1,
                         )
                     } else {
                         // 解決不能（削除・読込失敗）はノード側の検証でも報告しますが、
@@ -392,6 +403,7 @@ object ExecutableScriptValidator {
                     phase,
                     diskResolver = diskResolver,
                     validatedDisks = validatedDisks,
+                    graphDepth = graphDepth + 1,
                 )
             }
         }
@@ -3219,14 +3231,26 @@ object ExecutableScriptValidator {
             if (start.type != CommandType.FOR_START) return@any false
             val stop = start.pairedNodeId
             val visited = mutableSetOf<UUID>()
-            fun visit(id: UUID?): Boolean {
-                if (id == null || id == stop || !visited.add(id)) return false
-                if (id == target) return true
-                val node = graph.nodes[id] ?: return false
-                return listOfNotNull(node.next, node.trueNext, node.falseNext, node.pairedNodeId).any(::visit)
+            val queue = ArrayDeque<UUID>()
+            start.trueNext?.let(queue::add)
+            // ノード連鎖の長さだけ再帰が深くなる経路を、明示キューの走査へ
+            // 置き換えています。visited で再訪を抑止するため常に終了します。
+            while (queue.isNotEmpty()) {
+                val id = queue.removeFirst()
+                if (id == stop || !visited.add(id)) continue
+                if (id == target) return@any true
+                val node = graph.nodes[id] ?: continue
+                queue += listOfNotNull(node.next, node.trueNext, node.falseNext, node.pairedNodeId)
             }
-            visit(start.trueNext)
+            false
         }
+
+    /**
+     * 検証のJVM再帰上限です。呼出し経路・折り畳み入れ子のどちらも対象で、
+     * 実行時の `execution.max-disk-call-depth`（既定3）とは独立した
+     * 安全弁として、構造的に妥当な深さより十分大きな値へ置きます。
+     */
+    private const val MAX_GRAPH_DEPTH = 64
 
     private fun nodeError(
         node: CommandNode,

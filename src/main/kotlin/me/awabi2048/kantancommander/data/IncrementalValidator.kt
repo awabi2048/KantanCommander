@@ -139,20 +139,34 @@ object IncrementalValidator {
     }
 
     private fun findStructuredNode(graph: CommandGraph, id: UUID): CommandNode? {
-        graph.nodes[id]?.let { return it }
-        graph.nodes.values.forEach { node ->
-            node.foldedGraph?.let { findStructuredNode(it, id) }?.let { return it }
+        // 折り畳み入れ子の深さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val queue = ArrayDeque<CommandGraph>()
+        queue.addLast(graph)
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            current.nodes[id]?.let { return it }
+            current.nodes.values.forEach { node ->
+                node.foldedGraph?.let(queue::addLast)
+            }
         }
         return null
     }
 
     private fun subtreeHasTempSet(graph: CommandGraph): Boolean =
-        graph.nodes.values.any { node ->
-            node.type == CommandType.TEMP_SET || node.foldedGraph?.let(::subtreeHasTempSet) == true
-        }
+        subtreeAny(graph) { node -> node.type == CommandType.TEMP_SET }
 
     private fun subtreeHasExecutionDefinition(graph: CommandGraph): Boolean =
-        graph.nodes.values.any { node ->
-            isExecutionDefinition(node) || node.foldedGraph?.let(::subtreeHasExecutionDefinition) == true
+        subtreeAny(graph, ::isExecutionDefinition)
+
+    private fun subtreeAny(graph: CommandGraph, predicate: (CommandNode) -> Boolean): Boolean {
+        val queue = ArrayDeque<CommandGraph>()
+        queue.addLast(graph)
+        while (queue.isNotEmpty()) {
+            queue.removeFirst().nodes.values.forEach { node ->
+                if (predicate(node)) return true
+                node.foldedGraph?.let(queue::addLast)
+            }
         }
+        return false
+    }
 }

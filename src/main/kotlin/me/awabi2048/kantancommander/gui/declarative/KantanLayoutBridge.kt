@@ -112,11 +112,13 @@ object KantanLayoutBridge {
     /** 文書内の action ID を重複なく集めます。 */
     fun collectActions(root: GestureGuiNode): Set<String> {
         val actions = linkedSetOf<String>()
-        fun visit(node: GestureGuiNode) {
+        val queue = ArrayDeque<GestureGuiNode>()
+        queue.addLast(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
             node.actionId?.let(actions::add)
-            childrenOf(node).forEach(::visit)
+            childrenOf(node).forEach(queue::addLast)
         }
-        visit(root)
         return actions
     }
 

@@ -163,8 +163,12 @@ internal object WorldVariableReferenceScanner {
             if (name.isNotEmpty()) references += name
         }
 
+        // 呼出し連鎖・折り畳み入れ子の深さだけ深くなる再帰を
+        // ワークリスト走査へ置き換えています。
+        val pending = ArrayDeque<CommandGraph>()
+        visited.add(graph)
+        pending.addLast(graph)
         fun scan(current: CommandGraph) {
-            if (!visited.add(current)) return
             current.nodes.values.forEach { node ->
                 // 文字列・数値式・各種入力欄に埋め込まれた${name}を共通解析します。
                 node.params.values.forEach { raw ->
@@ -188,17 +192,23 @@ internal object WorldVariableReferenceScanner {
                 ) {
                     add(node.string("variable"))
                 }
-                node.foldedGraph?.let(::scan)
+                node.foldedGraph?.let { folded ->
+                    if (visited.add(folded)) pending.addLast(folded)
+                }
                 if (node.type == CommandType.DISK_CALL) {
                     node.string("diskId").takeIf(String::isNotBlank)
                         ?.let { raw -> runCatching { java.util.UUID.fromString(raw) }.getOrNull() }
                         ?.let(diskResolver)
-                        ?.graph?.let(::scan)
+                        ?.graph?.let { callee ->
+                            if (visited.add(callee)) pending.addLast(callee)
+                        }
                 }
             }
         }
 
-        scan(graph)
+        while (pending.isNotEmpty()) {
+            scan(pending.removeFirst())
+        }
         return references
     }
 }
