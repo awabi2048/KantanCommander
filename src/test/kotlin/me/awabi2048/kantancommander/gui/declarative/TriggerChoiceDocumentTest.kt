@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.model.TriggerKind
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiOverlay
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
@@ -278,26 +279,26 @@ class TriggerChoiceDocumentTest {
                 SettingsTabEntry(Component.text("target"), true, null, selectedBackground),
             ),
         )
-        val detailTabs = detailNodes.filterIsInstance<GestureGuiBlock>()
+        // タブは操作面＋背景＋文言のOverlay構造です。操作面の配置・寸法はコマンド設定と一致させ、
+        // 背景・文言は子ノードとして比較します。
+        val detailTabs = detailNodes.filterIsInstance<GestureGuiOverlay>()
             .filter { it.id?.startsWith("lower-trigger-detail-tab:") == true }
-        val commandTabs = commandNodes.filterIsInstance<GestureGuiBlock>()
+        val commandTabs = commandNodes.filterIsInstance<GestureGuiOverlay>()
         assertEquals(2, detailTabs.size)
         detailTabs.zip(commandTabs).forEach { (detail, command) ->
             assertEquals(command.absolute, detail.absolute)
             assertEquals(command.width, detail.width)
             assertEquals(command.height, detail.height)
-            assertSame(command.blockData, detail.blockData)
-            assertNull(detail.outline)
+            val detailBg = detail.children.filterIsInstance<GestureGuiBlock>().single()
+            val commandBg = command.children.filterIsInstance<GestureGuiBlock>().single()
+            assertSame(commandBg.blockData, detailBg.blockData)
+            assertNull(detailBg.outline)
+            val detailLabel = detail.children.filterIsInstance<GestureGuiText>().single()
+            val commandLabel = command.children.filterIsInstance<GestureGuiText>().single()
+            assertEquals(commandLabel.absolute, detailLabel.absolute)
+            assertEquals(commandLabel.size, detailLabel.size)
+            assertEquals(commandLabel.width, detailLabel.width)
         }
-        val detailLabels = detailNodes.filterIsInstance<GestureGuiText>()
-            .filter { it.id?.endsWith("-label") == true && it.id?.startsWith("lower-trigger-detail-tab:") == true }
-        val commandLabels = commandNodes.filterIsInstance<GestureGuiText>()
-        detailLabels.zip(commandLabels).forEach { (detail, command) ->
-            assertEquals(command.absolute, detail.absolute)
-            assertEquals(command.size, detail.size)
-            assertEquals(command.width, detail.width)
-        }
-        assertEquals(2, detailLabels.size)
         assertTrue(detailNodes.none { it.id == "lower-delete" || it.id == "lower-duplicate" })
     }
 }
