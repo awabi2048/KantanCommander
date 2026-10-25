@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<!--
+  設定候補子画面（フィールドの候補選択・トリガー条件絞り込み）の骨格です。
+
+  見出し・説明・候補カード・群境界線・ページャ・戻るはすべて実行時の内容が
+  決めるため、区画の空容器だけを持ち、Kotlin 側が KantanLayoutBridge の
+  injections でノードを注入します。注入ノードは従来の画面座標のまま
+  `placed` へ渡し、変換基準だけを各領域の枠へ替えて実効座標を維持します。
+
+  区画と旧レイアウトの対応:
+  - header: 画面最上部。案内文(0, 0.12)、項目名(-0.53, 0.36)・現在値(0.53, 0.36)、
+    常設説明(0, 0.23)・詳細案内(0, 0.16) の注入先です。
+  - cards: 上端は先頭候補行の上端直下（top 0.3553）、下端は操作行の上端まで。
+    候補カード（上段・下揃え）と群境界線の注入先です。
+  - footer: 下端操作行（中心 -0.43・高 0.10）。左列にページャ、右列に戻るを
+    注入します。
+-->
+<style>
+  /* 見出し区画は画面上部を覆います（注入先の原点 = 内容域原点）。 */
+  .setting-choice-header {
+    position: absolute; left: 0; top: 0; width: 100%; height: 0.3553;
+  }
+
+  /* 候補区画は本文全域を覆い、上段・下揃えの両グループを収めます。 */
+  .setting-choice-cards {
+    position: absolute; left: 0; top: 0.3553; width: 100%; height: 0.51;
+  }
+
+  /* 操作行は下端1行分を全幅で覆います。 */
+  .setting-choice-footer {
+    position: absolute; left: 0; top: 0.8653; width: 100%; height: 0.10;
+  }
+</style>
+
+<section id="setting-child-root" class="screen">
+  <div id="setting-choice-header" class="setting-choice-header"></div>
+  <div id="setting-choice-cards" class="setting-choice-cards"></div>
+  <div id="setting-choice-footer" class="setting-choice-footer"></div>
+</section>

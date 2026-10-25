@@ -62,6 +62,12 @@ data class SettingsTabEntry(
 data class DescriptionDetail(
     val text: Component,
     val y: Double,
+    /**
+     * 予約する行高です。診断・隣接計算の境界として使われ、文字の見た目位置・
+     * サイズには影響しません。カード行と接する狭い区画では、本文が収まる
+     * 程度の固定高で旧契約を維持します。
+     */
+    val reservedHeight: Double = 0.025,
 )
 
 /**
@@ -406,8 +412,9 @@ object DeclarativeSettings {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "setting-description-detail",
                 width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, centerX, it.y, 1.0, 0.0041 * 3.0),
+                // 予約高さを明示し、文字量測定の高さが隣接する候補行へ広がらないようにします。
+                height = GestureGuiSizeSpec.Fixed(it.reservedHeight),
+                absolute = placed(frame, centerX, it.y, 1.0, it.reservedHeight),
             )
         }
     }
