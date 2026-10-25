@@ -332,13 +332,13 @@ object EventTriggerArguments {
 /**
  * issue #8 の呼び出し先ディスクの選択をノードへ反映します。
  *
- * 呼び出すディスクの内容スナップショットを保持し、併せて引数宣言を転記します。
- * 宣言から消えた引数の古い値・変数指定は、実行時に残存キーを誤って使わないよう
- * 除去します。選択操作の副作用を一箇所へ集約し、GUI とテストで同じ規則を使います。
+ * DISK_CALL は `diskId` 参照として動作するため、識別子と引数宣言だけを転記
+ * します。宣言から消えた引数の古い値・変数指定は、実行時に残存キーを誤って
+ * 使わないよう除去します。選択操作の副作用を一箇所へ集約し、GUI とテストで
+ * 同じ規則を使います。
  */
 fun CommandNode.applyCalledDisk(diskId: java.util.UUID, disk: DiskScript) {
     params["diskId"] = diskId.toString()
-    snapshot = disk.graph.deepCopy()
     markConfigured("diskId")
     val names = disk.arguments.map { it.name }.toSet()
     params.keys.removeIf { key ->

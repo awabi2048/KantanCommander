@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
@@ -670,15 +671,21 @@ class ScriptStoreTest {
     }
 
     @Test
-    fun `invalid copied disk graph is rejected recursively`() {
+    fun `disk call to missing disk reports dangling reference on validation`() {
+        // DISK_CALL は diskId 参照です。参照先の欠落は構造エラーではなく、
+        // 保存可能なまま検証層が DANGLING_REFERENCE として報告します。
         val store = ScriptStore(temp.resolve("structured"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "nested")
         val call = CommandType.DISK_CALL.newNode()
-        val missing = UUID.randomUUID()
-        call.snapshot = CommandGraph(missing, linkedMapOf())
+        call.params["diskId"] = UUID.randomUUID().toString()
         script.graph = CommandGraph(call.id, linkedMapOf(call.id to call))
+        store.save(script)
 
-        assertThrows(IllegalArgumentException::class.java) { store.save(script) }
+        val errors = ExecutableScriptValidator.validate(
+            script,
+            diskResolver = { id -> store.load(id) },
+        )
+        assertTrue(errors.any { it.code == ErrorCode.DANGLING_REFERENCE })
     }
 
     @Test

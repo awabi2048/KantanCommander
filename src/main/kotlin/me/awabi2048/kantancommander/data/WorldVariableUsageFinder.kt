@@ -49,7 +49,8 @@ data class WorldVariableUsageScanResult(
  *
  * ワールド内変数はMyWorld単位の正本なので、未配置の別ワールド用プログラムまで
  * 誤って削除不可にしないよう、現在のMyWorldにある配置だけを対象にします。
- * DISK_CALLのsnapshotも実行時に使われるグラフであるため、必ず再帰的に走査します。
+ * DISK_CALLの呼出し先も実行時に使われるグラフであるため、参照解決で必ず
+ * 再帰的に走査します。
  */
 class WorldVariableUsageFinder(
     private val placements: () -> Iterable<DiskPlacement>,
@@ -119,7 +120,10 @@ class WorldVariableUsageFinder(
                 .distinct()
 
             placedScriptIds.mapNotNull { scriptById[it] }.forEach { script ->
-                val referencedNames = WorldVariableReferenceScanner.referencedNames(script.graph)
+                val referencedNames = WorldVariableReferenceScanner.referencedNames(
+                    script.graph,
+                    diskResolver = { scriptById[it] },
+                )
                 normalizedTargets.values.distinct()
                     .filter(referencedNames::contains)
                     .forEach { target ->
@@ -145,7 +149,12 @@ class WorldVariableUsageFinder(
 
 /** 保存グラフ内のワールド内変数名を、GUIと同じ名前正規化で抽出します。 */
 internal object WorldVariableReferenceScanner {
-    fun referencedNames(graph: CommandGraph): Set<String> {
+    fun referencedNames(
+        graph: CommandGraph,
+        // DISK_CALL の参照先を diskId から正本へ解決する関数です。
+        // 既定では参照先を辿りません。
+        diskResolver: (java.util.UUID) -> DiskScript? = { null },
+    ): Set<String> {
         val references = linkedSetOf<String>()
         val visited = Collections.newSetFromMap(IdentityHashMap<CommandGraph, Boolean>())
 
@@ -179,7 +188,13 @@ internal object WorldVariableReferenceScanner {
                 ) {
                     add(node.string("variable"))
                 }
-                node.snapshot?.let(::scan)
+                node.foldedGraph?.let(::scan)
+                if (node.type == CommandType.DISK_CALL) {
+                    node.string("diskId").takeIf(String::isNotBlank)
+                        ?.let { raw -> runCatching { java.util.UUID.fromString(raw) }.getOrNull() }
+                        ?.let(diskResolver)
+                        ?.graph?.let(::scan)
+                }
             }
         }
 

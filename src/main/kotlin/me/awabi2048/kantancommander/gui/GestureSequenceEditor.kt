@@ -1029,7 +1029,11 @@ class GestureSequenceEditor(
                 // 構造不変のため署名cacheは有効なままです。構造署名の一致は
                 // 増分側の分類で保証されています。
             } else {
-                validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+                validationCacheErrors = ExecutableScriptValidator.validate(
+                    script,
+                    plugin.graphLimits(),
+                    diskResolver = { plugin.scripts.load(it) },
+                )
                 // 世代が進んでも構造署名が同じ間は構造エラーを再利用できるよう、
                 // 構造部分だけを署名単位で保持します。無効化条件は署名変化に一元化します。
                 val signature = GraphStructureFingerprint.fingerprint(script.graph)
@@ -1083,6 +1087,7 @@ class GestureSequenceEditor(
             limits = plugin.graphLimits(),
             variableDefinitions = null,
             previousSeeds = lastValidationSeeds,
+            diskResolver = { plugin.scripts.load(it) },
         )
     }
 
@@ -1280,6 +1285,7 @@ class GestureSequenceEditor(
                 script,
                 plugin.graphLimits(),
                 plugin.variables.definitions(worldData.uuid),
+                diskResolver = { plugin.scripts.load(it) },
             )
         }
     }

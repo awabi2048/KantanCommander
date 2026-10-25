@@ -37,7 +37,6 @@ internal object LegacySummonMigration {
                     if (customName != null) addConfiguredMark(node, targetKey)
                 }
             }
-            normalizeGraph(node["snapshot"]?.takeIf { it.isJsonObject }?.asJsonObject)
             normalizeGraph(node["foldedGraph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         }
     }

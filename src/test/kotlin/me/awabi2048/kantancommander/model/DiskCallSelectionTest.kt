@@ -3,7 +3,6 @@ package me.awabi2048.kantancommander.model
 import me.awabi2048.kantancommander.data.GraphEditor
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -12,7 +11,7 @@ import java.util.UUID
 /**
  * issue #8 の呼び出し先ディスク選択のテストです。
  *
- * ディスク選択時に内容スナップショットと引数宣言を転記し、宣言から消えた
+ * ディスク選択時に呼び出し先IDと引数宣言を転記し、宣言から消えた
  * 引数の古い値・変数指定を除去することを固定します。転記漏れがあると、
  * 呼び出し側で引数を設定できず実行時に不足します。
  */
@@ -24,7 +23,7 @@ class DiskCallSelectionTest {
         }
 
     @Test
-    fun `selection copies snapshot and declared arguments`() {
+    fun `selection records disk id and declared arguments`() {
         val script = DiskScript(name = "caller")
         val node = GraphEditor.append(script.graph, CommandType.DISK_CALL)
         val calledId = UUID.randomUUID()
@@ -39,7 +38,6 @@ class DiskCallSelectionTest {
         node.applyCalledDisk(calledId, called)
 
         assertEquals(calledId.toString(), node.string("diskId"))
-        assertNotNull(node.snapshot)
         val declared = node.declaredArguments()
         assertEquals(listOf("count", "where"), declared.map { it.name })
         assertEquals(listOf(ValueType.NUMBER, ValueType.LOCATION), declared.map { it.type })

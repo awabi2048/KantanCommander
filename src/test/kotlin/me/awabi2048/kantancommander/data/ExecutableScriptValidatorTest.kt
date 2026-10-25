@@ -31,7 +31,7 @@ class ExecutableScriptValidatorTest {
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.message.contains("ディスク内容が未設定") })
+        assertTrue(errors.any { it.message.contains("呼び出すディスクが未設定") })
         assertTrue(errors.any { it.message.contains("乗り物となる対象が未設定") })
     }
 

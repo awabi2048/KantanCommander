@@ -116,9 +116,7 @@ object PersistedScriptValidator {
                 validateFacing(it, "$path/$field", errors)
             }
         }
-        optionalObject(node, "snapshot", path, errors)?.let {
-            validateGraph(it, "$path/snapshot", errors)
-        }
+        // DISK_CALL の旧埋め込みコピー（snapshot欄）は参照化に伴い読み捨てます。
         // 折り畳みノードの内部グラフは通常グラフの中にそのまま永続化されます。
         // 旧形式の collapsed*Ids は読み捨て互換のため引き続き任意配列として許容します。
         optionalObject(node, "foldedGraph", path, errors)?.let {

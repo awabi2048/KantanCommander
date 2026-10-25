@@ -53,7 +53,6 @@ internal object LegacyConditionMigration {
             if (type == "CONDITION" || type == "FOLDED_IF") {
                 normalizeNode(node)
             }
-            normalizeGraph(node["snapshot"]?.takeIf { it.isJsonObject }?.asJsonObject)
             normalizeGraph(node["foldedGraph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         }
     }

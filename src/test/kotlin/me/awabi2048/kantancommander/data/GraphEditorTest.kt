@@ -68,13 +68,19 @@ class GraphEditorTest {
         assertNotSame(source.temporaryLocationFacingSpec, clone.temporaryLocationFacingSpec)
         assertEquals(source.itemTempRef, clone.itemTempRef)
         assertEquals(source.blockTempRef, clone.blockTempRef)
-        assertEquals(source.snapshot, clone.snapshot)
-        assertNotSame(source.snapshot, clone.snapshot)
+        // 折り畳み副グラフは内容を保ったまま独立コピーされます。内部IDは
+        // 不変条件（内部先頭=外側ID）を守るため付け替えられるため、内容のみ比較します。
+        assertEquals(
+            source.foldedGraph?.nodes?.values?.map { it.type to it.params },
+            clone.foldedGraph?.nodes?.values?.map { it.type to it.params },
+        )
+        assertNotSame(source.foldedGraph, clone.foldedGraph)
         clone.params["custom"] = "changed"
         assertEquals("value", source.params["custom"])
-        val snapshotNodeId = requireNotNull(requireNotNull(source.snapshot).entryNodeId)
-        requireNotNull(clone.snapshot).nodes.getValue(snapshotNodeId).params["seconds"] = "5"
-        assertEquals("1", requireNotNull(source.snapshot).nodes.getValue(snapshotNodeId).params["seconds"])
+        val sourceFoldedId = requireNotNull(requireNotNull(source.foldedGraph).entryNodeId)
+        val cloneFoldedId = requireNotNull(requireNotNull(clone.foldedGraph).entryNodeId)
+        requireNotNull(clone.foldedGraph).nodes.getValue(cloneFoldedId).params["seconds"] = "5"
+        assertEquals("1", requireNotNull(source.foldedGraph).nodes.getValue(sourceFoldedId).params["seconds"])
         assertEquals(successor.id, clone.next)
         assertEquals(clone.id, source.next)
         assertNull(clone.trueNext)
@@ -1223,7 +1229,7 @@ class GraphEditorTest {
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 
-    /** 構造化設定とDISK_CALLのsnapshotを含む、複製対象の全設定を一つのテストデータへ集約します。 */
+    /** 構造化設定と折り畳み副グラフを含む、複製対象の全設定を一つのテストデータへ集約します。 */
     private fun configuredNode(type: CommandType): CommandNode {
         val nested = CommandType.WAIT.newNode()
         return type.newNode().also { node ->
@@ -1257,7 +1263,7 @@ class GraphEditorTest {
             node.temporaryLocationFacingSpec = FacingSpec(FacingKind.COORDINATES, 10.0, 11.0, 12.0)
             node.itemTempRef = "item"
             node.blockTempRef = "block"
-            node.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+            node.foldedGraph = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
         }
     }
 }

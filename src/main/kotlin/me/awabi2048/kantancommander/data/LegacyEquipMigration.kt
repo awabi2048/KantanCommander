@@ -53,7 +53,6 @@ internal object LegacyEquipMigration {
                     node.add("configuredFields", rewritten)
                 }
             }
-            normalizeGraph(node["snapshot"]?.takeIf { it.isJsonObject }?.asJsonObject)
             normalizeGraph(node["foldedGraph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         }
     }
