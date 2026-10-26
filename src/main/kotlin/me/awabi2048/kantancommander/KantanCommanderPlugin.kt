@@ -231,6 +231,12 @@ class KantanCommanderPlugin : JavaPlugin() {
         }
         KcI18n.init(this)
         reloadConfig()
+        // ScriptStore は構築時の `.kcp` 読込から `worldTypes` ラムダ経由で変数の型定義を
+        // 参照するため、変数storeは rebuildConfiguredServices より先に初期化します。
+        variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
+        entityVariables = me.awabi2048.kantancommander.model.EntityVariableStore(
+            me.awabi2048.kantancommander.model.PdcEntityVariableBackend(),
+        )
         rebuildConfiguredServices()
         itemGrantService = KantanItemGrantService(this)
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(itemGrantService))
@@ -252,10 +258,6 @@ class KantanCommanderPlugin : JavaPlugin() {
         gazeDisplay = me.awabi2048.kantancommander.display.ControlBlockGazeService(this)
         server.pluginManager.registerEvents(gazeDisplay, this)
         gazeDisplay.reload()
-        variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
-        entityVariables = me.awabi2048.kantancommander.model.EntityVariableStore(
-            me.awabi2048.kantancommander.model.PdcEntityVariableBackend(),
-        )
         worldVariableUsageFinder = WorldVariableUsageFinder(
             placements = { placements.all() },
             scripts = { scripts.listAll() },
