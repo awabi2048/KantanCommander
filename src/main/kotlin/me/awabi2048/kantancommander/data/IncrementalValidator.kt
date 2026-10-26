@@ -21,9 +21,12 @@ import java.util.UUID
  *
  * - 構造差分（接続・種別・入口の変化）では使わず全量へ委譲する
  * - 一時変数の可視性が変わり得る変更（TEMP_SET絡み）では全量へ委譲する
- * - snapshot内部の変更では全量へ委譲する（表示・保存の別正本のため）
  * - 全体設定（タイマー等）は毎回再計算する（安価でstaleにしない）
  * - 構造由来エラーは接続不変のため再利用する
+ *
+ * DISK_CALL の参照先は diskId で別正本を解決するため、呼出し先ディスクの
+ * 編集は本グラフの差分に現れません。参照先の変化は呼出し元の保存・再検証時に
+ * 反映されます。
  *
  * 全量へ委譲すべき場合は null を返し、呼び出し側は従来の全量検証を使います。
  * Bukkitへ依存しないため単体テストで全量一致を検証します。
@@ -45,11 +48,12 @@ object IncrementalValidator {
         limits: GraphLimits = GraphLimits(),
         variableDefinitions: Map<String, TypedValue>? = null,
         previousSeeds: Map<String, ValueType> = emptyMap(),
+        diskResolver: (UUID) -> DiskScript? = { null },
     ): List<ScriptValidationError>? {
         val change = GraphChangeClassifier.classify(previousGraph, script.graph)
         if (IncrementalValidationPolicy.requiresStructuralRevalidation(change)) return null
         val changed = GraphChangeClassifier.changedNodeIds(previousGraph, script.graph)
-        // snapshot内部は表示・保存の別正本であり、単一ノード検証の対象外のため
+        // 単一ノード検証の対象は外側グラフと折り畳み内部です。それ以外への
         // 変更が及ぶ場合は全量へ委譲し、staleも欠落も作りません。
         if (changed.any { !containsStructuredId(script.graph, it) }) return null
         // 一時変数の可視性は下流へ波及するため、定義に影響する変更では全量へ委譲します。
@@ -84,6 +88,7 @@ object IncrementalValidator {
                 limits,
                 variableDefinitions,
                 seeds,
+                diskResolver,
             )
         }
         return errors
@@ -92,7 +97,7 @@ object IncrementalValidator {
     /**
      * 単一ノード検証の解決範囲に含まれるかを判定します。
      *
-     * 外側グラフと折り畳み内部が対象です。snapshot内部は別正本のため対象外です。
+     * 外側グラフと折り畳み内部が対象です。
      */
     private fun containsStructuredId(graph: CommandGraph, id: UUID): Boolean {
         if (id in graph.nodes) return true
@@ -107,7 +112,8 @@ object IncrementalValidator {
      * 変更ノード自体がTEMP_SETまたはEXECUTION定義（DEFINE／SET／DELETE）の場合と、
      * 折り畳み内部にそれらを含む外側が変わった場合に真を返します。
      * 判定条件は `analyzeTemporaryAvailability` のtransferと同一であり、
-     * 定義に影響する変更の見逃しを作りません。snapshot内部は別データフローのため見ません。
+     * 定義に影響する変更の見逃しを作りません。DISK_CALL の参照先は別
+     * データフローのため見ません。
      */
     private fun involvesTemporaryAvailability(graph: CommandGraph, changedId: UUID): Boolean {
         val node = findStructuredNode(graph, changedId) ?: return true
@@ -133,20 +139,34 @@ object IncrementalValidator {
     }
 
     private fun findStructuredNode(graph: CommandGraph, id: UUID): CommandNode? {
-        graph.nodes[id]?.let { return it }
-        graph.nodes.values.forEach { node ->
-            node.foldedGraph?.let { findStructuredNode(it, id) }?.let { return it }
+        // 折り畳み入れ子の深さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val queue = ArrayDeque<CommandGraph>()
+        queue.addLast(graph)
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            current.nodes[id]?.let { return it }
+            current.nodes.values.forEach { node ->
+                node.foldedGraph?.let(queue::addLast)
+            }
         }
         return null
     }
 
     private fun subtreeHasTempSet(graph: CommandGraph): Boolean =
-        graph.nodes.values.any { node ->
-            node.type == CommandType.TEMP_SET || node.foldedGraph?.let(::subtreeHasTempSet) == true
-        }
+        subtreeAny(graph) { node -> node.type == CommandType.TEMP_SET }
 
     private fun subtreeHasExecutionDefinition(graph: CommandGraph): Boolean =
-        graph.nodes.values.any { node ->
-            isExecutionDefinition(node) || node.foldedGraph?.let(::subtreeHasExecutionDefinition) == true
+        subtreeAny(graph, ::isExecutionDefinition)
+
+    private fun subtreeAny(graph: CommandGraph, predicate: (CommandNode) -> Boolean): Boolean {
+        val queue = ArrayDeque<CommandGraph>()
+        queue.addLast(graph)
+        while (queue.isNotEmpty()) {
+            queue.removeFirst().nodes.values.forEach { node ->
+                if (predicate(node)) return true
+                node.foldedGraph?.let(queue::addLast)
+            }
         }
+        return false
+    }
 }

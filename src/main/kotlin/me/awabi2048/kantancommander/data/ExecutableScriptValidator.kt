@@ -143,6 +143,9 @@ object ExecutableScriptValidator {
         script: DiskScript,
         limits: GraphLimits = GraphLimits(),
         variableDefinitions: Map<String, TypedValue>? = null,
+        // DISK_CALL の参照先を diskId から正本へ解決する関数です。
+        // 既定では解決不能として扱い、参照先の欠落は検証エラーで報告します。
+        diskResolver: (UUID) -> DiskScript? = { null },
     ): List<ScriptValidationError> {
         // variableDefinitions なしは未配置編集時の edit-time 検証、ありは配置済み
         // MyWorld での preflight 検証です。phase はこの切替えで確定します。
@@ -158,6 +161,8 @@ object ExecutableScriptValidator {
             variableDefinitions,
             phase,
             triggerSeeds = seedTemporaries(script),
+            diskResolver = diskResolver,
+            validatedDisks = mutableSetOf(),
         )
         // 個別項目検証は当面 code 既定のままのため、phase だけここで正規化します。
         // 構造由来の PERSISTED_STRUCTURAL は維持し、それ以外の PREFLIGHT 既定値を
@@ -233,7 +238,7 @@ object ExecutableScriptValidator {
      * issue #15 の増分検証入口であり、全量走査なしに指定ノードの
      * エラーだけを求めます。呼び出し側と同じ展開・到達・一時変数条件で
      * 既存の [validateNode] を実行するため、全量検証の該当部分と一致します。
-     * snapshot／foldedGraph内部の再帰は行いません。内部の差分は
+     * foldedGraph内部の再帰は行いません。内部の差分は
      * [me.awabi2048.kantancommander.data.IncrementalValidator] 側で
      * 外側IDへ対応付けて個別に検証します。
      * 存在しないIDでは空を返し、欠落自体の判定は全量側に任せます。
@@ -245,6 +250,7 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, TypedValue>? = null,
         // issue #7: 実行開始時に定義済みとなる変数（イベント引数）の型表です。
         seedTemporaries: Map<String, ValueType> = emptyMap(),
+        diskResolver: (UUID) -> DiskScript? = { null },
     ): List<ScriptValidationError> {
         val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
         val errors = mutableListOf<ScriptValidationError>()
@@ -266,6 +272,7 @@ object ExecutableScriptValidator {
             temporaryAvailability[node.id] ?: emptyMap(),
             phase,
             limits,
+            diskResolver,
         )
         // 全量側と同じく未配置編集時は phase を寄せます。
         if (phase == ValidationPhase.EDIT_TIME) {
@@ -292,10 +299,25 @@ object ExecutableScriptValidator {
         // issue #7: 実行開始時に定義済みとなるEXECUTION変数の型表です。
         // イベント引数を入口ノードの初期定義として与えます。
         triggerSeeds: Map<String, ValueType> = emptyMap(),
+        // DISK_CALL 参照先の解決関数と、呼出し連鎖全体で検証済みの diskId です。
+        // 同一ディスクへの複数回呼出しは合法のため、循環は callPath だけで判定し、
+        // 検証済みディスクの再走査は検証結果が変わらないため省きます。
+        diskResolver: (UUID) -> DiskScript? = { null },
+        validatedDisks: MutableSet<UUID> = mutableSetOf(),
+        graphDepth: Int = 0,
     ) {
+        // 呼出し連鎖・折り畳み入れ子は diskId・identity の経路検出で循環を
+        // 止めますが、検証自体のJVM再帰も上限を設けて絶対に暴走させません。
+        if (graphDepth > MAX_GRAPH_DEPTH) {
+            errors += ScriptValidationError(
+                path, null, emptySet(), "グラフの入れ子・呼出し連鎖が深すぎます",
+                code = ErrorCode.GRAPH_DEPTH_EXCEEDED, phase = phase,
+            )
+            return
+        }
         if (!visited.add(graph)) {
             errors += ScriptValidationError(
-                path, null, emptySet(), "別ディスクのコピー内容が循環参照しています",
+                path, null, emptySet(), "グラフが循環参照しています",
                 code = ErrorCode.GRAPH_CYCLE, phase = ValidationPhase.PERSISTED_STRUCTURAL,
             )
             return
@@ -318,7 +340,7 @@ object ExecutableScriptValidator {
         }
         // 一時変数はグラフ全体の宣言ではなく、実行時点で到達が保証される定義だけを
         // 参照可能とします。分岐合流では全経路の共通部分を使い、DISK_CALLの
-        // スナップショットは別グラフとして解析することで、実行時セッションの寿命と
+        // 呼出し先は別グラフとして解析することで、実行時セッションの寿命と
         // 静的検証の結果を一致させます。
         val temporaryAvailability = analyzeTemporaryAvailability(effective, triggerSeeds)
         validateReturnConsistency(effective, path, errors, variableDefinitions, temporaryAvailability)
@@ -332,39 +354,66 @@ object ExecutableScriptValidator {
                 temporaryAvailability[node.id] ?: emptyMap(),
                 phase,
                 limits,
+                diskResolver,
             )
-            // #8: snapshot 内部は被呼出側のグラフとして、呼び出し連鎖に積んで検証します。
-            node.snapshot?.let {
-                val diskId = node.string("diskId").takeIf(String::isNotBlank)
-                    ?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
+            // DISK_CALL の呼出し先は diskId で正本を解決し、呼出し連鎖に積んで
+            // 検証します。循環は callPath の diskId で判定します。
+            if (node.type == CommandType.DISK_CALL) {
+                val diskId = diskCallTargetId(node)
                 if (diskId != null && diskId in callPath) {
                     errors += nodeError(node, "$path/${node.id}", setOf("diskId"), "循環呼出しのため実行できません")
-                } else {
-                    // issue #8: 呼び出し先のグラフは、呼び出し側の引数宣言を実行開始時の
-                    // 定義として検証します。実行時は変数表を空にして引数だけを渡すため、
-                    // 外側の種子は引き継がず、宣言だけを与えます。
-                    val callSeeds = node.declaredArguments().associate { argument ->
-                        TemporaryTemplate.normalized(argument.name) to argument.type
+                } else if (diskId != null && validatedDisks.add(diskId)) {
+                    val callee = diskResolver(diskId)
+                    if (callee != null) {
+                        // issue #8: 呼び出し先のグラフは、呼び出し側の引数宣言を実行開始時の
+                        // 定義として検証します。実行時は変数表を空にして引数だけを渡すため、
+                        // 外側の種子は引き継がず、宣言だけを与えます。
+                        val callSeeds = node.declaredArguments().associate { argument ->
+                            TemporaryTemplate.normalized(argument.name) to argument.type
+                        }
+                        validateGraph(
+                            callee.graph,
+                            "$path/${node.id}/callee",
+                            errors,
+                            visited,
+                            limits,
+                            variableDefinitions,
+                            phase,
+                            callPath + diskId,
+                            triggerSeeds = callSeeds,
+                            diskResolver = diskResolver,
+                            validatedDisks = validatedDisks,
+                            graphDepth = graphDepth + 1,
+                        )
+                    } else {
+                        // 解決不能（削除・読込失敗）はノード側の検証でも報告しますが、
+                        // 連鎖側のエラーと別系統ではないためここでは記録しません。
+                        validatedDisks.remove(diskId)
                     }
-                    validateGraph(
-                        it,
-                        "$path/${node.id}/snapshot",
-                        errors,
-                        visited,
-                        limits,
-                        variableDefinitions,
-                        phase,
-                        if (diskId != null) callPath + diskId else callPath,
-                        triggerSeeds = callSeeds,
-                    )
                 }
             }
             node.foldedGraph?.let {
-                validateGraph(it, "$path/${node.id}/folded", errors, visited, limits, variableDefinitions, phase)
+                validateGraph(
+                    it,
+                    "$path/${node.id}/folded",
+                    errors,
+                    visited,
+                    limits,
+                    variableDefinitions,
+                    phase,
+                    diskResolver = diskResolver,
+                    validatedDisks = validatedDisks,
+                    graphDepth = graphDepth + 1,
+                )
             }
         }
         visited.remove(graph)
     }
+
+    /** DISK_CALL ノードの参照先 diskId を取り出します。未設定・不正形式は null です。 */
+    private fun diskCallTargetId(node: CommandNode): UUID? =
+        node.string("diskId").takeIf(String::isNotBlank)
+            ?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
 
     /**
      * issue #8: RETURNノードの型解決の共通処理です。
@@ -392,23 +441,23 @@ object ExecutableScriptValidator {
     }
 
     /**
-     * issue #8: 呼び出し先スナップショットの返り値型を推論します。
+     * issue #8: 呼び出し先グラフの返り値型を推論します。
      *
      * 折り畳み展開とデータフロー解析は既存処理を再利用し、RETURNノードの走査順と
      * 確定規則は一貫性検証と同一です。種子は呼び出し側の引数宣言だけを使い、
      * callerのEXECUTION変数は混ぜません（実行時は変数表を空にして引数だけを渡すため）。
      * 最初に確定できる型を返し、確定できなければ null とします。
      */
-    internal fun inferSnapshotReturnType(
-        snapshot: CommandGraph,
+    internal fun inferCalleeReturnType(
+        calleeGraph: CommandGraph,
         callSeeds: Map<String, ValueType>,
         variableDefinitions: Map<String, TypedValue>?,
         limits: GraphLimits,
     ): ValueType? {
-        val effective = if (snapshot.nodes.values.any(FoldedGraphs::isFolded)) {
-            FoldedGraphs.expand(snapshot, limits.maximumBranchDepth)
+        val effective = if (calleeGraph.nodes.values.any(FoldedGraphs::isFolded)) {
+            FoldedGraphs.expand(calleeGraph, limits.maximumBranchDepth)
         } else {
-            snapshot
+            calleeGraph
         }
         val availability = analyzeTemporaryAvailability(effective, callSeeds)
         for (node in effective.nodes.values) {
@@ -558,6 +607,7 @@ object ExecutableScriptValidator {
         temporaryDefinitions: Map<String, ValueType>? = null,
         phase: ValidationPhase = ValidationPhase.PREFLIGHT,
         limits: GraphLimits = GraphLimits(),
+        diskResolver: (UUID) -> DiskScript? = { null },
     ) {
         validateSystemReferences(node, path, insideForBody, errors)
         validateRemovedSystemReferences(node, path, errors)
@@ -659,7 +709,7 @@ object ExecutableScriptValidator {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
             }
             CommandType.CONDITION -> validateCondition(node, path, errors, variableDefinitions, temporaryDefinitions)
-            CommandType.DISK_CALL -> validateDiskCall(node, path, errors, variableDefinitions, temporaryDefinitions, limits)
+            CommandType.DISK_CALL -> validateDiskCall(node, path, errors, variableDefinitions, temporaryDefinitions, limits, diskResolver)
             CommandType.RETURN_VALUE -> validateReturnValue(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
             CommandType.TEMP_SET -> validateTemporary(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
@@ -2211,8 +2261,7 @@ object ExecutableScriptValidator {
     /**
      * issue #8 のディスク呼び出しを検証します。
      *
-     * 取り出し時点の独立複写（snapshot＋引数宣言）を正本とし、live定義との
-     * 差分検出は取り出し操作側で行います。ここでは自己完結性を検証します。
+     * DISK_CALL は `diskId` 参照であり、参照先は解決関数で正本へ辿ります。
      * 循環呼出しはグラフ再帰の diskId 経路で検出します。
      */
     private fun validateDiskCall(
@@ -2222,9 +2271,21 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, TypedValue>?,
         temporaryDefinitions: Map<String, ValueType>?,
         limits: GraphLimits,
+        diskResolver: (UUID) -> DiskScript?,
     ) {
-        if (node.snapshot == null) {
-            errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
+        // DISK_CALL は diskId 参照です。未設定は未構成、解釈できるのに正本が
+        // 読めない場合は参照先の欠落として扱います。
+        val diskId = diskCallTargetId(node)
+        if (diskId == null) {
+            errors += nodeError(node, path, setOf("diskId"), "呼び出すディスクが未設定です")
+            return
+        }
+        val callee = diskResolver(diskId)
+        if (callee == null) {
+            errors += nodeError(
+                node, path, setOf("diskId"), "呼び出し先のディスクが見つかりません",
+                code = ErrorCode.DANGLING_REFERENCE,
+            )
             return
         }
         // 引数宣言の厳密な解釈です。不正な項目があれば拒否します。
@@ -2290,7 +2351,7 @@ object ExecutableScriptValidator {
                 errors += nodeError(node, path, setOf("diskId"), "戻り先の変数が未定義です: $returnName")
                 return
             }
-            val calleeReturn = node.snapshot?.let { snapshot ->
+            val calleeReturn = run {
                 // issue #8: 呼び出し先の返り値は共通解決で求めます。
                 // 種子は呼び出し側の引数宣言だけを使い、callerのEXECUTION変数は
                 // 混ぜません。引数・ローカル定義・WORLD変数を別々に探索する
@@ -2298,7 +2359,7 @@ object ExecutableScriptValidator {
                 val callSeeds = declared.associate { argument ->
                     TemporaryTemplate.normalized(argument.name) to argument.type
                 }
-                inferSnapshotReturnType(snapshot, callSeeds, variableDefinitions, limits)
+                inferCalleeReturnType(callee.graph, callSeeds, variableDefinitions, limits)
             }
             if (receiverType != null && calleeReturn != null && receiverType != calleeReturn) {
                 errors += nodeError(node, path, setOf("diskId"), "戻り値の型が一致しません")
@@ -3170,14 +3231,26 @@ object ExecutableScriptValidator {
             if (start.type != CommandType.FOR_START) return@any false
             val stop = start.pairedNodeId
             val visited = mutableSetOf<UUID>()
-            fun visit(id: UUID?): Boolean {
-                if (id == null || id == stop || !visited.add(id)) return false
-                if (id == target) return true
-                val node = graph.nodes[id] ?: return false
-                return listOfNotNull(node.next, node.trueNext, node.falseNext, node.pairedNodeId).any(::visit)
+            val queue = ArrayDeque<UUID>()
+            start.trueNext?.let(queue::add)
+            // ノード連鎖の長さだけ再帰が深くなる経路を、明示キューの走査へ
+            // 置き換えています。visited で再訪を抑止するため常に終了します。
+            while (queue.isNotEmpty()) {
+                val id = queue.removeFirst()
+                if (id == stop || !visited.add(id)) continue
+                if (id == target) return@any true
+                val node = graph.nodes[id] ?: continue
+                queue += listOfNotNull(node.next, node.trueNext, node.falseNext, node.pairedNodeId)
             }
-            visit(start.trueNext)
+            false
         }
+
+    /**
+     * 検証のJVM再帰上限です。呼出し経路・折り畳み入れ子のどちらも対象で、
+     * 実行時の `execution.max-disk-call-depth`（既定3）とは独立した
+     * 安全弁として、構造的に妥当な深さより十分大きな値へ置きます。
+     */
+    private const val MAX_GRAPH_DEPTH = 64
 
     private fun nodeError(
         node: CommandNode,

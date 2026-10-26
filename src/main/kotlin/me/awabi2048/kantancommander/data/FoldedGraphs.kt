@@ -35,18 +35,26 @@ object FoldedGraphs {
     /** 内部グラフも含めた総ノード数を数えます。上限判定は外側だけでなく全体で行います。 */
     fun totalNodeCount(graph: CommandGraph): Int {
         var count = 0
+        // 経路上の循環（自身を内包する構造）だけを抑止するため、訪問集合は
+        // 経路離脱で解除します。再帰を使わず ENTER／EXIT の明示スタックで走査します。
         val visitedGraphs = java.util.Collections.newSetFromMap(
             java.util.IdentityHashMap<CommandGraph, Boolean>(),
         )
-        fun visit(current: CommandGraph) {
-            if (!visitedGraphs.add(current)) return
-            count += current.nodes.size
-            current.nodes.values.forEach { node ->
-                node.foldedGraph?.let(::visit)
+        val stack = ArrayDeque<Pair<CommandGraph, Boolean>>()
+        stack.addLast(graph to false)
+        while (stack.isNotEmpty()) {
+            val (current, exiting) = stack.removeLast()
+            if (exiting) {
+                visitedGraphs.remove(current)
+                continue
             }
-            visitedGraphs.remove(current)
+            if (!visitedGraphs.add(current)) continue
+            count += current.nodes.size
+            stack.addLast(current to true)
+            current.nodes.values.forEach { node ->
+                node.foldedGraph?.let { stack.addLast(it to false) }
+            }
         }
-        visit(graph)
         return count
     }
 
@@ -55,16 +63,22 @@ object FoldedGraphs {
         val visitedGraphs = java.util.Collections.newSetFromMap(
             java.util.IdentityHashMap<CommandGraph, Boolean>(),
         )
-        fun visit(current: CommandGraph): Boolean {
-            if (!visitedGraphs.add(current)) return false
-            try {
-                if (targetId in current.nodes) return true
-                return current.nodes.values.any { node -> node.foldedGraph?.let(::visit) == true }
-            } finally {
+        val stack = ArrayDeque<Pair<CommandGraph, Boolean>>()
+        stack.addLast(graph to false)
+        while (stack.isNotEmpty()) {
+            val (current, exiting) = stack.removeLast()
+            if (exiting) {
                 visitedGraphs.remove(current)
+                continue
+            }
+            if (!visitedGraphs.add(current)) continue
+            if (targetId in current.nodes) return true
+            stack.addLast(current to true)
+            current.nodes.values.forEach { node ->
+                node.foldedGraph?.let { stack.addLast(it to false) }
             }
         }
-        return visit(graph)
+        return false
     }
 
     /**
@@ -91,18 +105,26 @@ object FoldedGraphs {
      * 壊れた折り畳み（内部なし・先頭不一致）は展開せず線形ノードとして残し、
      * 検証側で別途エラーとして報告します。再帰の深さは構造深さ上限で打ち切ります。
      */
-    fun expand(graph: CommandGraph, maximumDepth: Int = 32): CommandGraph {
+    fun expand(graph: CommandGraph, maximumDepth: Int = 32): CommandGraph =
+        expandBounded(graph, maximumDepth)
+
+    /**
+     * 展開の内部実装です。走査パス数と入れ子再帰は合わせて [remainingDepth]
+     * 以内へ収め、予算を使い切った入れ子は未展開のまま残して検証側の
+     * エラー検出へ委ねます。
+     */
+    private fun expandBounded(graph: CommandGraph, remainingDepth: Int): CommandGraph {
         val expanded = CommandGraph(
             entryNodeId = graph.entryNodeId,
             nodes = LinkedHashMap(graph.nodes.mapValues { (_, node) -> node.deepCopy() }),
         )
         var depth = 0
-        while (expanded.nodes.values.any(::isFolded) && depth < maximumDepth) {
+        while (expanded.nodes.values.any(::isFolded) && depth < remainingDepth) {
             var replaced = false
             // 変更中の走査を避けるため、対象IDだけを先に確定します。
             val targets = expanded.nodes.values.filter(::isFolded).map { it.id }
             targets.forEach { wrapperId ->
-                if (expandSingle(expanded, wrapperId)) replaced = true
+                if (expandSingle(expanded, wrapperId, remainingDepth - depth)) replaced = true
             }
             if (!replaced) break
             depth++
@@ -117,11 +139,16 @@ object FoldedGraphs {
      * 不要です。出口（FOR_END／MERGEのnext）だけを外側の後続で上書きします。
      * 外側で後続が変わっていても、展開結果は現在の外側接続を正とします。
      */
-    private fun expandSingle(graph: CommandGraph, wrapperId: UUID): Boolean {
+    private fun expandSingle(graph: CommandGraph, wrapperId: UUID, remainingDepth: Int): Boolean {
         val wrapper = graph.nodes[wrapperId] ?: return false
         val inner = wrapper.foldedGraph?.deepCopy() ?: return false
         // 入れ子の折り畳みは先に展開し、単一走査で全体を平坦化します。
-        val flattened = if (inner.nodes.values.any(::isFolded)) expand(inner) else inner
+        // 深さ予算は親から共有し、使い切った入れ子は未展開のまま残します。
+        val flattened = if (remainingDepth > 1 && inner.nodes.values.any(::isFolded)) {
+            expandBounded(inner, remainingDepth - 1)
+        } else {
+            inner
+        }
         val head = flattened.nodes[wrapperId] ?: return false
         val exit = when (wrapper.type) {
             CommandType.FOLDED_FOR -> {

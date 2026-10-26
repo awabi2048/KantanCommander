@@ -135,7 +135,8 @@ class TriggerValidationTest {
     }
 
     @Test
-    fun `disk call snapshot uses declared arguments`() {
+    fun `disk call callee uses declared arguments`() {
+        // DISK_CALL は diskId 参照です。呼出し先は diskResolver で正本へ解決します。
         val callee = stateCondition {
             params["subject"] = ConditionSubject.VARIABLE.name
             params["variable"] = "counter"
@@ -144,13 +145,16 @@ class TriggerValidationTest {
         }
         val caller = script {}
         GraphEditor.append(caller.graph, CommandType.DISK_CALL).apply {
+            params["diskId"] = callee.id.toString()
             params["declaredArgs"] = "count:NUMBER"
             params["arg_count"] = "1"
-            snapshot = callee.graph
         }
-        // 呼び出し側の引数宣言が、スナップショット内部の定義として使われます。
+        // 呼び出し側の引数宣言が、呼出し先グラフ内部の定義として使われます。
         assertFalse(
-            ExecutableScriptValidator.validate(caller).any { it.nodeId != null },
+            ExecutableScriptValidator.validate(
+                caller,
+                diskResolver = { id -> if (id == callee.id) callee else null },
+            ).any { it.nodeId != null },
         )
     }
 }

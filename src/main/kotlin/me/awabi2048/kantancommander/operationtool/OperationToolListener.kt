@@ -193,9 +193,12 @@ class OperationToolListener(
         }
         // かんたんコマンダー制御ブロックへの右クリックはwand操作としません。
         // 非スニークはKantanInteractionListenerが編集入口として先に消費し、
-        // スニークはバニラの使用・配置へ素通しさせます。
+        // スニークはバニラの使用・配置へ素通しさせます。スクリプト読込不可の
+        // 配置も台帳登録があればwand対象から外します。
         if (event.action == Action.RIGHT_CLICK_BLOCK &&
-            event.clickedBlock?.let { plugin.placements.find(it.location) } != null
+            event.clickedBlock?.let {
+                plugin.placements.isRegistered(it.world, it.x, it.y, it.z)
+            } == true
         ) {
             return
         }

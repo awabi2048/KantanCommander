@@ -898,20 +898,21 @@ object GraphEditor {
     private fun collectUnitIds(graph: CommandGraph, starts: List<UUID>, exitId: UUID): LinkedHashSet<UUID>? {
         val collected = linkedSetOf<UUID>()
         val visited = mutableSetOf<UUID>()
-        fun visit(id: UUID): Boolean {
+        // ノード連鎖の長さだけ深くなる再帰を明示スタックへ置き換えています。
+        // 収集順は元の先頭行き深さ優先と同じになるよう、子は逆順で積みます。
+        val stack = ArrayDeque<UUID>()
+        starts.asReversed().forEach(stack::addLast)
+        while (stack.isNotEmpty()) {
+            val id = stack.removeLast()
             if (id == exitId) {
                 collected += id
-                return true
+                continue
             }
-            if (!visited.add(id)) return true
-            val node = graph.nodes[id] ?: return false
+            if (!visited.add(id)) continue
+            val node = graph.nodes[id] ?: return null
             collected += id
-            node.outgoingIds().forEach { next ->
-                if (!visit(next)) return false
-            }
-            return true
+            node.outgoingIds().asReversed().forEach(stack::addLast)
         }
-        starts.forEach { if (!visit(it)) return null }
         collected += exitId
         // 先頭自体は外側IDを引き継ぐため、呼び出し側で含めて扱います。
         return collected
@@ -1088,23 +1089,31 @@ object GraphEditor {
 
     private fun containsExecutionBefore(graph: CommandGraph, start: UUID?, stop: UUID?): Boolean {
         if (start == null || start == stop) return false
+        // MERGE以外の実行ノードが stop 手前に届くかを幅優先で判定します。
         val visited = mutableSetOf<UUID>()
-        fun visit(id: UUID?): Boolean {
-            if (id == null || id == stop || !visited.add(id)) return false
-            val node = graph.nodes[id] ?: return false
-            return node.type != CommandType.MERGE || node.outgoingIds().any(::visit)
+        val queue = ArrayDeque<UUID>()
+        queue.addLast(start)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (id == stop || !visited.add(id)) continue
+            val node = graph.nodes[id] ?: continue
+            if (node.type != CommandType.MERGE) return true
+            node.outgoingIds().forEach(queue::addLast)
         }
-        return visit(start)
+        return false
     }
 
     private fun containsNodeBefore(graph: CommandGraph, start: UUID?, stop: UUID?, target: UUID): Boolean {
         val visited = mutableSetOf<UUID>()
-        fun visit(id: UUID?): Boolean {
-            if (id == null || id == stop || !visited.add(id)) return false
+        val queue = ArrayDeque<UUID>()
+        start?.let(queue::addLast)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (id == stop || !visited.add(id)) continue
             if (id == target) return true
-            return graph.nodes[id]?.outgoingIds()?.any(::visit) == true
+            graph.nodes[id]?.outgoingIds()?.forEach(queue::addLast)
         }
-        return visit(start)
+        return false
     }
 
     private fun containsUnmergedCondition(
@@ -1114,15 +1123,18 @@ object GraphEditor {
         stop: UUID? = null,
     ): Boolean {
         val visited = mutableSetOf<UUID>()
-        fun visit(id: UUID?): Boolean {
-            if (id == null || id == stop || !visited.add(id)) return false
-            val node = graph.nodes[id] ?: return false
+        val queue = ArrayDeque<UUID>()
+        start?.let(queue::addLast)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (id == stop || !visited.add(id)) continue
+            val node = graph.nodes[id] ?: continue
             if (node.id != rootConditionId && node.type == CommandType.CONDITION && node.pairedNodeId == null) {
                 return true
             }
-            return node.outgoingIds().any(::visit)
+            node.outgoingIds().forEach(queue::addLast)
         }
-        return visit(start)
+        return false
     }
 
     /**

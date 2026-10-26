@@ -37,9 +37,12 @@ class WorldVariableUsageFinderTest {
     }
 
     @Test
-    fun `scans nested disk call snapshots but ignores literal names and other worlds`() {
+    fun `scans disk call callee graphs but ignores literal names and other worlds`() {
+        // DISK_CALL の参照先は diskId で別ディスクへ解決します。
+        // 参照先自体は未配置でも、呼出し経路の使用箇所として数えます。
         val nested = node(CommandType.DISPLAY_TEXT, "text" to "nested=${'$'}{counter}")
-        val nestedCall = node(CommandType.DISK_CALL, snapshot = graph(nested))
+        val calleeScript = script("callee", graph(nested))
+        val nestedCall = node(CommandType.DISK_CALL, "diskId" to calleeScript.id.toString())
         val nestedScript = script("nested", graph(nestedCall))
         val literalScript = script("literal", graph(node(CommandType.DISPLAY_TEXT, "text" to "counter")))
         val otherWorldScript = script("other-world", graph(node(CommandType.VARIABLE, "name" to "counter")))
@@ -55,7 +58,7 @@ class WorldVariableUsageFinderTest {
             "world",
             "COUNTER",
             placements,
-            listOf(nestedScript, literalScript, otherWorldScript),
+            listOf(nestedScript, calleeScript, literalScript, otherWorldScript),
         )
 
         assertEquals(listOf("nested"), usages.map(WorldVariableUsage::programName))
@@ -86,11 +89,9 @@ class WorldVariableUsageFinderTest {
     private fun node(
         type: CommandType,
         vararg params: Pair<String, String>,
-        snapshot: CommandGraph? = null,
     ): CommandNode = CommandNode(
         type = type,
         params = linkedMapOf(*params),
-        snapshot = snapshot,
     )
 
     private fun placement(world: String, scriptId: UUID): DiskPlacement = DiskPlacement(

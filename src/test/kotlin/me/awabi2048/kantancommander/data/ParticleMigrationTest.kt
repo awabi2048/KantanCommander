@@ -18,7 +18,7 @@ import java.util.logging.Logger
  * - 旧 `PARTICLE / GEOMETRY` → 新 `PARTICLE_GEOMETRY`。図形系・種類系を保持し、
  *   散布系キーと旧modeキーを除去します。
  * - 移行後は正規保存形式から旧modeキーを除外します。
- * - snapshotへ退避した副グラフも同じ規則で移行します。
+ * - 折り畳み保存した副グラフも同じ規則で移行します。
  */
 class ParticleMigrationTest {
     @TempDir

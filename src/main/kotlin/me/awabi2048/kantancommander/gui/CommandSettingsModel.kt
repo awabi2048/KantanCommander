@@ -1966,7 +1966,7 @@ object CommandSettingsModel {
                 node.string("fireworkData").isNotBlank()
             "item" -> typedValueConfigured(node, "item") || node.string("itemData").isNotBlank()
             "block", "sound", "effect" -> typedValueConfigured(node, fieldKey)
-            "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
+            "diskId" -> node.string("diskId").isNotBlank()
             "condition" -> conditionDetailConfigured(node)
             // ENTITYスコープの変数は対象指定が必須のため、対象まで含めて設定済みとします。
             // 対象自体はscope画面内の「対象」行から編集します。scope値が既定値の

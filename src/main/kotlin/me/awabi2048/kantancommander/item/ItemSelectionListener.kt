@@ -6,6 +6,7 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.gui.CommandSettingContext
 import me.awabi2048.kantancommander.gui.CommandSettingsModel
+import me.awabi2048.kantancommander.model.applyCalledDisk
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -62,7 +63,7 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         val selectedDisk = if (selection.kind == SelectionKind.DISK) {
             val selectedId = KantanItemService.diskId(selected) ?: return cancel(player)
             val selectedScript = plugin.scripts.load(selectedId) ?: return cancel(player)
-            selectedId to selectedScript.graph.deepCopy()
+            selectedId to selectedScript
         } else null
         val context = CommandSettingContext(selection.scriptId, selection.nodeId)
         val savedNode = runCatching {
@@ -79,9 +80,9 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
                         CommandSettingsModel.setParameter(node, "itemData", ItemStackCodec.encode(selected))
                     }
                     SelectionKind.DISK -> {
-                        val (selectedId, selectedGraph) = requireNotNull(selectedDisk)
-                        CommandSettingsModel.setParameter(node, "diskId", selectedId.toString())
-                        node.snapshot = selectedGraph
+                        val (selectedId, selectedScript) = requireNotNull(selectedDisk)
+                        // DISK_CALL は参照として保持し、識別子と引数宣言だけを転記します。
+                        node.applyCalledDisk(selectedId, selectedScript)
                     }
                     SelectionKind.MATERIAL -> {
                         val parameter = requireNotNull(selection.parameter)

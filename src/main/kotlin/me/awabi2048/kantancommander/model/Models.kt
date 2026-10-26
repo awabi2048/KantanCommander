@@ -70,9 +70,9 @@ fun inferLiteralType(raw: String): ValueType {
 /**
  * issue #8 の呼出側が保持する被呼出側の引数宣言です。
  *
- * snapshot と同じく取り出し時点の独立複写であり、被呼出側の編集で黙って
- * 変わりません。形式は `name:TYPE` のカンマ区切りです。検証層で live の
- * 定義との差分（引数名変更・削除）を検出します。
+ * 取り出し時点の独立複写であり、被呼出側の編集で黙って変わりません。
+ * 形式は `name:TYPE` のカンマ区切りです。検証層で live の定義との差分
+ * （引数名変更・削除）を検出します。
  */
 fun CommandNode.declaredArguments(): List<DiskArgument> {
     val raw = params["declaredArgs"]?.takeIf(String::isNotBlank) ?: return emptyList()
@@ -191,7 +191,6 @@ data class CommandNode(
     /** 非リテラル一時変数の参照名です。空でなければ対応するリテラル値を置き換えます。 */
     var itemTempRef: String? = null,
     var blockTempRef: String? = null,
-    var snapshot: CommandGraph? = null,
     /**
      * 折り畳みノード（FOLDED_FOR／FOLDED_IF）が内包する構造全体です。
      *
@@ -232,7 +231,6 @@ data class CommandNode(
         temporaryEntityTargetSpec = temporaryEntityTargetSpec?.copy(),
         temporaryLocationPositionSpec = temporaryLocationPositionSpec?.copy(),
         temporaryLocationFacingSpec = temporaryLocationFacingSpec?.copy(),
-        snapshot = snapshot?.deepCopy(),
         foldedGraph = foldedGraph?.deepCopy(),
     )
 

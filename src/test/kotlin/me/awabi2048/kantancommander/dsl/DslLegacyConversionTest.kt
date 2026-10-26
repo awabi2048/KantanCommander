@@ -98,7 +98,7 @@ class DslLegacyConversionTest {
         val diskResolver: (String) -> DslDiskLink? = { name ->
             val target = byId[runCatching { UUID.fromString(name) }.getOrNull()]
                 ?: scripts.firstOrNull { it.name == name }
-            target?.let { DslDiskLink(it.id, it.graph, it.arguments) }
+            target?.let { DslDiskLink(it.id, it.arguments) }
         }
         uniqueNames // 評価済みであることを明示（名前解決は resolver 側で行う）
 
@@ -266,7 +266,7 @@ class DslLegacyConversionTest {
                 "$k=${normalizeNumbers(TEMP_REF.replace(v, "%{TMP}"))}"
             }
         val specs = specSignature(n)
-        return "${n.type}|$params|$specs|${n.itemTempRef}|${n.blockTempRef}|${n.snapshot != null}"
+        return "${n.type}|$params|$specs|${n.itemTempRef}|${n.blockTempRef}"
     }
 
     /**

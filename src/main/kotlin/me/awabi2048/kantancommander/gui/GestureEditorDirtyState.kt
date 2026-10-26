@@ -56,10 +56,9 @@ object GraphStructureFingerprint {
             .joinToString("|") { id ->
                 val node = graph.nodes.getValue(id)
                 val folded = node.foldedGraph?.let { "<folded:${fingerprint(it)}>" } ?: "-"
-                val snapshot = if (node.snapshot != null) "<snapshot:${fingerprint(node.snapshot!!)}>" else "-"
                 // 接続形状だけを署名へ含めます。paramsや各種Specは値差分であり、
                 // 同一配置のまま値を変えてもレイアウトを使い回せるようにします。
-                "${node.id}:${node.type}:${node.next}:${node.trueNext}:${node.falseNext}:${node.pairedNodeId}:$folded:$snapshot"
+                "${node.id}:${node.type}:${node.next}:${node.trueNext}:${node.falseNext}:${node.pairedNodeId}:$folded"
             }
         return "entry=$entry#$body"
     }
@@ -70,7 +69,7 @@ object GraphStructureFingerprint {
  *
  * STRUCTURE判定はレイアウト・構造検証の再実行条件、FIELD_VALUE判定は
  * レイアウト再利用＋項目検証のみの条件、METADATA_ONLY判定は下部のみ更新の
- * 条件として使います。snapshot／foldedGraph内も再帰的に分類します。
+ * 条件として使います。foldedGraph内も再帰的に分類します。
  */
 object GraphChangeClassifier {
     fun classify(old: CommandGraph, new: CommandGraph): GraphChangeKind {
@@ -87,16 +86,7 @@ object GraphChangeClassifier {
             if (before.trueNext != after.trueNext) return GraphChangeKind.STRUCTURE
             if (before.falseNext != after.falseNext) return GraphChangeKind.STRUCTURE
             if (before.pairedNodeId != after.pairedNodeId) return GraphChangeKind.STRUCTURE
-            if ((before.snapshot == null) != (after.snapshot == null)) return GraphChangeKind.STRUCTURE
             if ((before.foldedGraph == null) != (after.foldedGraph == null)) return GraphChangeKind.STRUCTURE
-            if (before.snapshot != null && after.snapshot != null) {
-                when (classify(before.snapshot!!, after.snapshot!!)) {
-                    GraphChangeKind.STRUCTURE -> return GraphChangeKind.STRUCTURE
-                    GraphChangeKind.FIELD_VALUE -> sawFieldValue = true
-                    GraphChangeKind.METADATA_ONLY -> sawMetadataOnly = true
-                    GraphChangeKind.NONE -> Unit
-                }
-            }
             if (before.foldedGraph != null && after.foldedGraph != null) {
                 when (classify(before.foldedGraph!!, after.foldedGraph!!)) {
                     GraphChangeKind.STRUCTURE -> return GraphChangeKind.STRUCTURE
@@ -128,7 +118,7 @@ object GraphChangeClassifier {
      * issue #15 の差分同期境界として、複数editorへの配布時に stale な
      * 一時previewの破棄対象を特定します。追加・削除・値・接続のいずれかが
      * 変わったノードを含み、明示設定フラグだけの差は含みません。
-     * 内部グラフ（snapshot／folded）の差は外側ノードIDへ対応付けます。
+     * foldedGraph内の差は外側ノードIDへ対応付けます。
      */
     fun changedNodeIds(old: CommandGraph, new: CommandGraph): Set<java.util.UUID> {
         if (old.entryNodeId != new.entryNodeId) return old.nodes.keys + new.nodes.keys
@@ -145,14 +135,7 @@ object GraphChangeClassifier {
                 before.trueNext != after.trueNext ||
                 before.falseNext != after.falseNext ||
                 before.pairedNodeId != after.pairedNodeId ||
-                (before.snapshot == null) != (after.snapshot == null) ||
                 (before.foldedGraph == null) != (after.foldedGraph == null)
-            ) {
-                changed += id
-                continue
-            }
-            if (before.snapshot != null && after.snapshot != null &&
-                classify(before.snapshot!!, after.snapshot!!) != GraphChangeKind.NONE
             ) {
                 changed += id
                 continue

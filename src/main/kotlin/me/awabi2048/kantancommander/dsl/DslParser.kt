@@ -47,6 +47,27 @@ class DslParser(text: String) {
 
     fun parse(): DslProgram {
         val head = expect(DslTokenKind.PROGRAM, "スクリプトは program で始めてください")
+        val (name, decls) = parseHeader()
+        val body = mutableListOf<DslStmt>()
+        while (peekKind() != DslTokenKind.EOF) {
+            body += parseStatement()
+        }
+        // 末尾に残ったコメント（本文の最後の文以降）は最後の文へ寄せて保持します。
+        // 文が1つも無いプログラムではコメントの所属先が無いため保持しません。
+        if (comments.isNotEmpty() && body.isNotEmpty()) {
+            stmtComments.getOrPut(body.last().pos) { mutableListOf() } += comments.values
+            comments.clear()
+        }
+        return DslProgram(name, decls, body, head.pos, stmtComments)
+    }
+
+    /**
+     * `program "name";` と宣言部（import／trigger／defarg）だけを読み、
+     * 本文の直前で止めます。本文が構文的に壊れたディスクでも、名前と引数
+     * 宣言を参照できるよう `call` 解決用の索引作成に使います。
+     * 戻り値の残りは解析位置が本文先頭の状態です（内部向け）。
+     */
+    private fun parseHeader(): Pair<String, List<DslDecl>> {
         val name = parsePlainString("program の後に \"名前\" を書いてください", "program 名に補間は使えません")
         expectSemicolon()
         // 宣言部（import／trigger／defarg）は本文より前にだけ書けます。
@@ -59,17 +80,17 @@ class DslParser(text: String) {
                 else -> break
             }
         }
-        val body = mutableListOf<DslStmt>()
-        while (peekKind() != DslTokenKind.EOF) {
-            body += parseStatement()
-        }
-        // 末尾に残ったコメント（本文の最後の文以降）は最後の文へ寄せて保持します。
-        // 文が1つも無いプログラムではコメントの所属先が無いため保持しません。
-        if (comments.isNotEmpty() && body.isNotEmpty()) {
-            stmtComments.getOrPut(body.last().pos) { mutableListOf() } += comments.values
-            comments.clear()
-        }
-        return DslProgram(name, decls, body, head.pos, stmtComments)
+        return name to decls
+    }
+
+    /**
+     * 宣言索引向けの軽量入口です。`program "name";` と宣言部だけを解析し、
+     * 本文の検証は行いません。本文が壊れていても宣言部が正しければ
+     * 名前・引数宣言を返します。
+     */
+    fun parseDeclarations(): Pair<String, List<DslDecl>> {
+        expect(DslTokenKind.PROGRAM, "スクリプトは program で始めてください")
+        return parseHeader()
     }
 
     /**

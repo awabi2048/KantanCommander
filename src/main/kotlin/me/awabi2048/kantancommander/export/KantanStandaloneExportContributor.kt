@@ -70,6 +70,11 @@ class KantanStandaloneExportContributor(
                     script,
                     worldValueTypes,
                     entryFunctionName,
+                    // DISK_CALL の参照先も同じ名前空間へ揃えます。呼出し連鎖は
+                    // 参照解決で辿るため、解決ごとに同じ変換を適用します。
+                    diskResolver = { id ->
+                        plugin.scripts.load(id)?.let { namespaceWorldVariables(it, namespace) }
+                    },
                 )
             ) {
                 is StandaloneCompilation.Failure -> {
@@ -144,7 +149,7 @@ class KantanStandaloneExportContributor(
                     val raw = node.params[key] ?: return@forEach
                     node.params[key] = namespaceExportParam(node, key, raw, namespace, operation)
                 }
-                node.snapshot?.let(::rewrite)
+                node.foldedGraph?.let(::rewrite)
             }
         }
         rewrite(graph)
