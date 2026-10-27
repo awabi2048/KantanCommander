@@ -133,7 +133,10 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
      * 放置された未完了もここで示します。
      */
     private fun programStatusEntry(player: Player, script: DiskScript): GuiMenuEntryData {
-        val invalid = ExecutableScriptValidator.validate(script).isNotEmpty()
+        val invalid = ExecutableScriptValidator.validate(
+            script,
+            diskResolver = { plugin.scripts.load(it) },
+        ).isNotEmpty()
         return if (invalid) {
             GuiMenuEntryData(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_STATUS),

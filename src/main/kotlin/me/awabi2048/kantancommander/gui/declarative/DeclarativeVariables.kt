@@ -1,13 +1,15 @@
 package me.awabi2048.kantancommander.gui.declarative
 
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiThemes
 import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
@@ -78,38 +80,26 @@ data class WorldVariableDeleteData(
 )
 
 /**
- * 変数系子画面の宣言区画です。
+ * 変数系子画面の宣言実装です。
  *
- * 旧 `buildWorldVariables` 系の座標・寸法・素材・要素 ID・ホバー位置をそのまま転記します。
- * 一覧カードと削除ボタンは意味の異なる隣接要素として分離し、カード全体の
- * クリック領域に削除操作を吸わせません。
+ * 画面骨格（タイトル・常設説明・本文・帯・下端操作行の領域配置）は
+ * `gesture-gui/child-screen.html` が持ち、ここでは実行時データを載せた
+ * ノードを各領域へ注入します。一覧カードと削除ボタンは意味の異なる
+ * 隣接要素として分離し、カード全体のクリック領域に削除操作を吸わせません。
  */
 object DeclarativeVariables {
-    fun variablesDocument(data: WorldVariablesData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = data.title,
-            // タブ列以外は補完なしで即時反映します。
-            interpolationTicks = 0,
-            size = 0.0060,
-            lineWidth = 200,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "variables-title",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
-        )
-        DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
-            body = data.description,
-            detail = null,
-            centerX = 0.0,
-            hoverY = GestureLowerPanel.CHILD_HOVER_Y,
-        )
+    fun variablesCompiled(
+        data: WorldVariablesData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeChildScreen.regions(panel)
+        val content = mutableListOf<GestureGuiNode>()
+        val band = mutableListOf<GestureGuiNode>()
         if (data.emptyLabel != null) {
-            nodes += GestureGuiText(
+            content += GestureGuiText(
                 text = data.emptyLabel,
                 interpolationTicks = 0,
                 size = 0.0052,
@@ -117,8 +107,15 @@ object DeclarativeVariables {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "variables-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, 0.0, GestureSettingChildLayoutPolicy.TOP_CHOICE_Y, 1.0, 0.0052 * 3.0),
+                // 予約箱の中心がアンカーになるよう高さを明示します。
+                height = GestureGuiSizeSpec.Fixed(0.03),
+                absolute = placed(
+                    regions.content,
+                    0.0,
+                    GestureSettingChildLayoutPolicy.TOP_CHOICE_Y,
+                    1.0,
+                    0.03,
+                ),
             )
         } else {
             data.entries.forEachIndexed { index, entry ->
@@ -133,72 +130,56 @@ object DeclarativeVariables {
                     GestureLowerPanel.WORLD_VARIABLE_DELETE_GAP +
                     GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH / 2.0
                 val cy = GestureSettingChildLayoutPolicy.topY(row)
-                nodes += GestureGuiBlock(
-                    blockData = data.entryBackground,
-                    interpolationTicks = 0,
-                    width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.WORLD_VARIABLE_CARD_WIDTH),
-                    height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
-                    id = "lower-variable:${entry.name}",
-                    actionId = "lower-variable:${entry.name}",
-                    acceptedGestures = GestureGuiClickPolicy.CLICK,
-                    hover = DeclarativeSettings.hoverSpecOf(entry.hover),
-                    absolute = placed(
-                        frame,
-                        cardCx,
-                        cy,
-                        GestureLowerPanel.WORLD_VARIABLE_CARD_WIDTH,
-                        GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-variable:${entry.name}",
+                        label = entry.label,
+                        background = data.entryBackground,
+                        cx = cardCx,
+                        cy = cy,
+                        w = GestureLowerPanel.WORLD_VARIABLE_CARD_WIDTH,
+                        h = GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                        labelDy = -0.012,
+                        labelSize = 0.0045,
+                        labelWidth = 100,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = entry.hover,
+                        visualTag = "variable-$index",
                     ),
                 )
-                nodes += GestureGuiText(
-                    text = entry.label,
-                    interpolationTicks = 0,
-                    size = 0.0045,
-                    lineWidth = 100,
-                    alignment = GestureGuiTextAlignment.CENTER,
-                    id = "variables-label-$index",
-                    width = GestureGuiSizeSpec.Fixed(1.0),
-                    height = GestureGuiSizeSpec.Auto,
-                    absolute = placed(frame, cardCx, cy - 0.012, 1.0, 0.0045 * 3.0),
-                )
-                nodes += GestureGuiBlock(
-                    blockData = if (entry.inUse) data.deleteBackgroundInUse else data.deleteBackgroundFree,
-                    interpolationTicks = 0,
-                    width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH),
-                    height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTING_CHOICE_HEIGHT),
-                    id = "lower-variable-delete:${entry.name}",
-                    actionId = "lower-variable-delete:${entry.name}",
-                    acceptedGestures = GestureGuiClickPolicy.CLICK,
-                    hover = DeclarativeSettings.hoverSpecOf(entry.deleteHover),
-                    absolute = placed(
-                        frame,
-                        deleteCx,
-                        cy,
-                        GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH,
-                        GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-variable-delete:${entry.name}",
+                        label = Component.text(
+                            "🗑",
+                            if (entry.inUse) NamedTextColor.GRAY else NamedTextColor.WHITE,
+                        ),
+                        background = if (entry.inUse) data.deleteBackgroundInUse else data.deleteBackgroundFree,
+                        cx = deleteCx,
+                        cy = cy,
+                        w = GestureLowerPanel.WORLD_VARIABLE_DELETE_WIDTH,
+                        h = GestureLowerPanel.SETTING_CHOICE_HEIGHT,
+                        labelDy = -0.012,
+                        labelSize = 0.0048,
+                        labelWidth = 40,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = entry.deleteHover,
+                        visualTag = "variable-delete-$index",
                     ),
-                )
-                nodes += GestureGuiText(
-                    text = Component.text(
-                        "🗑",
-                        if (entry.inUse) NamedTextColor.GRAY else NamedTextColor.WHITE,
-                    ),
-                    interpolationTicks = 0,
-                    size = 0.0048,
-                    lineWidth = 40,
-                    alignment = GestureGuiTextAlignment.CENTER,
-                    id = "variables-delete-label-$index",
-                    width = GestureGuiSizeSpec.Fixed(1.0),
-                    height = GestureGuiSizeSpec.Auto,
-                    absolute = placed(frame, deleteCx, cy - 0.012, 1.0, 0.0048 * 3.0),
                 )
             }
             if (data.pageCount > 1) {
                 // 下端操作行は［新規作成］［戻る］が占めるため、ページャーは
                 // その直上の帯へ固定します。件数・ページで位置は変わりません。
                 DeclarativeSettings.pagerSection(
-                    nodes,
-                    frame,
+                    band,
+                    regions.band,
                     idPrefix = "variables",
                     elementPrefix = "lower-variables-page",
                     page = data.page,
@@ -220,9 +201,10 @@ object DeclarativeVariables {
             }
         }
         // 下端操作行は左列［新規作成］・右列［戻る］の共通規則です。
+        val footerLeft = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footerLeft,
+            regions.footerLeft,
             SettingsActionCard(
                 elementId = "lower-variables-create",
                 label = data.createLabel,
@@ -239,45 +221,41 @@ object DeclarativeVariables {
                 visualTag = "variables-create",
             ),
         )
+        val footerRight = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.backSection(
-            nodes,
-            frame,
+            footerRight,
+            regions.footerRight,
             label = data.backLabel,
             background = data.backBackground,
             centerX = GestureChoicePane.CHILD.backX,
             width = GestureChoicePane.CHILD.backWidth,
         )
-        return DeclarativeSettings.document(nodes, panel)
+        return DeclarativeChildScreen.compile(
+            title = data.title,
+            description = data.description,
+            content = content,
+            band = band,
+            footerLeft = footerLeft,
+            footerRight = footerRight,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
+        )
     }
 
-    fun typeDocument(data: WorldVariableTypeData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = data.title,
-            interpolationTicks = 0,
-            size = 0.0060,
-            lineWidth = 200,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "world-variable-type-title",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
-        )
-        nodes += GestureGuiText(
-            text = data.description,
-            interpolationTicks = 0,
-            size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
-            lineWidth = 220,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "world-variable-type-description",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HOVER_Y, 1.0, 0.0043 * 3.0),
-        )
+    fun typeCompiled(
+        data: WorldVariableTypeData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeChildScreen.regions(panel)
+        val content = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.choiceCardsSection(
-            nodes,
-            frame,
+            content,
+            regions.content,
             cards = data.options.mapIndexed { index, option ->
                 SettingsChoiceCard(
                     elementId = "lower-world-variable-type:${option.key}",
@@ -299,9 +277,10 @@ object DeclarativeVariables {
                 )
             },
         )
+        val footerLeft = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footerLeft,
+            regions.footerLeft,
             SettingsActionCard(
                 elementId = if (data.nextEnabled) "lower-world-variable-type-next" else null,
                 label = data.nextLabel,
@@ -319,45 +298,40 @@ object DeclarativeVariables {
                 consume = !data.nextEnabled,
             ),
         )
+        val footerRight = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.backSection(
-            nodes,
-            frame,
+            footerRight,
+            regions.footerRight,
             label = data.backLabel,
             background = data.backBackground,
             centerX = GestureChoicePane.CHILD.backX,
             width = GestureChoicePane.CHILD.backWidth,
         )
-        return DeclarativeSettings.document(nodes, panel)
+        return DeclarativeChildScreen.compile(
+            title = data.title,
+            description = data.description,
+            content = content,
+            footerLeft = footerLeft,
+            footerRight = footerRight,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
+        )
     }
 
-    fun deleteConfirmDocument(data: WorldVariableDeleteData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = data.title,
-            interpolationTicks = 0,
-            size = 0.0060,
-            lineWidth = 200,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "world-variable-delete-title",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
-        )
-        nodes += GestureGuiText(
-            text = data.body,
-            interpolationTicks = 0,
-            size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
-            lineWidth = 220,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "world-variable-delete-body",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HOVER_Y, 1.0, 0.0043 * 3.0),
-        )
+    fun deleteConfirmCompiled(
+        data: WorldVariableDeleteData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeChildScreen.regions(panel)
+        val footerLeft = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footerLeft,
+            regions.footerLeft,
             SettingsActionCard(
                 elementId = "lower-world-variable-delete-confirm",
                 label = data.confirmLabel,
@@ -375,9 +349,10 @@ object DeclarativeVariables {
             ),
         )
         // 取消は戻る操作と同一 ID を用います（旧実装どおり）。
+        val footerRight = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footerRight,
+            regions.footerRight,
             SettingsActionCard(
                 elementId = "lower-setting-back",
                 label = data.cancelLabel,
@@ -394,6 +369,16 @@ object DeclarativeVariables {
                 visualTag = "world-variable-delete-cancel",
             ),
         )
-        return DeclarativeSettings.document(nodes, panel)
+        // 確認画面は本文のない骨格で、確認文言は常設説明の区画へ載せます。
+        return DeclarativeChildScreen.compile(
+            title = data.title,
+            description = data.body,
+            footerLeft = footerLeft,
+            footerRight = footerRight,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
+        )
     }
 }

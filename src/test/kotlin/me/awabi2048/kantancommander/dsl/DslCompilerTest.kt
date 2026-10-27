@@ -38,9 +38,12 @@ class DslCompilerTest {
     private fun script(graph: CommandGraph) =
         DiskScript(name = "t", graph = graph)
 
-    private fun assertValid(graph: CommandGraph) {
+    private fun assertValid(
+        graph: CommandGraph,
+        diskResolver: (java.util.UUID) -> DiskScript? = { null },
+    ) {
         assertEquals(emptyList<String>(), GraphValidator.validate(graph), "構造検証")
-        val errors = ExecutableScriptValidator.validate(script(graph))
+        val errors = ExecutableScriptValidator.validate(script(graph), diskResolver = diskResolver)
         assertEquals(emptyList<String>(), errors.map { "${it.code}:${it.message}" }, "実行検証")
     }
 
@@ -272,11 +275,8 @@ class DslCompilerTest {
 
     @Test
     fun `call が DISK_CALL へ写像される`() {
-        val target = CommandGraph()
-        val wait = CommandType.WAIT.newNode()
-        target.nodes[wait.id] = wait
-        target.entryNodeId = wait.id
-        val link = DslDiskLink(UUID.randomUUID(), target)
+        // DISK_CALL は diskId 参照として記録され、呼出し先の内容は持ちません。
+        val link = DslDiskLink(UUID.randomUUID())
         val graph = compile(
             """
             program "t" ;
@@ -285,21 +285,16 @@ class DslCompilerTest {
             """.trimIndent(),
             resolver = { name -> if (name == "other_disk") link else null },
         )
-        assertValid(graph)
+        // DISK_CALL の検証には参照先の正本が要るため、ID解決のスタブを渡します。
+        assertValid(graph) { id -> if (id == link.diskId) DiskScript(name = "other_disk") else null }
         val call = graph.nodes.values.single { it.type == CommandType.DISK_CALL }
         assertEquals(link.diskId.toString(), call.string("diskId"))
-        assertNotNull(call.snapshot)
     }
 
     private fun diskLink(
         vararg arguments: me.awabi2048.kantancommander.model.DiskArgument,
-    ): DslDiskLink {
-        val target = CommandGraph()
-        val wait = CommandType.WAIT.newNode()
-        target.nodes[wait.id] = wait
-        target.entryNodeId = wait.id
-        return DslDiskLink(UUID.randomUUID(), target, arguments.toList())
-    }
+    ): DslDiskLink =
+        DslDiskLink(UUID.randomUUID(), arguments.toList())
 
     @Test
     fun `call の引数が arg_ と argvar_ へ写像される`() {

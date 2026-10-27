@@ -1,16 +1,16 @@
 package me.awabi2048.kantancommander.gui.declarative
 
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
-import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiThemes
 import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
-import me.awabi2048.kantancommander.gui.GestureLowerPanel
 import me.awabi2048.kantancommander.gui.GestureSettingChildLayoutPolicy
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -65,37 +65,21 @@ object DeclarativeDiskSettings {
         GestureSettingChildLayoutPolicy.topPageSizeFor(1) /
             GestureSettingChildLayoutPolicy.COLUMN_COUNT - 1
 
-    fun settingsDocument(
+    fun settingsCompiled(
         data: DiskSettingsData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         panel: GestureGuiPanel = GestureGuiPanel(),
-    ): GestureGuiDocument {
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled {
         val pane = GestureChoicePane.CHILD
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = data.title,
-            // タブ列以外は補完なしで即時反映します。
-            interpolationTicks = 0,
-            size = 0.0060,
-            lineWidth = 200,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "disk-settings-title",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
-        )
-        DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
-            body = data.body,
-            detail = null,
-            centerX = pane.centerX,
-            hoverY = GestureLowerPanel.CHILD_HOVER_Y,
-        )
+        val regions = DeclarativeChildScreen.regions(panel)
+        val content = mutableListOf<GestureGuiNode>()
+        val band = mutableListOf<GestureGuiNode>()
         // 取り出し操作は最上行のバナーとして置き、引数行はその下の上段行を使います。
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            content,
+            regions.content,
             SettingsActionCard(
                 elementId = "lower-disk-take-out",
                 label = data.takeOutLabel,
@@ -113,7 +97,7 @@ object DeclarativeDiskSettings {
             ),
         )
         if (data.arguments.isEmpty()) {
-            nodes += GestureGuiText(
+            content += GestureGuiText(
                 text = data.emptyArgs,
                 interpolationTicks = 0,
                 size = 0.0052,
@@ -121,48 +105,74 @@ object DeclarativeDiskSettings {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "disk-settings-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, pane.centerX, GestureSettingChildLayoutPolicy.topY(1), 1.0, 0.0052 * 3.0),
+                // 予約箱の中心がアンカーになるよう高さを明示します。
+                height = GestureGuiSizeSpec.Fixed(0.03),
+                absolute = placed(regions.content, pane.centerX, GestureSettingChildLayoutPolicy.topY(1), 1.0, 0.03),
             )
         } else {
             data.arguments.forEachIndexed { index, argument ->
                 // 取り出し行を1行分消費するため、引数行は2行目から始めます。
                 val cy = GestureSettingChildLayoutPolicy.topY(1 + index)
-                addArgumentCard(
-                    nodes,
-                    frame,
-                    elementId = "lower-diskdef-name:${argument.name}",
-                    label = argument.nameLabel,
-                    background = argument.background,
-                    outline = argument.outline,
-                    cx = -0.20,
-                    width = 0.48,
-                    cy = cy,
-                    visualIndex = index,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-diskdef-name:${argument.name}",
+                        label = argument.nameLabel,
+                        background = argument.background,
+                        cx = -0.20,
+                        cy = cy,
+                        w = 0.48,
+                        h = GestureSettingChildLayoutPolicy.CHOICE_HEIGHT,
+                        labelDy = -0.010,
+                        labelSize = 0.0045,
+                        labelWidth = 115,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = null,
+                        visualTag = "diskdef-name-$index",
+                        outline = argument.outline,
+                    ),
                 )
-                addArgumentCard(
-                    nodes,
-                    frame,
-                    elementId = "lower-diskdef-type:${argument.name}",
-                    label = argument.typeLabel,
-                    background = argument.background,
-                    outline = null,
-                    cx = 0.17,
-                    width = 0.22,
-                    cy = cy,
-                    visualIndex = index,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-diskdef-type:${argument.name}",
+                        label = argument.typeLabel,
+                        background = argument.background,
+                        cx = 0.17,
+                        cy = cy,
+                        w = 0.22,
+                        h = GestureSettingChildLayoutPolicy.CHOICE_HEIGHT,
+                        labelDy = -0.010,
+                        labelSize = 0.0045,
+                        labelWidth = 115,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = null,
+                        visualTag = "diskdef-type-$index",
+                    ),
                 )
-                addArgumentCard(
-                    nodes,
-                    frame,
-                    elementId = "lower-diskdef-delete:${argument.name}",
-                    label = Component.text("×"),
-                    background = argument.background,
-                    outline = null,
-                    cx = 0.37,
-                    width = 0.14,
-                    cy = cy,
-                    visualIndex = index,
+                DeclarativeSettings.actionCardSection(
+                    content,
+                    regions.content,
+                    SettingsActionCard(
+                        elementId = "lower-diskdef-delete:${argument.name}",
+                        label = Component.text("×"),
+                        background = argument.background,
+                        cx = 0.37,
+                        cy = cy,
+                        w = 0.14,
+                        h = GestureSettingChildLayoutPolicy.CHOICE_HEIGHT,
+                        labelDy = -0.010,
+                        labelSize = 0.0045,
+                        labelWidth = 115,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = null,
+                        visualTag = "diskdef-delete-$index",
+                    ),
                 )
             }
         }
@@ -170,8 +180,8 @@ object DeclarativeDiskSettings {
             // 下端操作行は［追加］［戻る］が占めるため、ページャーは
             // その直上の帯へ固定します。件数・ページで位置は変わりません。
             DeclarativeSettings.pagerSection(
-                nodes,
-                frame,
+                band,
+                regions.band,
                 idPrefix = "disk-settings",
                 elementPrefix = "lower-diskdef-page",
                 page = data.page,
@@ -192,9 +202,10 @@ object DeclarativeDiskSettings {
             )
         }
         // 下端操作行は左列［追加］・右列［戻る］の共通規則です。
+        val footerLeft = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footerLeft,
+            regions.footerLeft,
             SettingsActionCard(
                 elementId = "lower-diskdef-add",
                 label = data.addLabel,
@@ -211,57 +222,26 @@ object DeclarativeDiskSettings {
                 visualTag = "disk-settings-add",
             ),
         )
+        val footerRight = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.backSection(
-            nodes,
-            frame,
+            footerRight,
+            regions.footerRight,
             label = data.backLabel,
             background = data.backBackground,
             centerX = pane.backX,
             width = pane.backWidth,
         )
-        return DeclarativeSettings.document(nodes, panel)
-    }
-
-    /**
-     * 引数行の1カード（操作面＋文言）を配置します。
-     *
-     * 文言ノードのIDは要素ID由来とし、連番に依存しません。
-     */
-    private fun addArgumentCard(
-        nodes: MutableList<GestureGuiNode>,
-        frame: ContentFrame,
-        elementId: String,
-        label: Component,
-        background: BlockData,
-        outline: BlockData?,
-        cx: Double,
-        width: Double,
-        cy: Double,
-        visualIndex: Int,
-    ) {
-        val height = GestureSettingChildLayoutPolicy.CHOICE_HEIGHT
-        nodes += GestureGuiBlock(
-            blockData = background,
-            interpolationTicks = 0,
-            width = GestureGuiSizeSpec.Fixed(width),
-            height = GestureGuiSizeSpec.Fixed(height),
-            outline = outline?.let { GestureGuiOutline(it) },
-            id = elementId,
-            actionId = elementId,
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            hover = null,
-            absolute = placed(frame, cx, cy, width, height),
-        )
-        nodes += GestureGuiText(
-            text = label,
-            interpolationTicks = 0,
-            size = 0.0045,
-            lineWidth = 115,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "$elementId-label",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, cx, cy - 0.010, 1.0, 0.0045 * 3.0),
+        return DeclarativeChildScreen.compile(
+            title = data.title,
+            description = data.body,
+            content = content,
+            band = band,
+            footerLeft = footerLeft,
+            footerRight = footerRight,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
         )
     }
 }

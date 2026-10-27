@@ -26,7 +26,10 @@ class DslPrinterTest {
         worldTypes: Map<String, ValueType> = emptyMap(),
     ): CommandGraph = DslCompiler(worldTypes).compile(DslParser.parse(src)).graph
 
-    private fun assertValid(result: DslCompileResult) {
+    private fun assertValid(
+        result: DslCompileResult,
+        diskResolver: (java.util.UUID) -> DiskScript? = { null },
+    ) {
         assertEquals(emptyList<String>(), GraphValidator.validate(result.graph), "構造検証")
         // イベント引数・defarg は起動方法・引数宣言から実行開始時の定義として
         // 導入されるため、検証へは宣言部込みの DiskScript を渡します。
@@ -36,7 +39,7 @@ class DslPrinterTest {
             trigger = result.trigger,
             arguments = result.arguments,
         )
-        val errors = ExecutableScriptValidator.validate(script)
+        val errors = ExecutableScriptValidator.validate(script, diskResolver = diskResolver)
         assertEquals(emptyList<String>(), errors.map { "${it.code}:${it.message}" }, "実行検証")
     }
 
@@ -92,7 +95,7 @@ class DslPrinterTest {
             n.executionPositionSpec, n.temporaryEntityTargetSpec,
             n.temporaryLocationPositionSpec, n.temporaryLocationFacingSpec,
         ).joinToString(",") { normalizeNumbers(it.toString()) }
-        return "${n.type}|$params|$specs|${n.itemTempRef}|${n.blockTempRef}|${n.snapshot != null}|${n.foldedGraph != null}"
+        return "${n.type}|$params|$specs|${n.itemTempRef}|${n.blockTempRef}|${n.foldedGraph != null}"
     }
 
     /** 数値トークンを `1.0`→`1` のように正規化します（保存形の揺れを吸収）。 */
@@ -476,12 +479,8 @@ class DslPrinterTest {
 
     @Test
     fun `call の引数と戻り値受取が往復する`() {
-        val target = CommandGraph()
-        val wait = CommandType.WAIT.newNode()
-        target.nodes[wait.id] = wait
-        target.entryNodeId = wait.id
         val link = DslDiskLink(
-            java.util.UUID.randomUUID(), target, listOf(
+            java.util.UUID.randomUUID(), listOf(
                 me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
                 me.awabi2048.kantancommander.model.DiskArgument("label", ValueType.STRING),
                 me.awabi2048.kantancommander.model.DiskArgument("who", ValueType.ENTITY),
@@ -495,12 +494,15 @@ class DslPrinterTest {
 
             """.trimIndent()
         val resolver: (String) -> DslDiskLink? = { name -> if (name == "sub") link else null }
+        // DISK_CALL の検証には参照先の正本が要るため、ID解決のスタブを渡します。
+        val calleeStub = DiskScript(name = "sub", arguments = link.arguments)
+        val diskResolver: (java.util.UUID) -> DiskScript? = { if (it == link.diskId) calleeStub else null }
         val printer = DslPrinter(diskNameResolver = { if (it == link.diskId) "sub" else it.toString() })
         val r1 = DslCompiler(emptyMap(), resolver).compile(DslParser.parse(src))
-        assertValid(r1)
+        assertValid(r1, diskResolver)
         val text1 = printer.print(r1.graph, "t", r1.trigger, r1.arguments)
         val r2 = DslCompiler(emptyMap(), resolver).compile(DslParser.parse(text1))
-        assertValid(r2)
+        assertValid(r2, diskResolver)
         val text2 = printer.print(r2.graph, "t", r2.trigger, r2.arguments)
         assertEquals(text1, text2, "印刷テキストは不動点であるべきです")
         assertTrue(text1.contains("""result = call "sub"(count = 3, label = "hi", who = who);"""))

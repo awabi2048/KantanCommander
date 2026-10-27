@@ -34,10 +34,16 @@ import java.util.UUID
 class DslCompileException(message: String, val pos: DslPos? = null) :
     Exception(if (pos != null) "$pos: $message" else message)
 
-/** `call` の対象ディスクのリンク情報です。 */
+/**
+ * `call` の対象ディスクのリンク情報です。
+ *
+ * DISK_CALL は `diskId` 参照として動作し、呼出し先の内容は実行時点の正本を
+ * 使います。リンク時に必要なのは識別子と引数宣言だけであり、本体グラフは
+ * 持ちません（以前のように呼出側へコピーを埋め込むと、参照解決が対象の
+ * コンパイルへ再帰してしまうためです）。
+ */
 data class DslDiskLink(
     val diskId: UUID,
-    val snapshot: CommandGraph,
     val arguments: List<DiskArgument> = emptyList(),
 )
 
@@ -963,7 +969,6 @@ class DslCompiler(
             val node = node(CommandType.DISK_CALL)
             node.params["diskId"] = link.diskId.toString()
             node.params["declaredArgs"] = encodeDeclaredArguments(link.arguments)
-            node.snapshot = link.snapshot.deepCopy()
             for (argument in link.arguments) {
                 val arg = provided[argument.name] ?: continue
                 val value = arg.value

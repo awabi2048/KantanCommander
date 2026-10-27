@@ -123,18 +123,28 @@ object GraphValidator {
         if (entry in graph.nodes) {
             val visited = mutableSetOf<UUID>()
             val active = mutableSetOf<UUID>()
-            fun visit(id: UUID, depth: Int) {
+            // ノード連鎖の長さだけ再帰が深くなる経路を、ENTER／EXIT の明示
+            // スタックへ置き換えています。active は探索中の経路集合で、
+            // 循環検出と枝深度の判定は入口側の処理順と同じです。
+            val stack = ArrayDeque<Triple<UUID, Int, Boolean>>()
+            stack.addLast(Triple(entry, 0, false))
+            while (stack.isNotEmpty()) {
+                val (id, depth, exiting) = stack.removeLast()
+                if (exiting) {
+                    active.remove(id)
+                    continue
+                }
                 if (depth > limits.maximumBranchDepth) {
                     errors.add(ErrorCode.GRAPH_DEPTH_EXCEEDED, id, "構造の深さが上限 ${limits.maximumBranchDepth} を超えています")
-                    return
+                    continue
                 }
                 if (!active.add(id)) {
                     errors.add(ErrorCode.GRAPH_CYCLE, id, "実行グラフに循環があります: $id")
-                    return
+                    continue
                 }
                 if (!visited.add(id)) {
                     active.remove(id)
-                    return
+                    continue
                 }
                 val node = graph.nodes[id]
                 val nextDepth = when (node?.type) {
@@ -142,11 +152,14 @@ object GraphValidator {
                     CommandType.MERGE, CommandType.FOR_END -> (depth - 1).coerceAtLeast(0)
                     else -> depth
                 }
-                node?.outgoing()?.forEach { visit(it, nextDepth) }
-                active.remove(id)
+                stack.addLast(Triple(id, depth, true))
+                node?.outgoing()?.asReversed()?.forEach { stack.addLast(Triple(it, nextDepth, false)) }
             }
-            visit(entry, 0)
-            validateStructuredControl(graph, entry, errors)
+            // 循環を含むグラフでは所属スタックが周回ごとに増えるため、
+            // 所属検証へ進めません。構造検証で確定した循環をここで遮断します。
+            if (errors.none { it.code == ErrorCode.GRAPH_CYCLE || it.code == ErrorCode.GRAPH_DEPTH_EXCEEDED }) {
+                validateStructuredControl(graph, entry, errors)
+            }
             (graph.nodes.keys - visited).forEach { errors.add(ErrorCode.GRAPH_UNREACHABLE, it, "到達不能ノードがあります: $it") }
         }
     }
@@ -157,9 +170,22 @@ object GraphValidator {
         errors: MutableList<GraphStructuralError>,
     ) {
         val visited = mutableSetOf<Pair<UUID, List<UUID>>>()
-        fun visit(id: UUID?, forStack: List<UUID>) {
-            if (id == null || !visited.add(id to forStack)) return
-            val node = graph.nodes[id] ?: return
+        // 分岐ごとに異なる所属スタックを作る破損データも、ノード数に比例した
+        // 予算で打ち切ります。Int乗算のオーバーフローで上限を失わないようLongです。
+        val maximumStates = graph.nodes.size.toLong() * (graph.nodes.size.coerceAtMost(64) + 1)
+        // for所属スタックを持ち回る走査です。ノード連鎖の長さだけ深くなる
+        // 再帰を明示スタックへ置き換えています。（id, forStack）単位の
+        // 訪問管理は元の再帰と同じで、訪問順は結果へ影響しません。
+        val stack = ArrayDeque<Pair<UUID?, List<UUID>>>()
+        stack.addLast(entry to emptyList())
+        while (stack.isNotEmpty()) {
+            val (id, forStack) = stack.removeLast()
+            if (id == null || !visited.add(id to forStack)) continue
+            if (visited.size > maximumStates) {
+                errors.add(ErrorCode.GRAPH_DEPTH_EXCEEDED, id, "構造検証の探索量が安全上限を超えています")
+                return
+            }
+            val node = graph.nodes[id] ?: continue
             when (node.type) {
                 CommandType.BREAK, CommandType.CONTINUE -> {
                     if (forStack.isEmpty()) {
@@ -167,25 +193,29 @@ object GraphValidator {
                     }
                 }
                 CommandType.FOR_START -> {
-                    val endId = node.pairedNodeId ?: return
-                    visit(node.trueNext, forStack + node.id)
-                    visit(graph.nodes[endId]?.next, forStack)
+                    // 呼出し元の検証順序に依存せず、この走査単体でも必ず終了させます。
+                    if (node.id in forStack || forStack.size >= graph.nodes.size) {
+                        errors.add(ErrorCode.GRAPH_CYCLE, node.id, "FOR開始への循環接続があります: ${node.id}")
+                        continue
+                    }
+                    val endId = node.pairedNodeId ?: continue
+                    stack.addLast(node.trueNext to (forStack + node.id))
+                    stack.addLast(graph.nodes[endId]?.next to forStack)
                 }
                 CommandType.FOR_END -> {
                     val expectedStart = forStack.lastOrNull()
                     if (node.pairedNodeId != expectedStart) {
                         errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "FOR_END ${node.id} の所属forが実行経路と一致しません")
                     }
-                    visit(node.next, if (forStack.isEmpty()) forStack else forStack.dropLast(1))
+                    stack.addLast(node.next to (if (forStack.isEmpty()) forStack else forStack.dropLast(1)))
                 }
                 CommandType.CONDITION -> {
-                    visit(node.trueNext, forStack)
-                    visit(node.falseNext, forStack)
+                    stack.addLast(node.trueNext to forStack)
+                    stack.addLast(node.falseNext to forStack)
                 }
-                else -> visit(node.next, forStack)
+                else -> stack.addLast(node.next to forStack)
             }
         }
-        visit(entry, emptyList())
     }
 
     private fun validateCondition(graph: CommandGraph, node: CommandNode, errors: MutableList<GraphStructuralError>) {
@@ -244,47 +274,59 @@ object GraphValidator {
     }
 
     /** MERGEを持つ条件でも、枝ごとの正常終了（null終端）を許可します。 */
-    private fun allPathsReachMergeOrEnd(graph: CommandGraph, start: UUID?, stop: UUID): Boolean {
-        val active = mutableSetOf<UUID>()
-        val memo = mutableMapOf<UUID, Boolean>()
-        fun visit(id: UUID?): Boolean {
-            if (id == stop || id == null) return true
-            if (!graph.nodes.containsKey(id)) return false
-            memo[id]?.let { return it }
-            if (!active.add(id)) return false
-            val node = graph.nodes.getValue(id)
-            val outgoing = node.outgoing()
-            // outgoingが空の実行ノードは、その枝で正常終了する終端です。
-            // これを許可しないと、条件枝の末端へ到達した時点で不正扱いになり、
-            // 二分木状の早期終了を構築できません。
-            val result = outgoing.isEmpty() || outgoing.all(::visit)
-            active.remove(id)
-            memo[id] = result
-            return result
-        }
-        return visit(start)
-    }
+    private fun allPathsReachMergeOrEnd(graph: CommandGraph, start: UUID?, stop: UUID): Boolean =
+        allPathsReach(graph, start, stop)
 
-    /** forのbodyは対応FOR_ENDまたは明示的な終端へ到達できる構造を維持します。 */
+    /**
+     * startからの全経路が stop または終端へ到達するかを判定します。
+     *
+     * MERGEの条件枝・FOR_STARTのbodyのどちらにも使い、枝ごとの正常終了
+     * （null終端）と行き止まりの参照切れを区別します。ノード連鎖の長さだけ
+     * 深くなる再帰を明示スタックへ置き換えています。戻り値の意味は、
+     * 子の評価結果を lastResult で親へ返す点を除いて元の再帰と同じです。
+     */
     private fun allPathsReach(graph: CommandGraph, start: UUID?, stop: UUID): Boolean {
-        val active = mutableSetOf<UUID>()
+        if (start == null || start == stop) return true
+        if (start !in graph.nodes) return false
+        class Frame(val id: UUID, val children: List<UUID>, var nextChild: Int)
         val memo = mutableMapOf<UUID, Boolean>()
-        fun visit(id: UUID?): Boolean {
-            // 条件枝のNULL終端は、FOR_ENDへの接続漏れではなく、その枝で実行を
-            // 正常終了する正規の終端です。ここを不正扱いすると、for内の未合流
-            // 条件へ通常コマンドを追加しただけで保存できなくなります。
-            if (id == stop || id == null) return true
-            if (!graph.nodes.containsKey(id)) return false
-            memo[id]?.let { return it }
-            if (!active.add(id)) return false
-            val node = graph.nodes.getValue(id)
-            val outgoing = node.outgoing()
-            val result = outgoing.isEmpty() || outgoing.all(::visit)
-            active.remove(id)
-            memo[id] = result
-            return result
+        val active = mutableSetOf<UUID>()
+        val stack = ArrayDeque<Frame>()
+        active += start
+        stack.addLast(Frame(start, graph.nodes.getValue(start).outgoing(), 0))
+        var lastResult = true
+        while (stack.isNotEmpty()) {
+            val frame = stack.last()
+            if (!lastResult) {
+                // 子の失敗は全経路判定の失敗として確定します。
+                active.remove(frame.id)
+                stack.removeLast()
+                memo[frame.id] = false
+                continue
+            }
+            if (frame.nextChild < frame.children.size) {
+                val child = frame.children[frame.nextChild++]
+                when {
+                    // 合流点への到達はその枝の成功です。
+                    child == stop -> lastResult = true
+                    child !in graph.nodes -> lastResult = false
+                    memo.containsKey(child) -> lastResult = memo.getValue(child)
+                    // 探索中の経路への再接続（循環）は合流にも終端にも届きません。
+                    !active.add(child) -> lastResult = false
+                    else -> {
+                        stack.addLast(Frame(child, graph.nodes.getValue(child).outgoing(), 0))
+                        lastResult = true
+                    }
+                }
+            } else {
+                // 全子成功、または子のない終端は成功です。
+                active.remove(frame.id)
+                stack.removeLast()
+                memo[frame.id] = true
+                lastResult = true
+            }
         }
-        return visit(start)
+        return memo.getValue(start)
     }
 
     private fun CommandNode.outgoing(): List<UUID> =

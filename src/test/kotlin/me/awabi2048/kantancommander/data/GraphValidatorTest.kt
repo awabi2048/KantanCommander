@@ -8,6 +8,20 @@ import java.util.UUID
 
 class GraphValidatorTest {
     @Test
+    @org.junit.jupiter.api.Timeout(2)
+    fun `循環FORは所属スタックを増殖させず拒否する`() {
+        val start = CommandType.FOR_START.newNode()
+        val end = CommandType.FOR_END.newNode()
+        start.pairedNodeId = end.id
+        end.pairedNodeId = start.id
+        start.trueNext = start.id
+        val graph = CommandGraph(start.id, linkedMapOf(start.id to start, end.id to end))
+        assertTrue(GraphValidator.validateStructured(graph).any {
+            it.code == me.awabi2048.kantancommander.error.ErrorCode.GRAPH_CYCLE
+        })
+    }
+
+    @Test
     fun `paired true straight false branch and merge is valid`() {
         val condition = CommandType.CONDITION.newNode()
         val trueNode = CommandType.DISPLAY_TEXT.newNode()
@@ -92,6 +106,25 @@ class GraphValidatorTest {
         )
 
         val errors = GraphValidator.validate(graph)
+        assertTrue(errors.isEmpty())
+    }
+
+    @Test
+    fun `long node chains validate iteratively without stack overflow`() {
+        // ノード連鎖の長さだけ深くなる再帰走査は、長い直線グラフで
+        // StackOverflowError に達しえました。反復走査は連鎖長に依存しません。
+        val length = 20_000
+        val nodes = (1..length).map { CommandType.DISPLAY_TEXT.newNode() }
+        nodes.zipWithNext().forEach { (current, next) -> current.next = next.id }
+        val graph = CommandGraph(
+            nodes.first().id,
+            nodes.associateByTo(linkedMapOf()) { it.id },
+        )
+
+        val errors = GraphValidator.validate(
+            graph,
+            GraphLimits(maximumNodeCount = Int.MAX_VALUE),
+        )
         assertTrue(errors.isEmpty())
     }
 

@@ -1,5 +1,8 @@
 package me.awabi2048.kantancommander.data
 
+import me.awabi2048.kantancommander.error.ErrorCode
+import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
@@ -23,6 +26,28 @@ import java.util.UUID
 
 class ExecutableScriptValidatorTest {
     @Test
+    fun `引数契約は追加削除改名型変更を拒否し並べ替えだけ許可する`() {
+        val a = me.awabi2048.kantancommander.model.DiskArgument("a", ValueType.NUMBER)
+        val b = me.awabi2048.kantancommander.model.DiskArgument("b", ValueType.STRING)
+        val caller = DiskScript(name = "A")
+        val call = GraphEditor.append(caller.graph, CommandType.DISK_CALL)
+        val callee = DiskScript(name = "B", arguments = listOf(a, b))
+        call.params["diskId"] = callee.id.toString()
+        call.params["declaredArgs"] = "a:NUMBER,b:STRING"
+        call.params["arg_a"] = "1"
+        call.params["arg_b"] = "text"
+        val cases = listOf(listOf(a), listOf(a, b, a.copy(name = "c")), listOf(a.copy(name = "renamed"), b), listOf(a.copy(type = ValueType.STRING), b))
+        for (arguments in cases) {
+            callee.arguments = arguments
+            assertTrue(ExecutableScriptValidator.validate(caller, diskResolver = { callee }).any {
+                it.code == ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
+            })
+        }
+        callee.arguments = listOf(b, a)
+        assertTrue(ExecutableScriptValidator.validate(caller, diskResolver = { callee }).isEmpty())
+    }
+
+    @Test
     fun `incomplete command settings fail execution preflight`() {
         val script = DiskScript(name = "incomplete")
         GraphEditor.append(script.graph, CommandType.DISK_CALL)
@@ -31,7 +56,7 @@ class ExecutableScriptValidatorTest {
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.message.contains("ディスク内容が未設定") })
+        assertTrue(errors.any { it.message.contains("呼び出すディスクが未設定") })
         assertTrue(errors.any { it.message.contains("乗り物となる対象が未設定") })
     }
 
@@ -92,6 +117,56 @@ class ExecutableScriptValidatorTest {
         // 強度範囲を指定した場合も判定条件として有効です。
         condition.params["redstoneSignal"] = "1.."
         assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == condition.id })
+    }
+
+    @Test
+    fun `cyclic disk calls are reported through the resolver`() {
+        // 相互参照は diskId 経路または同一グラフの再入で検出され、
+        // 呼出し連鎖の検証が無限には続きません。
+        val aId = UUID.randomUUID()
+        val bId = UUID.randomUUID()
+        val a = DiskScript(id = aId, name = "a")
+        val callA = GraphEditor.append(a.graph, CommandType.DISK_CALL)
+        callA.params["diskId"] = bId.toString()
+        val b = DiskScript(id = bId, name = "b")
+        val callB = GraphEditor.append(b.graph, CommandType.DISK_CALL)
+        callB.params["diskId"] = aId.toString()
+        val scripts = mapOf(aId to a, bId to b)
+
+        val errors = ExecutableScriptValidator.validate(a, diskResolver = scripts::get)
+        assertTrue(errors.any { it.message.contains("循環") }, errors.joinToString(" | ") { it.message })
+    }
+
+    @Test
+    fun `deep folded nesting is bounded by the validation depth guard`() {
+        // 折り畳み入れ子の検証再帰は安全弁（MAX_GRAPH_DEPTH）で打ち切り、
+        // 深い保存データが検証スレッドのスタックを使い切ることはありません。
+        val script = DiskScript(name = "deep-fold")
+        var child: CommandNode? = null
+        var root: CommandNode? = null
+        repeat(80) {
+            val head = CommandType.FOR_START.newNode()
+            val end = CommandType.FOR_END.newNode()
+            head.pairedNodeId = end.id
+            end.pairedNodeId = head.id
+            head.trueNext = child?.id ?: end.id
+            val nodes = linkedMapOf<UUID, CommandNode>(head.id to head, end.id to end)
+            child?.let { inner ->
+                inner.next = end.id
+                nodes[inner.id] = inner
+            }
+            val wrapper = CommandType.FOLDED_FOR.newNode().copy(id = head.id)
+            wrapper.foldedGraph = CommandGraph(head.id, nodes)
+            child = wrapper
+            root = wrapper
+        }
+        val folded = requireNotNull(root)
+        script.graph = CommandGraph(folded.id, linkedMapOf(folded.id to folded))
+
+        val errors = ExecutableScriptValidator.validate(script)
+        assertTrue(errors.any { it.code == ErrorCode.GRAPH_DEPTH_EXCEEDED }) {
+            "unexpected errors: ${errors.joinToString(" | ") { it.rendered() }}"
+        }
     }
 
     @Test

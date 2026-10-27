@@ -41,23 +41,35 @@ object PersistedScriptValidator {
     }
 
     private fun validateGraph(graph: JsonObject, path: String, errors: MutableList<String>) {
-        optionalUuid(graph, "entryNodeId", path, errors)
-        val nodes = requireObject(graph, "nodes", path, errors) ?: return
-        nodes.entrySet().forEach { (key, element) ->
-            val nodePath = "$path/nodes/$key"
-            if (runCatching { UUID.fromString(key) }.isFailure) {
-                errors += "$nodePath: ノード保存キーがUUIDではありません"
+        // foldedGraph の入れ子深さだけ深くなる再帰をワークリスト走査へ
+        // 置き換えています。
+        val pending = ArrayDeque<Pair<JsonObject, String>>()
+        pending.addLast(graph to path)
+        while (pending.isNotEmpty()) {
+            val (current, currentPath) = pending.removeFirst()
+            optionalUuid(current, "entryNodeId", currentPath, errors)
+            val nodes = requireObject(current, "nodes", currentPath, errors) ?: continue
+            nodes.entrySet().forEach { (key, element) ->
+                val nodePath = "$currentPath/nodes/$key"
+                if (runCatching { UUID.fromString(key) }.isFailure) {
+                    errors += "$nodePath: ノード保存キーがUUIDではありません"
+                }
+                val node = element.asObjectOrNull()
+                if (node == null) {
+                    errors += "$nodePath: ノードがオブジェクトではありません"
+                    return@forEach
+                }
+                validateNode(node, nodePath, errors, pending)
             }
-            val node = element.asObjectOrNull()
-            if (node == null) {
-                errors += "$nodePath: ノードがオブジェクトではありません"
-                return@forEach
-            }
-            validateNode(node, nodePath, errors)
         }
     }
 
-    private fun validateNode(node: JsonObject, path: String, errors: MutableList<String>) {
+    private fun validateNode(
+        node: JsonObject,
+        path: String,
+        errors: MutableList<String>,
+        pending: ArrayDeque<Pair<JsonObject, String>>,
+    ) {
         requireUuid(node, "id", path, errors)
         requireEnum(node, "type", path, enumNames<CommandType>(), errors)
         requireStringMap(node, "params", path, errors)
@@ -116,13 +128,11 @@ object PersistedScriptValidator {
                 validateFacing(it, "$path/$field", errors)
             }
         }
-        optionalObject(node, "snapshot", path, errors)?.let {
-            validateGraph(it, "$path/snapshot", errors)
-        }
+        // DISK_CALL の旧埋め込みコピー（snapshot欄）は参照化に伴い読み捨てます。
         // 折り畳みノードの内部グラフは通常グラフの中にそのまま永続化されます。
         // 旧形式の collapsed*Ids は読み捨て互換のため引き続き任意配列として許容します。
         optionalObject(node, "foldedGraph", path, errors)?.let {
-            validateGraph(it, "$path/foldedGraph", errors)
+            pending.addLast(it to "$path/foldedGraph")
         }
     }
 

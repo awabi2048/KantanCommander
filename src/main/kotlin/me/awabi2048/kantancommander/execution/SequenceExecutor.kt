@@ -28,6 +28,7 @@ import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.ExecutionVariables
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.matchesDiskArguments
 import me.awabi2048.kantancommander.model.normalizedTemporaryName
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -321,6 +322,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             script,
             plugin.graphLimits(),
             plugin.variables.definitions(worldData.uuid),
+            diskResolver = { plugin.scripts.load(it) },
         )
         if (validationErrors.isNotEmpty()) {
             // 起動拒否は実行者の異常系通知へ一本化し、コンソールへ出しません。
@@ -959,10 +961,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             session.lastFailureCode = ErrorCode.COMMAND_FAILED
             return done(false)
         }
-        val snapshot = node.snapshot ?: return done(false)
+        // DISK_CALL は diskId 参照であり、呼出し先は実行時点の正本を読みます。
+        // 未設定・解釈不能・読込不能は呼出し不能として失敗させます。
         val diskId = node.string("diskId").takeIf(String::isNotBlank)
             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        // 循環呼出しは深さ上限の前に検出します。diskId のない旧ノードは深さ制限に委ねます。
+        // 循環呼出しは深さ上限の前に検出します。
         if (diskId != null && session.callFrames.any { it.diskId == diskId }) {
             // 循環呼出しはセッション記録へ一本化し、コンソールへ出しません。
             session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_CIRCULAR_CALL)
@@ -970,6 +973,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             session.lastFailureCode = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
             return done(false)
         }
+        val callee = diskId?.let { plugin.scripts.load(it) }
+        if (callee == null || !node.matchesDiskArguments(callee.arguments)) {
+            session.lastFailureReason = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH.code
+            session.lastFailureCode = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
+            return done(false)
+        }
+        // 呼出し先の折り畳みは保存形のため、入口グラフと同じく実行用へ展開します。
+        val calleeGraph = me.awabi2048.kantancommander.data.FoldedGraphs.expand(callee.graph)
+        val calleeScript = callee.copy(graph = calleeGraph)
         val declared = node.declaredArguments()
         // 引数を解決します。変数指定があれば呼出元の値を使い、なければリテラルを型で解釈します。
         val arguments = linkedMapOf<String, TypedValue>()
@@ -1008,8 +1020,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         // コンテキストを生成しませんが、内部呼出し元が保持している実行状態
         // を呼出先の処理へ渡す境界として、この保存・復元を残します。
         session.context = effectiveContext(session)
-        val synthetic = DiskScript(name = "snapshot", graph = snapshot)
-        runGraph(synthetic, snapshot, session, depth + 1) { success ->
+        runGraph(calleeScript, calleeGraph, session, depth + 1) { success ->
             val popped = if (session.callFrames.isNotEmpty()) {
                 session.callFrames.removeLast()
             } else null

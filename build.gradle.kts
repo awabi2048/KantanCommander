@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "me.awabi2048"
-version = "26.1017.2"
+version = "26.1027.1"
 
 repositories {
     mavenLocal()
@@ -28,7 +28,7 @@ kotlin {
 val providedDeps = listOf(
     "io.papermc.paper:paper-api:26.2.build.129-stable",
     "org.jetbrains.kotlin:kotlin-stdlib:2.3.20",
-    "com.awabi2048:CC-System:26.1017.2",
+    "com.awabi2048:CC-System:26.1027.1",
     "net.dmulloy2:ProtocolLib:5.4.0",
     "com.moulberry.axiom:AxiomPaper:5.0.1",
     "awabi2048:my-world-manager:26.905.2",
@@ -71,6 +71,8 @@ tasks.processResources {
 }
 
 tasks.shadowJar {
+    // Kotlinメタデータを結合する前に重複エントリを捨てません。
+    duplicatesStrategy = DuplicatesStrategy.WARN
     archiveClassifier.set("")
     // pom.xml の shade フィルタ相当（依存JAR含め MANIFEST.MF を除外）
     exclude("META-INF/MANIFEST.MF")

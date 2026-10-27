@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<!--
+  確認系子画面（削除・上書き確認）です。
+
+  文言は環境の要素ID解決（textById）から供給されるため、ここには構造・配置・
+  語彙classだけを記述します。素材はトークン名（danger / accent-deep）で指定し、
+  実素材は GestureGuiThemedEnvironment の標準テーマが解決します。
+
+  旧実装（DeclarativeConfirm 座標転記版）との対応:
+  - 確認ボタン背景: danger   = RED_CONCRETE（旧 YES_BACKGROUND_MATERIAL と同一素材）
+  - 取消ボタン背景: accent-deep = CYAN_TERRACOTTA（旧 NO_BACKGROUND_MATERIAL と同一素材）
+  - 文字サイズ: title/caption 語彙を採用（旧 0.005/0.004 → 0.006/0.0045 へ階調統一）
+  - ボタン受付: gestures="click" = GestureGuiClickPolicy.CLICK と同一集合
+-->
+<style>
+  /* 確認画面は中央寄せの小型ダイアログです。縦は中央、横は左右均等です。
+     スタイルシートはトップレベル要素としてのみ収集されるため section の外側に置きます。 */
+  .confirm-center { display: flex; flex-direction: column; justify-content: center;
+                    align-items: center; gap: 0.05; height: 1fr; }
+  .confirm-line   { width: 100%; text-align: center; line-width: 180; }
+  /* ボタン2個を中央へ。旧配置（±0.27 離間・0.48幅・0.12高）と同等の間隔です。 */
+  .confirm-row    { display: flex; justify-content: center; gap: 0.06;
+                    height: 0.12; }
+  .confirm-btn    { width: 0.48; font-size: 0.004; line-width: 100; }
+  /* 要素IDで確定/取消の素材語彙を固定します。 */
+  #confirm-delete { background: danger; }
+  #confirm-cancel { background: accent-deep; }
+</style>
+
+<section class="screen">
+  <div class="confirm-center">
+    <p id="confirm-title" class="title confirm-line"></p>
+    <p id="confirm-warn" class="caption confirm-line"></p>
+    <div class="confirm-row">
+      <button id="confirm-delete" action="confirm-delete" gestures="click" class="confirm-btn"></button>
+      <button id="confirm-cancel" action="confirm-cancel" gestures="click" class="confirm-btn"></button>
+    </div>
+  </div>
+</section>

@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.gui.declarative
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
 import java.lang.reflect.Proxy
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -13,7 +14,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * PICKERの宣言移行テストです。旧 `buildPicker` の配置・要素 ID・ホバー位置との一致を検証します。
+ * PICKER画面（`gesture-gui/picker.html`＋注入ノード）の構造検証です。
+ *
+ * 「リソースが診断なしで解析・注入・コンパイルできる」「要素ID・受付gesture が
+ * 旧実装の画面契約を維持する」「区画構成（左タブレール・右カード格子・下端ページャ）
+ * が保たれる」ことを固定します。
+ *
+ * `BlockData` は Proxy、`ItemStack` は未使用のため省略します。テーマ語彙→素材の
+ * 実値解決はサーバー側の責務であり、ここではスタブテーマを使います。
  * サーバーなしで実行できます。
  */
 class DeclarativePickerTest {
@@ -22,8 +30,25 @@ class DeclarativePickerTest {
         arrayOf(BlockData::class.java),
     ) { _, _, _ -> null } as BlockData
 
+    /** 実素材化に Bukkit を要するため、全フィールドをスタブ素材で埋めたテーマです。 */
+    private fun stubTheme(): GestureGuiTheme = GestureGuiTheme(
+        surface = blockData(),
+        accent = blockData(),
+        accentDeep = blockData(),
+        danger = blockData(),
+        back = blockData(),
+        on = blockData(),
+        off = blockData(),
+        outlineSelected = blockData(),
+        outlineSet = blockData(),
+        disabled = blockData(),
+        divider = blockData(),
+        scrim = blockData(),
+        scrimDanger = blockData(),
+    )
+
     private fun categories() = listOf(
-        PickerCategory("Execution", selected = true),
+        PickerCategory("Entity", selected = true),
         PickerCategory("Control", selected = false),
     )
 
@@ -35,40 +60,38 @@ class DeclarativePickerTest {
 
     private fun data(page: Int = 0, pageCount: Int = 1) = PickerData(
         categories = categories(),
-        tabBackgrounds = listOf(blockData(), blockData()),
         description = Component.text("desc", NamedTextColor.GRAY),
         cards = cards(),
-        cardBackgrounds = listOf(blockData(), blockData(), blockData()),
         pager = if (pageCount > 1) PickerPager(
             arrows = listOf(
                 PickerArrow(
                     page - 1,
                     Component.text("◀").color(NamedTextColor.GRAY),
-                    blockData(),
                     available = false,
                 ),
                 PickerArrow(
                     page + 1,
                     Component.text("▶").color(NamedTextColor.WHITE),
-                    blockData(),
                     available = true,
                 ),
             ),
             status = Component.text("${page + 1}/$pageCount"),
         ) else null,
         closeLabel = Component.text("close"),
-        closeBackground = blockData(),
     )
 
+    private fun compile(data: PickerData = data()) =
+        DeclarativePicker.compile(data, onAction = {}, theme = stubTheme())
+
     @Test
-    fun `picker compiles without diagnostics`() {
-        val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(data()), onAction = {})
+    fun `picker resource compiles without diagnostics`() {
+        val compiled = compile()
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
     }
 
     @Test
-    fun `picker preserves tabs close and cards`() {
-        val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(data()), onAction = {})
+    fun `picker preserves element ids and click gestures`() {
+        val compiled = compile()
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val byId = compiled.elements.associateBy { it.elementId }
         val click = setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY)
@@ -78,22 +101,44 @@ class DeclarativePickerTest {
             byId.keys,
         )
         byId.values.forEach { assertEquals(click, it.acceptedGestures) }
-        // 選択中タブは右へ15%伸ばします（幅 0.5405、中心 -0.76225）。
+    }
+
+    @Test
+    fun `tabs keep dimensions and selected extension`() {
+        val compiled = compile()
+        val byId = compiled.elements.associateBy { it.elementId }
+        // 選択中タブは基準幅0.47を15%伸ばし（0.5405）、左端は内容域端です。
         val tab0 = byId.getValue("lower-cat:0")
-        assertEquals(-1.0325, tab0.bounds.minX, 1.0e-9)
-        assertEquals(-0.492, tab0.bounds.maxX, 1.0e-9)
-        assertEquals(0.38 - 0.05, tab0.bounds.minY, 1.0e-9)
-        assertEquals(0.38 + 0.05, tab0.bounds.maxY, 1.0e-9)
-        // 非選択タブは基準寸法のままです。
+        assertEquals(0.5405, tab0.bounds.maxX - tab0.bounds.minX, 1.0e-6)
+        assertEquals(0.10, tab0.bounds.maxY - tab0.bounds.minY, 1.0e-6)
+        // 非選択タブは基準寸法で、選択中と同じ左端に揃います。
         val tab1 = byId.getValue("lower-cat:1")
-        assertEquals(-0.7975 - 0.235, tab1.bounds.minX, 1.0e-9)
-        assertEquals(-0.7975 + 0.235, tab1.bounds.maxX, 1.0e-9)
-        // 先頭カードは左列・先頭行の rect と一致します。
-        val card = byId.getValue("lower-type:SAY")
-        assertEquals(-0.10 - 0.33, card.bounds.minX, 1.0e-9)
-        assertEquals(-0.10 + 0.33, card.bounds.maxX, 1.0e-9)
-        assertEquals(0.20 - 0.05, card.bounds.minY, 1.0e-9)
-        assertEquals(0.20 + 0.05, card.bounds.maxY, 1.0e-9)
+        assertEquals(0.47, tab1.bounds.maxX - tab1.bounds.minX, 1.0e-6)
+        assertEquals(tab0.bounds.minX, tab1.bounds.minX, 1.0e-6)
+        // ピッチ0.11（高さ0.10＋間隔0.01）で縦に積みます。
+        assertEquals(0.11, tab0.bounds.minY - tab1.bounds.minY, 1.0e-6)
+    }
+
+    @Test
+    fun `cards keep 2 column grid metrics`() {
+        val compiled = compile()
+        val byId = compiled.elements.associateBy { it.elementId }
+        val say = byId.getValue("lower-type:SAY")
+        val wait = byId.getValue("lower-type:WAIT")
+        val jump = byId.getValue("lower-type:JUMP")
+        // カードはすべて 0.66×0.10 です。
+        for (card in listOf(say, wait, jump)) {
+            assertEquals(0.66, card.bounds.maxX - card.bounds.minX, 1.0e-6)
+            assertEquals(0.10, card.bounds.maxY - card.bounds.minY, 1.0e-6)
+        }
+        // 同一行の2カードは同じ高さで、列間隔0.11（左列右端→右列左端）です。
+        assertEquals(say.bounds.minY, wait.bounds.minY, 1.0e-6)
+        assertEquals(0.11, wait.bounds.minX - say.bounds.maxX, 1.0e-6)
+        // 次行は行ピッチ0.11だけ下です。
+        assertEquals(0.11, say.bounds.minY - jump.bounds.minY, 1.0e-6)
+        // 格子は右領域内で中央揃えです（説明・ページャと同じ列中心）。
+        val centerX = (say.bounds.minX + wait.bounds.maxX) / 2.0
+        assertEquals(0.28, centerX, 1.0e-3)
     }
 
     @Test
@@ -101,9 +146,8 @@ class DeclarativePickerTest {
         // issue #review P2-10: 説明の2行構成を空白結合で潰さないことを検証します。
         val twoLines = data().copy(
             cards = listOf(PickerCard("SAY", "Say", listOf("機能の説明", "バニラ対応"), -0.10, 0.29)),
-            cardBackgrounds = listOf(blockData()),
         )
-        val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(twoLines), onAction = {})
+        val compiled = compile(twoLines)
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val hover = compiled.elements.associateBy { it.elementId }.getValue("lower-type:SAY").hoverText
         assertNotNull(hover)
@@ -113,26 +157,9 @@ class DeclarativePickerTest {
     }
 
     @Test
-    fun `card hovers follow legacy row positions`() {
-        val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(data()), onAction = {})
-        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
-        val byId = compiled.elements.associateBy { it.elementId }
-        // 上段（row 0）はカード上、次の行（最終行）はカード下へ出ます。
-        val first = byId.getValue("lower-type:SAY").hoverText
-        assertNotNull(first)
-        assertEquals(-0.10, first!!.x, 1.0e-9)
-        assertEquals(0.20 + 0.05 + 0.04, first.y, 1.0e-9)
-        val last = byId.getValue("lower-type:JUMP").hoverText
-        assertNotNull(last)
-        assertEquals(-0.10, last!!.x, 1.0e-9)
-        assertEquals(0.09 - 0.05 - 0.04, last.y, 1.0e-9)
-    }
-
-    @Test
     fun `hover coordinates pass through to card elements`() {
         val five = (0 until 5).map { PickerCard("K$it", "k$it", listOf("h$it"), 0.28, -0.38) }
-        val full = data().copy(cards = five, cardBackgrounds = (0 until 5).map { blockData() })
-        val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(full), onAction = {})
+        val compiled = compile(data().copy(cards = five))
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         // 行位置規則の解決値（実行時 adapter が旧 parallelButtonHover で求めます）を
         // そのまま操作面へ載せます。ここでは中段集約スロット値を入力します。
@@ -144,17 +171,24 @@ class DeclarativePickerTest {
 
     @Test
     fun `pager renders both arrows but routes available ones`() {
-        val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(data(page = 0, pageCount = 2)), onAction = {})
+        val compiled = compile(data(page = 0, pageCount = 2))
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val byId = compiled.elements.associateBy { it.elementId }
         // 利用不可方向に操作面は作りません。
         assertNull(byId["lower-picker-page:-1"])
         assertNotNull(byId["lower-picker-page:1"])
-        // 両方向の背景は描画します。
+        // 両方向の背景は描画します（利用可否に関わらず矢印ブロックは2枚）。
         val backgrounds = compiled.visuals.filterIsInstance<GestureGuiVisual.Block>()
-            .filter { kotlin.math.abs(it.x - (0.28 - 0.12)) < 1.0e-9 || kotlin.math.abs(it.x - (0.28 + 0.12)) < 1.0e-9 }
+            .filter { it.visualId.contains("picker-page") }
         assertEquals(2, backgrounds.size)
         // ページ表示を出します。
         assertTrue(compiled.visuals.filterIsInstance<GestureGuiVisual.Text>().any { it.visualId.contains("page-status") })
+    }
+
+    @Test
+    fun `single page omits pager elements`() {
+        val compiled = compile(data(pageCount = 1))
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        assertTrue(compiled.elements.none { it.elementId.startsWith("lower-picker-page:") })
     }
 }

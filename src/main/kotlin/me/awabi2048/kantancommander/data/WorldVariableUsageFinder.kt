@@ -49,7 +49,8 @@ data class WorldVariableUsageScanResult(
  *
  * ワールド内変数はMyWorld単位の正本なので、未配置の別ワールド用プログラムまで
  * 誤って削除不可にしないよう、現在のMyWorldにある配置だけを対象にします。
- * DISK_CALLのsnapshotも実行時に使われるグラフであるため、必ず再帰的に走査します。
+ * DISK_CALLの呼出し先も実行時に使われるグラフであるため、参照解決で必ず
+ * 再帰的に走査します。
  */
 class WorldVariableUsageFinder(
     private val placements: () -> Iterable<DiskPlacement>,
@@ -119,7 +120,10 @@ class WorldVariableUsageFinder(
                 .distinct()
 
             placedScriptIds.mapNotNull { scriptById[it] }.forEach { script ->
-                val referencedNames = WorldVariableReferenceScanner.referencedNames(script.graph)
+                val referencedNames = WorldVariableReferenceScanner.referencedNames(
+                    script.graph,
+                    diskResolver = { scriptById[it] },
+                )
                 normalizedTargets.values.distinct()
                     .filter(referencedNames::contains)
                     .forEach { target ->
@@ -145,7 +149,12 @@ class WorldVariableUsageFinder(
 
 /** 保存グラフ内のワールド内変数名を、GUIと同じ名前正規化で抽出します。 */
 internal object WorldVariableReferenceScanner {
-    fun referencedNames(graph: CommandGraph): Set<String> {
+    fun referencedNames(
+        graph: CommandGraph,
+        // DISK_CALL の参照先を diskId から正本へ解決する関数です。
+        // 既定では参照先を辿りません。
+        diskResolver: (java.util.UUID) -> DiskScript? = { null },
+    ): Set<String> {
         val references = linkedSetOf<String>()
         val visited = Collections.newSetFromMap(IdentityHashMap<CommandGraph, Boolean>())
 
@@ -154,8 +163,12 @@ internal object WorldVariableReferenceScanner {
             if (name.isNotEmpty()) references += name
         }
 
+        // 呼出し連鎖・折り畳み入れ子の深さだけ深くなる再帰を
+        // ワークリスト走査へ置き換えています。
+        val pending = ArrayDeque<CommandGraph>()
+        visited.add(graph)
+        pending.addLast(graph)
         fun scan(current: CommandGraph) {
-            if (!visited.add(current)) return
             current.nodes.values.forEach { node ->
                 // 文字列・数値式・各種入力欄に埋め込まれた${name}を共通解析します。
                 node.params.values.forEach { raw ->
@@ -179,11 +192,23 @@ internal object WorldVariableReferenceScanner {
                 ) {
                     add(node.string("variable"))
                 }
-                node.snapshot?.let(::scan)
+                node.foldedGraph?.let { folded ->
+                    if (visited.add(folded)) pending.addLast(folded)
+                }
+                if (node.type == CommandType.DISK_CALL) {
+                    node.string("diskId").takeIf(String::isNotBlank)
+                        ?.let { raw -> runCatching { java.util.UUID.fromString(raw) }.getOrNull() }
+                        ?.let(diskResolver)
+                        ?.graph?.let { callee ->
+                            if (visited.add(callee)) pending.addLast(callee)
+                        }
+                }
             }
         }
 
-        scan(graph)
+        while (pending.isNotEmpty()) {
+            scan(pending.removeFirst())
+        }
         return references
     }
 }

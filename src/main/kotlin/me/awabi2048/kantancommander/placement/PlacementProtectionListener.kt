@@ -44,5 +44,8 @@ class PlacementProtectionListener(
         if (isPlacement(event.block)) event.isCancelled = true
     }
 
-    private fun isPlacement(block: Block): Boolean = plugin.placements.find(block.location) != null
+    // 保護判定はスクリプトの読込可否に関わらず台帳の登録だけを見ます。
+    // 読込不可の間に保護が外れると、実体だけ失われて台帳が孤立します。
+    private fun isPlacement(block: Block): Boolean =
+        plugin.placements.isRegistered(block.world, block.x, block.y, block.z)
 }

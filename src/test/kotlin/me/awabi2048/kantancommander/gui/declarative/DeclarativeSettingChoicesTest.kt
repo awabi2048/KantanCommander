@@ -3,19 +3,24 @@ package me.awabi2048.kantancommander.gui.declarative
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
 import java.lang.reflect.Proxy
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.block.data.BlockData
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
  * 設定候補子画面の区画テストです。旧 `buildSettingChoices(child = true)` との
- * 座標・要素 ID・ホバー置換の一致を検証します。サーバーなしで実行できます。
+ * 座標・要素 ID・ホバー置換の一致、および骨格リソース
+ * `gesture-gui/setting-choices-child.html` への注入コンパイルを検証します。
+ * サーバーなしで実行できます。
  */
 class DeclarativeSettingChoicesTest {
     private val panel = GestureGuiPanel(width = 2.1213203435596424, height = 1.0606601717798212, frameWidth = 0.045)
@@ -24,6 +29,23 @@ class DeclarativeSettingChoicesTest {
         BlockData::class.java.classLoader,
         arrayOf(BlockData::class.java),
     ) { _, _, _ -> null } as BlockData
+
+    /** 実素材化に Bukkit を要するため、全フィールドをスタブ素材で埋めたテーマです。 */
+    private fun stubTheme(): GestureGuiTheme = GestureGuiTheme(
+        surface = blockData(),
+        accent = blockData(),
+        accentDeep = blockData(),
+        danger = blockData(),
+        back = blockData(),
+        on = blockData(),
+        off = blockData(),
+        outlineSelected = blockData(),
+        outlineSet = blockData(),
+        disabled = blockData(),
+        divider = blockData(),
+        scrim = blockData(),
+        scrimDanger = blockData(),
+    )
 
     private fun frame() = contentFrame(panel)
 
@@ -164,5 +186,125 @@ class DeclarativeSettingChoicesTest {
         val elements = pagerCompiled.elements.associateBy { it.elementId }
         assertEquals(click, elements.getValue("lower-setting-choice-page:1").acceptedGestures)
         assertNotNull(elements["lower-setting-choice-page:1"])
+    }
+
+    /**
+     * 骨格リソース＋注入の実経路です。呼び出し側（`finishSettingChoicesChild`）と同じ
+     * 区画分解でノードを組み立て、診断なし・要素 ID 維持・旧実効座標の一致を固定します。
+     */
+    private fun scaffoldCompiled(
+        hint: Component? = null,
+        detail: Component? = null,
+        cards: List<SettingsChoiceCard> = emptyList(),
+        page: Int = 0,
+        pageCount: Int = 1,
+        dividerRowCount: Int? = null,
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeSettingChoicesChild.regions(panel)
+        val pane = me.awabi2048.kantancommander.gui.GestureChoicePane.CHILD
+
+        val header = mutableListOf<GestureGuiNode>()
+        if (hint != null) {
+            DeclarativeSettings.hintSection(header, regions.header, hint, x = pane.centerX, y = 0.12, id = "setting-hint")
+        } else {
+            DeclarativeSettings.valueRowsSection(
+                header,
+                regions.header,
+                rows = listOf(SettingsValueRow("setting-header", "field", Component.text("value"), 0.36)),
+                labelX = pane.leftX,
+                valueX = pane.rightX,
+            )
+            DeclarativeSettings.descriptionSection(
+                header,
+                regions.header,
+                body = Component.text("desc", NamedTextColor.GRAY),
+                detail = detail?.let { DescriptionDetail(it, 0.16) },
+                centerX = pane.centerX,
+                hoverY = 0.23,
+            )
+        }
+        val cardNodes = mutableListOf<GestureGuiNode>()
+        DeclarativeSettings.choiceCardsSection(cardNodes, regions.cards, cards)
+        dividerRowCount?.let {
+            DeclarativeSettings.groupDividerSection(cardNodes, regions.cards, pane, it)
+        }
+        val footer = mutableListOf<GestureGuiNode>()
+        if (pageCount > 1) {
+            DeclarativeSettings.pagerSection(
+                footer,
+                regions.footer,
+                idPrefix = "setting-choice",
+                elementPrefix = "lower-setting-choice-page",
+                page = page,
+                pageCount = pageCount,
+                centerX = pane.pagerStatusX,
+                centerY = -0.43,
+                arrowBackgrounds = listOf(blockData(), blockData()),
+                arrowGlyphs = listOf(Component.text("◀"), Component.text("▶")),
+                status = Component.text("${page + 1}/$pageCount"),
+                arrowOffset = pane.pagerArrowOffset,
+                arrowWidth = pane.pagerArrowWidth,
+            )
+        }
+        DeclarativeSettings.backSection(footer, regions.footer, Component.text("back"), blockData(), pane.backX, pane.backWidth)
+        return DeclarativeSettingChoicesChild.compile(
+            header = header,
+            cards = cardNodes,
+            footer = footer,
+            onAction = {},
+            panel = panel,
+            theme = stubTheme(),
+        )
+    }
+
+    @Test
+    fun `scaffold resource compiles with injected regions`() {
+        val compiled = scaffoldCompiled(
+            detail = Component.text("detail"),
+            cards = listOf(
+                choice("lower-setting-choice:a", enabled = true, hover = null, index = 0),
+                choice("lower-setting-choice:b", enabled = true, hover = null, index = 1),
+            ),
+            page = 0,
+            pageCount = 2,
+        )
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        val byId = compiled.elements.associateBy { it.elementId }
+        assertEquals(
+            setOf("lower-setting-choice:a", "lower-setting-choice:b", "lower-setting-choice-page:1", "lower-setting-back"),
+            byId.keys,
+        )
+        // 見出し・常設説明・詳細・ページ表示の表示物が出ます。
+        val visualIds = compiled.visuals.map { it.visualId }
+        assertTrue(visualIds.any { it.contains("setting-header-label") }, "$visualIds")
+        assertTrue(visualIds.any { it.contains("setting-header-value") }, "$visualIds")
+        assertTrue(visualIds.any { it.contains("setting-description-hover") }, "$visualIds")
+        assertTrue(visualIds.any { it.contains("setting-description-detail") }, "$visualIds")
+        assertTrue(visualIds.any { it.contains("setting-choice-page-status") }, "$visualIds")
+    }
+
+    @Test
+    fun `scaffold hint mode omits header and keeps back`() {
+        val compiled = scaffoldCompiled(hint = Component.text("hint"))
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        val visualIds = compiled.visuals.map { it.visualId }
+        assertTrue(visualIds.any { it.contains("setting-hint") }, "$visualIds")
+        assertTrue(visualIds.none { it.contains("setting-header-label") }, "$visualIds")
+        assertTrue(visualIds.none { it.contains("setting-description-hover") }, "$visualIds")
+        assertTrue(compiled.elements.associateBy { it.elementId }.containsKey("lower-setting-back"))
+    }
+
+    @Test
+    fun `scaffold cards keep child screen coordinates`() {
+        val compiled = scaffoldCompiled(
+            cards = listOf(choice("lower-setting-choice:a", enabled = true, hover = null, index = 0)),
+        )
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        val element = compiled.elements.associateBy { it.elementId }.getValue("lower-setting-choice:a")
+        // 子画面の左列中心 -0.53・先頭行 0.08・幅 0.92・高 0.10 を維持します。
+        assertEquals(-0.53 - 0.46, element.bounds.minX, 1.0e-9)
+        assertEquals(-0.53 + 0.46, element.bounds.maxX, 1.0e-9)
+        assertEquals(0.08 - 0.05, element.bounds.minY, 1.0e-9)
+        assertEquals(0.08 + 0.05, element.bounds.maxY, 1.0e-9)
     }
 }

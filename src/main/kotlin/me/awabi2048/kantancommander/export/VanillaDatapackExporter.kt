@@ -60,15 +60,27 @@ class VanillaDatapackExporter(
         root: DiskScript,
         worldValueTypes: Map<String, ValueType> = emptyMap(),
         entryFunctionName: String = root.id.toString(),
+        // DISK_CALL の参照先を diskId から正本へ解決する関数です。
+        // 呼出し元へ適用した変換（名前空間付与等）は、この解決へも同じ変換を
+        // 施した解決関数を渡して、呼出し連鎖全体で一貫させます。
+        diskResolver: (UUID) -> DiskScript? = { scripts.load(it) },
     ): StandaloneCompilation {
         val exportRoot = root.copy(graph = FoldedGraphs.expand(root.graph.deepCopy()))
+        // 呼出し先の解決・展開キャッシュはコンパイル単位で作り直します。
+        calleeResolver = diskResolver
+        expandedCalleeGraphs.clear()
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
         val variableDefinitions = worldValueTypes.mapValues { (_, type) ->
             if (type == ValueType.NUMBER) TypedValue(type, numberValue = 0.0)
             else TypedValue(type, stringValue = "")
         }
-        errors += ExecutableScriptValidator.validate(exportRoot, graphLimits, variableDefinitions).map { it.rendered() }
+        errors += ExecutableScriptValidator.validate(
+            exportRoot,
+            graphLimits,
+            variableDefinitions,
+            diskResolver = diskResolver,
+        ).map { it.rendered() }
         collectWarnings(exportRoot.graph, "root", warnings)
         annotateValueTypes(exportRoot.graph, worldValueTypes, errors)
         validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0, worldValueTypes)
@@ -114,8 +126,11 @@ class VanillaDatapackExporter(
         callDepth: Int,
         worldValueTypes: Map<String, ValueType>,
     ) {
+        // DISK_CALL は実行時点の正本を参照するため、同一ディスクへの複数回
+        // 呼出しは合法です。visited は呼出し経路上の循環検出としてのみ使い、
+        // 経路を離れた時点で解除します（経路ベース）。
         if (!visited.add(script.graph)) {
-            errors += "${script.id}: 別ディスクのコピー内容が循環参照しています"
+            errors += "${script.id}: 呼出し先の参照が循環しています"
             return
         }
         me.awabi2048.kantancommander.data.GraphValidator.validate(script.graph, graphLimits).forEach {
@@ -247,12 +262,16 @@ class VanillaDatapackExporter(
                     validatePosition(script, node, node.destinationSpec, errors)
                 }
                 CommandType.DISK_CALL -> when {
-                    node.snapshot == null ->
-                        errors += "${script.id}/${node.id}: コピー内容がありません"
                     callDepth >= maximumDiskCallDepth ->
                         errors += "${script.id}/${node.id}: 別ディスク呼出深度が上限 $maximumDiskCallDepth を超えます"
-                    else ->
-                        validate(script.copy(graph = node.snapshot!!), errors, visited, callDepth + 1, worldValueTypes)
+                    else -> {
+                        val callee = expandedCallee(node)
+                        if (callee == null) {
+                            errors += "${script.id}/${node.id}: 呼び出し先のディスクが見つかりません"
+                        } else {
+                            validate(callee, errors, visited, callDepth + 1, worldValueTypes)
+                        }
+                    }
                 }
                 CommandType.CONDITION -> validateCondition(script, node, errors, worldValueTypes)
                 CommandType.VARIABLE -> {
@@ -536,11 +555,46 @@ class VanillaDatapackExporter(
         }
     }
 
+    /**
+     * 現在のコンパイルで使う DISK_CALL 参照解決です。`compileForStandalone` の
+     * 呼出し側が、呼出し元へ適用した変換と一貫する解決関数を設定します。
+     */
+    private var calleeResolver: (UUID) -> DiskScript? = { scripts.load(it) }
+
+    /** DISK_CALL ノードが参照する正本を解決します。未設定・不正・未ロードは null です。 */
+    private fun resolveCallee(node: CommandNode): DiskScript? =
+        node.string("diskId").takeIf(String::isNotBlank)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+            ?.let(calleeResolver)
+
+    /**
+     * 呼出し先の展開結果を diskId ごとに同一インスタンスで保持します。
+     * `FoldedGraphs.expand` は毎回新しいグラフを返すため、identity ベースの
+     * 訪問済み集合（循環検出）が機能するよう、コンパイル単位で共有します。
+     */
+    private val expandedCalleeGraphs = mutableMapOf<UUID, CommandGraph>()
+
+    /** 呼出し先の正本を、エクスポート処理と同じ展開形へ揃えて返します。 */
+    private fun expandedCallee(node: CommandNode): DiskScript? {
+        val diskId = node.string("diskId").takeIf(String::isNotBlank)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: return null
+        val callee = calleeResolver(diskId) ?: return null
+        val graph = expandedCalleeGraphs.getOrPut(diskId) { FoldedGraphs.expand(callee.graph) }
+        return callee.copy(graph = graph)
+    }
+
     private fun annotateValueTypes(
         graph: CommandGraph,
         worldValueTypes: Map<String, ValueType>,
         errors: MutableList<String>,
     ) {
+        // 呼出し先は参照解決で辿るため、同一ディスクの再走査と循環を
+        // 同一の訪問済み集合で抑止します。走査は呼出し連鎖の長さだけ深くなる
+        // 再帰を避けるためワークリストで行います。
+        val annotated = Collections.newSetFromMap(IdentityHashMap<CommandGraph, Boolean>())
+        val pending = ArrayDeque<CommandGraph>()
+        annotated.add(graph)
+        pending.addLast(graph)
         fun annotate(current: CommandGraph) {
             current.nodes.values.forEach { node ->
                 if (node.type == CommandType.CONDITION &&
@@ -569,10 +623,16 @@ class VanillaDatapackExporter(
                         node.params[EXPORT_VARIABLE_TYPE] = type.name
                     }
                 }
-                node.snapshot?.let(::annotate)
+                if (node.type == CommandType.DISK_CALL) {
+                    expandedCallee(node)?.graph?.let { callee ->
+                        if (annotated.add(callee)) pending.addLast(callee)
+                    }
+                }
             }
         }
-        annotate(graph)
+        while (pending.isNotEmpty()) {
+            annotate(pending.removeFirst())
+        }
     }
 
     private fun validatePosition(
@@ -622,6 +682,7 @@ class VanillaDatapackExporter(
         output: MutableMap<String, String>,
         resetBudget: Boolean = false,
         rootFunctionName: String = prefix,
+        callDepth: Int = 0,
     ) {
         val entryCall = graph.entryNodeId?.let { "return run function kantan:${nodeFunction(prefix, it)}\n" } ?: "return 1\n"
         defineFunction(output, rootFunctionName, if (resetBudget) {
@@ -687,9 +748,18 @@ class VanillaDatapackExporter(
                     lines += "scoreboard players set ${scoreHolder(node.id)} kc_result 1"
                 }
                 node.type == CommandType.DISK_CALL -> {
-                    val snapshotPrefix = snapshotPrefix(prefix, node.id)
-                    node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
-                    val call = "function kantan:$snapshotPrefix"
+                    // 深度超過と循環は検証層で拒否済みのため到達しませんが、
+                    // 万一の検証抜けでは無限展開になるため、ここでも境界を明示します。
+                    require(callDepth < maximumDiskCallDepth) {
+                        "${node.id}: 呼出し深度が上限 $maximumDiskCallDepth を超えました"
+                    }
+                    val calleePrefix = calleePrefix(prefix, node.id)
+                    // 呼出し先は参照解決した正本を、その呼出し箇所専用の関数として
+                    // 展開します。解決不能は検証層で拒否済みのため到達しません。
+                    expandedCallee(node)?.graph?.let {
+                        compileGraph(it, calleePrefix, output, resetBudget = false, callDepth = callDepth + 1)
+                    }
+                    val call = "function kantan:$calleePrefix"
                     temporaryEntityReferences(node, null).forEach { reference ->
                         lines += temporaryEntityPreparation(reference)
                     }
@@ -1894,12 +1964,30 @@ class VanillaDatapackExporter(
         return "execute as $target run attribute @s $attribute base set $value"
     }
 
-    private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
-        graph.nodes.values.forEach { node ->
-            if (node.type == CommandType.CAMERA_SHAKE) {
-                warnings += "$path/${node.id}: カメラシェイクはJava版データパックから省略されました"
+    private fun collectWarnings(
+        graph: CommandGraph,
+        path: String,
+        warnings: MutableList<String>,
+        visited: MutableSet<CommandGraph> = Collections.newSetFromMap(IdentityHashMap()),
+    ) {
+        // 呼出し連鎖の長さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val pending = ArrayDeque<Pair<CommandGraph, String>>()
+        visited.add(graph)
+        pending.addLast(graph to path)
+        while (pending.isNotEmpty()) {
+            val (current, currentPath) = pending.removeFirst()
+            current.nodes.values.forEach { node ->
+                if (node.type == CommandType.CAMERA_SHAKE) {
+                    warnings += "$currentPath/${node.id}: カメラシェイクはJava版データパックから省略されました"
+                }
+                if (node.type == CommandType.DISK_CALL) {
+                    expandedCallee(node)?.graph?.let { callee ->
+                        if (visited.add(callee)) {
+                            pending.addLast(callee to "$currentPath/${node.id}/callee")
+                        }
+                    }
+                }
             }
-            node.snapshot?.let { collectWarnings(it, "$path/${node.id}/snapshot", warnings) }
         }
     }
 
@@ -2304,17 +2392,22 @@ class VanillaDatapackExporter(
 
     private fun reachableBefore(graph: CommandGraph, start: UUID?, stop: UUID?, target: UUID): Boolean {
         val visited = mutableSetOf<UUID>()
-        fun visit(id: UUID?): Boolean {
-            if (id == null || id == stop || !visited.add(id)) return false
+        // ノード連鎖の長さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val queue = ArrayDeque<UUID>()
+        start?.let(queue::addLast)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (id == stop || !visited.add(id)) continue
             if (id == target) return true
-            val node = graph.nodes[id] ?: return false
-            return when (node.type) {
-                CommandType.CONDITION -> visit(node.trueNext) || visit(node.falseNext)
-                CommandType.FOR_START -> visit(node.trueNext) || visit(node.pairedNodeId)
-                else -> visit(node.next)
+            val node = graph.nodes[id] ?: continue
+            val next = when (node.type) {
+                CommandType.CONDITION -> listOfNotNull(node.trueNext, node.falseNext)
+                CommandType.FOR_START -> listOfNotNull(node.trueNext, node.pairedNodeId)
+                else -> listOfNotNull(node.next)
             }
+            next.forEach(queue::addLast)
         }
-        return visit(start)
+        return false
     }
 
     /**
@@ -2322,12 +2415,17 @@ class VanillaDatapackExporter(
      *
      * exporterのstorageは実行開始時に空にします。名前を事前に把握しておくと、
      * 旧形式の値や個別フィールドが残った場合も、ルート関数の初期化で確実に
-     * 消去できます。snapshotの値も同じ実行の一部なので再帰的に走査します。
+     * 消去できます。呼出し先の値も同じ実行の一部なので再帰的に走査します。
      */
     private fun temporaryNames(graph: CommandGraph): Set<String> = linkedSetOf<String>().also { names ->
+        val visited = Collections.newSetFromMap(IdentityHashMap<CommandGraph, Boolean>())
         fun add(raw: String?) {
             raw?.takeIf(String::isNotBlank)?.let { names += TemporaryTemplate.normalized(it) }
         }
+        // 呼出し先連鎖の長さだけ深くなる再帰をワークリスト走査へ置き換えています。
+        val pending = ArrayDeque<CommandGraph>()
+        visited.add(graph)
+        pending.addLast(graph)
         fun scan(current: CommandGraph) {
             current.nodes.values.forEach { node ->
                 if (node.type == CommandType.TEMP_SET) add(node.string("name"))
@@ -2371,10 +2469,16 @@ class VanillaDatapackExporter(
                 node.temporaryEntityTargetSpec?.let { target ->
                     if (target.kind == TargetKind.TEMPORARY) add(target.tempName)
                 }
-                node.snapshot?.let(::scan)
+                if (node.type == CommandType.DISK_CALL) {
+                    expandedCallee(node)?.graph?.let { callee ->
+                        if (visited.add(callee)) pending.addLast(callee)
+                    }
+                }
             }
         }
-        scan(graph)
+        while (pending.isNotEmpty()) {
+            scan(pending.removeFirst())
+        }
     }
 
     private fun effectiveTarget(node: CommandNode): String {
@@ -2727,8 +2831,8 @@ class VanillaDatapackExporter(
     private fun uuidToken(id: UUID): String =
         BigInteger(id.toString().replace("-", ""), 16).toString(36)
 
-    private fun snapshotPrefix(parentPrefix: String, nodeId: UUID): String =
-        "s_${shortDigest("snapshot/$parentPrefix/$nodeId", 24)}"
+    private fun calleePrefix(parentPrefix: String, nodeId: UUID): String =
+        "s_${shortDigest("callee/$parentPrefix/$nodeId", 24)}"
 
     private fun graphFingerprint(graph: CommandGraph): String = buildString {
         append("entry=").append(graph.entryNodeId)
@@ -2758,8 +2862,10 @@ class VanillaDatapackExporter(
                 .append(":blockFrom=").append(node.blockFromSpec)
                 .append(":blockTo=").append(node.blockToSpec)
                 .append(":executionPosition=").append(node.executionPositionSpec)
-            node.snapshot?.let {
-                append(":snapshot={").append(graphFingerprint(it)).append('}')
+            // 呼出し先は diskId 参照です。参照先の内容変更は別正本の変更として
+            // 扱うため、ここでは参照自体だけを指紋へ含めます。
+            node.string("diskId").takeIf(String::isNotBlank)?.let {
+                append(":callee=").append(it)
             }
         }
     }

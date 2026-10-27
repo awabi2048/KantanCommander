@@ -114,14 +114,22 @@ class ReturnConsistencyTest {
             ),
         )
         GraphEditor.append(caller.graph, CommandType.DISK_CALL).apply {
+            // DISK_CALL は diskId 参照です。参照先は検証時の diskResolver で解決します。
+            params["diskId"] = callee.id.toString()
             params["declaredArgs"] = declared
+            // 呼出先の正本にも同じ契約を持たせ、戻り値の検証まで到達させます。
+            callee.arguments = declared.split(',').filter(String::isNotBlank).map {
+                me.awabi2048.kantancommander.model.DiskArgument(it.substringBefore(':'), ValueType.valueOf(it.substringAfter(':')))
+            }
             params["arg_total"] = argValue
             params["returnScope"] = VariableScope.EXECUTION.name
             params["returnName"] = "recv"
-            snapshot = callee.graph
         }
         return caller
     }
+
+    private fun resolverFor(callee: DiskScript): (UUID) -> DiskScript? =
+        { id -> if (id == callee.id) callee else null }
 
     private fun calleeReturning(sourceScope: VariableScope, source: String): DiskScript {
         val callee = DiskScript(name = "callee")
@@ -152,19 +160,23 @@ class ReturnConsistencyTest {
     fun `caller receiving callee argument ignores same named world variable`() {
         // NUMBER引数 total を返すディスクをNUMBER変数で受ける正常な呼び出しは、
         // 同名STRINGのWORLD変数があっても拒否されません。
+        val callee = calleeReturning(VariableScope.EXECUTION, "total")
         val caller = callerScript(
             receiverType = ValueType.NUMBER,
             declared = "total:NUMBER",
             argValue = "1",
-            callee = calleeReturning(VariableScope.EXECUTION, "total"),
+            callee = callee,
         )
         val definitions = mapOf(
             "total" to TypedValue(ValueType.STRING, stringValue = "other"),
         )
 
         assertFalse(
-            ExecutableScriptValidator.validate(caller, variableDefinitions = definitions)
-                .any { it.message.contains("戻り値の型が一致しません") },
+            ExecutableScriptValidator.validate(
+                caller,
+                variableDefinitions = definitions,
+                diskResolver = resolverFor(callee),
+            ).any { it.message.contains("戻り値の型が一致しません") },
         )
     }
 
@@ -172,37 +184,45 @@ class ReturnConsistencyTest {
     fun `caller receiving callee argument detects genuine mismatch`() {
         // 受取先がSTRINGの場合、NUMBER引数との不一致を検出します。
         // 旧処理（WORLD定義優先）では同名STRINGを見て見逃していました。
+        val callee = calleeReturning(VariableScope.EXECUTION, "total")
         val caller = callerScript(
             receiverType = ValueType.STRING,
             declared = "total:NUMBER",
             argValue = "1",
-            callee = calleeReturning(VariableScope.EXECUTION, "total"),
+            callee = callee,
         )
         val definitions = mapOf(
             "total" to TypedValue(ValueType.STRING, stringValue = "other"),
         )
 
         assertTrue(
-            ExecutableScriptValidator.validate(caller, variableDefinitions = definitions)
-                .any { it.message.contains("戻り値の型が一致しません") },
+            ExecutableScriptValidator.validate(
+                caller,
+                variableDefinitions = definitions,
+                diskResolver = resolverFor(callee),
+            ).any { it.message.contains("戻り値の型が一致しません") },
         )
     }
 
     @Test
     fun `world sourced callee return keeps world resolution`() {        // WORLD参照の返り値は永続定義表で解決し、無関係な引数宣言に引きずられません。
+        val callee = calleeReturning(VariableScope.WORLD, "flag")
         val caller = callerScript(
             receiverType = ValueType.STRING,
             declared = "total:NUMBER",
             argValue = "1",
-            callee = calleeReturning(VariableScope.WORLD, "flag"),
+            callee = callee,
         )
         val definitions = mapOf(
             "flag" to TypedValue(ValueType.STRING, stringValue = "ready"),
         )
 
         assertFalse(
-            ExecutableScriptValidator.validate(caller, variableDefinitions = definitions)
-                .any { it.message.contains("戻り値の型が一致しません") },
+            ExecutableScriptValidator.validate(
+                caller,
+                variableDefinitions = definitions,
+                diskResolver = resolverFor(callee),
+            ).any { it.message.contains("戻り値の型が一致しません") },
         )
     }
 
@@ -210,15 +230,16 @@ class ReturnConsistencyTest {
     fun `caller receiving callee local passes with same type receiver`() {
         // 呼出先でNUMBER変数を定義して返す場合、同型の受取は検証を通ります。
         // 旧処理では引数宣言にないため確定できず、検査自体が動いていませんでした。
+        val callee = calleeDefiningAndReturning(ValueType.NUMBER, "1")
         val caller = callerScript(
             receiverType = ValueType.NUMBER,
             declared = "",
             argValue = "",
-            callee = calleeDefiningAndReturning(ValueType.NUMBER, "1"),
+            callee = callee,
         )
 
         assertFalse(
-            ExecutableScriptValidator.validate(caller)
+            ExecutableScriptValidator.validate(caller, diskResolver = resolverFor(callee))
                 .any { it.message.contains("戻り値の型が一致しません") },
         )
     }
@@ -227,15 +248,16 @@ class ReturnConsistencyTest {
     fun `caller receiving callee local rejects mismatched receiver`() {
         // 呼出先でNUMBER変数を定義して返す場合、STRING受取との不一致を検出します。
         // 旧処理では確定できず見逃していました。
+        val callee = calleeDefiningAndReturning(ValueType.NUMBER, "1")
         val caller = callerScript(
             receiverType = ValueType.STRING,
             declared = "",
             argValue = "",
-            callee = calleeDefiningAndReturning(ValueType.NUMBER, "1"),
+            callee = callee,
         )
 
         assertTrue(
-            ExecutableScriptValidator.validate(caller)
+            ExecutableScriptValidator.validate(caller, diskResolver = resolverFor(callee))
                 .any { it.message.contains("戻り値の型が一致しません") },
         )
     }

@@ -1,12 +1,12 @@
 package me.awabi2048.kantancommander.gui.declarative
 
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 
-import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiThemes
 import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
@@ -69,19 +69,43 @@ data class TriggerDetailTab(val key: String, val label: Component)
  * 下端操作行は左列にページャー、右列に戻るを固定します。
  */
 object DeclarativeTriggers {
-    fun kindDocument(data: TriggerChoiceData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =
-        choiceDocument(data, idPrefix = "trigger-kind", visualTag = "trigger-kind", panel = panel)
+    fun kindCompiled(
+        data: TriggerChoiceData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled =
+        choiceCompiled(data, "trigger-kind", "trigger-kind", onAction, onDiagnostics, panel, theme)
 
-    fun eventDocument(data: TriggerChoiceData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =
-        choiceDocument(data, idPrefix = "trigger-event", visualTag = "trigger-event", panel = panel)
+    fun eventCompiled(
+        data: TriggerChoiceData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled =
+        choiceCompiled(data, "trigger-event", "trigger-event", onAction, onDiagnostics, panel, theme)
 
-    /** イベント詳細の左列は、一般コマンド設定が実際に使うタブ列で描画します。 */
-    fun detailDocument(data: TriggerDetailData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
+    /**
+     * イベント詳細の子画面を親画面骨格へ注入して組み立てます。
+     *
+     * 左列は一般コマンド設定と同じタブ列（実行位置行なし）で描画し、
+     * 戻る操作もタブ列の下端へ置きます。見出し・現在値・候補カード・確定は
+     * 右ペインの各区画へ注入します。要素 ID・操作域・ホバー契約は旧実装から
+     * 変えません。
+     */
+    fun detailCompiled(
+        data: TriggerDetailData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeParentScreen.regions(panel)
+        val tabs = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.tabColumnSection(
-            nodes,
-            frame,
+            tabs,
+            regions.tabs,
             tabs = data.tabs.mapIndexed { index, tab ->
                 val selected = index == data.selectedTab
                 SettingsTabEntry(
@@ -95,23 +119,35 @@ object DeclarativeTriggers {
                 )
             },
         )
+        // 戻る操作はタブ列の下端です。
+        DeclarativeSettings.backSection(
+            tabs,
+            regions.tabs,
+            label = data.backLabel,
+            background = data.backBackground,
+            centerX = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+            width = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+        )
+        val header = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
+            header,
+            regions.header,
             body = data.description,
             detail = data.descriptionDetail,
             centerX = GestureChoicePane.PARENT.centerX,
             hoverY = GestureLowerPanel.ACTION_DESCRIPTION_Y,
         )
         DeclarativeSettings.valueRowsSection(
-            nodes,
-            frame,
+            header,
+            regions.header,
             rows = listOf(SettingsValueRow("trigger-detail-event", data.eventLabel, data.eventName, GestureLowerPanel.SETTING_VALUE_ANCHOR_Y)) + data.values,
         )
-        DeclarativeSettings.choiceCardsSection(nodes, frame, data.choices)
+        val content = mutableListOf<GestureGuiNode>()
+        DeclarativeSettings.choiceCardsSection(content, regions.content, data.choices)
+        val footer = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            footer,
+            regions.footer,
             SettingsActionCard(
                 elementId = "lower-trigger-detail-confirm",
                 label = data.confirmLabel,
@@ -128,45 +164,34 @@ object DeclarativeTriggers {
                 visualTag = "trigger-detail-confirm",
             ),
         )
-        DeclarativeSettings.backSection(
-            nodes,
-            frame,
-            label = data.backLabel,
-            background = data.backBackground,
-            centerX = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-            width = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+        return DeclarativeParentScreen.compile(
+            tabs = tabs,
+            header = header,
+            content = content,
+            footer = footer,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
         )
-        return DeclarativeSettings.document(nodes, panel)
     }
 
-    private fun choiceDocument(
+    /**
+     * 起動方法・イベントの選択画面を組み立てます。
+     *
+     * タイトル・常設説明は骨格リソース側の区画へ環境解決で載せ、
+     * 候補カードは本文領域、ページャーは下端左セル、戻るは下端右セルへ注入します。
+     * 要素 ID・選択縁・ページ分割などの操作契約は旧実装から変えません。
+     */
+    private fun choiceCompiled(
         data: TriggerChoiceData,
         idPrefix: String,
         visualTag: String,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit,
         panel: GestureGuiPanel,
-    ): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = data.title,
-            // タブ列以外は補完なしで即時反映します。
-            interpolationTicks = 0,
-            size = 0.0060,
-            lineWidth = 200,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "$idPrefix-title",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
-        )
-        DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
-            body = data.description,
-            detail = null,
-            centerX = 0.0,
-            hoverY = GestureLowerPanel.CHILD_HOVER_Y,
-        )
+        theme: GestureGuiTheme,
+    ): KantanLayoutBridge.Compiled {
+        val regions = DeclarativeChildScreen.regions(panel)
         // 列規則・縦配置・ページ分割・下端操作行は設定候補画面と同じ
         // 共通ポリシーから取ります。奇数最終行も中央へ寄せず左列から埋めます。
         val pane = GestureChoicePane.CHILD
@@ -176,9 +201,10 @@ object DeclarativeTriggers {
             requestedPage = data.page,
         )
         val visible = data.options.subList(layout.topStart, layout.topEndExclusive)
+        val content = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.choiceCardsSection(
-            nodes,
-            frame,
+            content,
+            regions.content,
             cards = visible.mapIndexed { index, option ->
                 val row = index / 2
                 SettingsChoiceCard(
@@ -201,10 +227,11 @@ object DeclarativeTriggers {
                 )
             },
         )
+        val footerLeft = mutableListOf<GestureGuiNode>()
         if (layout.count > 1) {
             DeclarativeSettings.pagerSection(
-                nodes,
-                frame,
+                footerLeft,
+                regions.footerLeft,
                 idPrefix = idPrefix,
                 elementPrefix = "lower-$idPrefix-page",
                 page = layout.index,
@@ -233,14 +260,25 @@ object DeclarativeTriggers {
                 arrowWidth = pane.pagerArrowWidth,
             )
         }
+        val footerRight = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.backSection(
-            nodes,
-            frame,
+            footerRight,
+            regions.footerRight,
             label = data.backLabel,
             background = data.backBackground,
             centerX = pane.backX,
             width = pane.backWidth,
         )
-        return DeclarativeSettings.document(nodes, panel)
+        return DeclarativeChildScreen.compile(
+            title = data.title,
+            description = data.description,
+            content = content,
+            footerLeft = footerLeft,
+            footerRight = footerRight,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
+        )
     }
 }

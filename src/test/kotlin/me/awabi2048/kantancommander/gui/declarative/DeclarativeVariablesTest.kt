@@ -4,6 +4,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
 import java.lang.reflect.Proxy
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -24,6 +25,23 @@ class DeclarativeVariablesTest {
         BlockData::class.java.classLoader,
         arrayOf(BlockData::class.java),
     ) { _, _, _ -> null } as BlockData
+
+    /** 実素材化に Bukkit を要するため、全フィールドをスタブ素材で埋めたテーマです。 */
+    private fun stubTheme(): GestureGuiTheme = GestureGuiTheme(
+        surface = blockData(),
+        accent = blockData(),
+        accentDeep = blockData(),
+        danger = blockData(),
+        back = blockData(),
+        on = blockData(),
+        off = blockData(),
+        outlineSelected = blockData(),
+        outlineSet = blockData(),
+        disabled = blockData(),
+        divider = blockData(),
+        scrim = blockData(),
+        scrimDanger = blockData(),
+    )
 
     private fun hover(text: String) = GestureGuiHoverText(
         Component.text(text),
@@ -60,9 +78,10 @@ class DeclarativeVariablesTest {
 
     @Test
     fun `variables list preserves cards deletes and pager`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeVariables.variablesDocument(listData(listOf(entry("a", false), entry("b", true)))),
+        val compiled = DeclarativeVariables.variablesCompiled(
+            listData(listOf(entry("a", false), entry("b", true))),
             onAction = {},
+            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val byId = compiled.elements.associateBy { it.elementId }
@@ -89,9 +108,10 @@ class DeclarativeVariablesTest {
 
     @Test
     fun `variables empty and pager branches compile`() {
-        val empty = KantanLayoutBridge.compile(
-            DeclarativeVariables.variablesDocument(listData(emptyList())),
+        val empty = DeclarativeVariables.variablesCompiled(
+            listData(emptyList()),
             onAction = {},
+            theme = stubTheme(),
         )
         assertTrue(empty.diagnostics.isEmpty(), "diagnostics: ${empty.diagnostics}")
         assertTrue(empty.elements.associateBy { it.elementId }.keys.containsAll(
@@ -99,9 +119,10 @@ class DeclarativeVariablesTest {
         ))
 
         val many = listOf(entry("v6", false))
-        val paged = KantanLayoutBridge.compile(
-            DeclarativeVariables.variablesDocument(listData(many, page = 1, pageCount = 2)),
+        val paged = DeclarativeVariables.variablesCompiled(
+            listData(many, page = 1, pageCount = 2),
             onAction = {},
+            theme = stubTheme(),
         )
         assertTrue(paged.diagnostics.isEmpty(), "diagnostics: ${paged.diagnostics}")
         val ids = paged.elements.associateBy { it.elementId }.keys
@@ -131,9 +152,10 @@ class DeclarativeVariablesTest {
             backLabel = Component.text("back"),
             backBackground = blockData(),
         )
-        val enabled = KantanLayoutBridge.compile(
-            DeclarativeVariables.typeDocument(typeData(selected = true)),
+        val enabled = DeclarativeVariables.typeCompiled(
+            typeData(selected = true),
             onAction = {},
+            theme = stubTheme(),
         )
         assertTrue(enabled.diagnostics.isEmpty(), "diagnostics: ${enabled.diagnostics}")
         val click = setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY)
@@ -144,9 +166,10 @@ class DeclarativeVariablesTest {
         val outlined = enabled.visuals.filterIsInstance<GestureGuiVisual.Block>().count { it.outline != null }
         assertEquals(1, outlined)
 
-        val disabled = KantanLayoutBridge.compile(
-            DeclarativeVariables.typeDocument(typeData(selected = false)),
+        val disabled = DeclarativeVariables.typeCompiled(
+            typeData(selected = false),
             onAction = {},
+            theme = stubTheme(),
         )
         assertTrue(disabled.diagnostics.isEmpty(), "diagnostics: ${disabled.diagnostics}")
         // 未選択時の次へは無音消費面になり、診断対象外です。
@@ -156,18 +179,17 @@ class DeclarativeVariablesTest {
 
     @Test
     fun `variable delete confirmation preserves actions`() {
-        val compiled = KantanLayoutBridge.compile(
-            DeclarativeVariables.deleteConfirmDocument(
-                WorldVariableDeleteData(
-                    title = Component.text("title"),
-                    body = Component.text("body", NamedTextColor.GRAY),
-                    confirmLabel = Component.text("yes", NamedTextColor.WHITE),
-                    confirmBackground = blockData(),
-                    cancelLabel = Component.text("no", NamedTextColor.WHITE),
-                    cancelBackground = blockData(),
-                ),
+        val compiled = DeclarativeVariables.deleteConfirmCompiled(
+            WorldVariableDeleteData(
+                title = Component.text("title"),
+                body = Component.text("body", NamedTextColor.GRAY),
+                confirmLabel = Component.text("yes", NamedTextColor.WHITE),
+                confirmBackground = blockData(),
+                cancelLabel = Component.text("no", NamedTextColor.WHITE),
+                cancelBackground = blockData(),
             ),
             onAction = {},
+            theme = stubTheme(),
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val byId = compiled.elements.associateBy { it.elementId }

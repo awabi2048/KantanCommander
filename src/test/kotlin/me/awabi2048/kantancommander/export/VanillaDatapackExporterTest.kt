@@ -67,7 +67,7 @@ class VanillaDatapackExporterTest {
                     }
                     else -> Unit
                 }
-                node.snapshot?.let(::configure)
+                node.foldedGraph?.let(::configure)
             }
         }
         configure(script.graph)
@@ -718,13 +718,19 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `disk call exports only its stored snapshot`() {
+    fun `disk call exports the referenced disk`() {
+        // DISK_CALL は diskId 参照です。参照先の正本が呼出し箇所の関数として展開されます。
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "snapshot")
+        val callee = store.create(UUID.randomUUID(), "callee")
+        val nested = CommandType.DISPLAY_TEXT.newNode().also {
+            it.params["text"] = "copied"
+            it.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        }
+        callee.graph = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        store.save(callee)
+        val script = store.create(UUID.randomUUID(), "caller")
         val call = GraphEditor.append(script.graph, CommandType.DISK_CALL)
-        val nested = CommandType.DISPLAY_TEXT.newNode().also { it.params["text"] = "copied" }
-        call.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
-        call.params["diskId"] = UUID.randomUUID().toString()
+        call.params["diskId"] = callee.id.toString()
         store.save(script)
 
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
@@ -1427,12 +1433,18 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `disk call invokes only the copied function`() {
+    fun `disk call invokes only the referenced function`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val callee = store.create(UUID.randomUUID(), "callee")
+        val nested = CommandType.DISPLAY_TEXT.newNode().also {
+            it.params["text"] = "called"
+            it.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        }
+        callee.graph = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        store.save(callee)
         val script = store.create(UUID.randomUUID(), "call-context")
         val call = GraphEditor.append(script.graph, CommandType.DISK_CALL)
-        val nested = CommandType.DISPLAY_TEXT.newNode()
-        call.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        call.params["diskId"] = callee.id.toString()
         store.save(script)
 
         val success = assertInstanceOf(
@@ -1471,13 +1483,17 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `nested copied disk is included in preflight validation`() {
+    fun `referenced disk is included in preflight validation`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "nested")
-        val call = GraphEditor.append(script.graph, CommandType.DISK_CALL)
+        val callee = store.create(UUID.randomUUID(), "callee")
         val nested = CommandType.GIVE_ITEM.newNode()
         nested.params["item"] = "plugin:custom_item"
-        call.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        callee.graph = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        store.save(callee)
+        val script = store.create(UUID.randomUUID(), "nested")
+        val call = GraphEditor.append(script.graph, CommandType.DISK_CALL)
+        call.params["diskId"] = callee.id.toString()
+        store.save(script)
 
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val failure = assertInstanceOf(ExportResult.Failure::class.java, result)
@@ -1485,20 +1501,29 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `standalone export enforces the same copied disk call depth`() {
-        fun nestedCalls(remaining: Int): CommandGraph {
-            val node = if (remaining == 0) {
-                CommandType.DISPLAY_TEXT.newNode()
-            } else {
-                CommandType.DISK_CALL.newNode().also { it.snapshot = nestedCalls(remaining - 1) }
-            }
-            return CommandGraph(node.id, linkedMapOf(node.id to node))
-        }
-
+    fun `standalone export enforces the same disk call depth`() {
+        // 参照連鎖 caller → a → b → c → d（終端）を用意し、上限 3 では
+        // 深さ 3 の呼出しで拒否、上限 4 では通ることを確認します。
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val terminal = store.create(UUID.randomUUID(), "d")
+        val text = CommandType.DISPLAY_TEXT.newNode().also {
+            it.params["text"] = "end"
+            it.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        }
+        terminal.graph = CommandGraph(text.id, linkedMapOf(text.id to text))
+        store.save(terminal)
+        val chain = (1..3).fold(terminal) { next, index ->
+            store.create(UUID.randomUUID(), "chain$index").also { callee ->
+                val call = CommandType.DISK_CALL.newNode()
+                call.params["diskId"] = next.id.toString()
+                callee.graph = CommandGraph(call.id, linkedMapOf(call.id to call))
+                store.save(callee)
+            }
+        }
         val script = store.create(UUID.randomUUID(), "depth")
         val rootCall = GraphEditor.append(script.graph, CommandType.DISK_CALL)
-        rootCall.snapshot = nestedCalls(3)
+        rootCall.params["diskId"] = chain.id.toString()
+        store.save(script)
 
         val failure = assertInstanceOf(
             ExportResult.Failure::class.java,

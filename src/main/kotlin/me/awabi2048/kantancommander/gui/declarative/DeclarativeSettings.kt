@@ -8,12 +8,16 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiAbsoluteOffsets
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCrossAlignment
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiEdgeInsets
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHover
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHoverPosition
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHoverTarget
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiItem
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiMainArrangement
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiOverlay
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import me.awabi2048.kantancommander.gui.GestureChoicePane
@@ -58,6 +62,12 @@ data class SettingsTabEntry(
 data class DescriptionDetail(
     val text: Component,
     val y: Double,
+    /**
+     * 予約する行高です。診断・隣接計算の境界として使われ、文字の見た目位置・
+     * サイズには影響しません。カード行と接する狭い区画では、本文が収まる
+     * 程度の固定高で旧契約を維持します。
+     */
+    val reservedHeight: Double = 0.025,
 )
 
 /**
@@ -101,6 +111,8 @@ data class SettingsChoiceCard(
 data class SettingsActionCard(
     /** 要素 ID 全文です。操作面なしの場合は null にします。 */
     val elementId: String?,
+    /** 操作へ渡す action です。null の場合は elementId をそのまま使います（名札が別操作を起こす行等）。 */
+    val actionId: String? = null,
     /** 文言です。ない場合（表示専用の無言操作面）は文言表示を作りません。 */
     val label: Component?,
     val background: BlockData,
@@ -181,6 +193,12 @@ object DeclarativeSettings {
 
     /** プログラム全体設定カードの高さです（旧 `addScriptSetting` と同一）。行別ホバー配置の基準にも使います。 */
     internal const val SCRIPT_CARD_HEIGHT = 0.17
+
+    /** 値行1列分の予約幅です。ラベル列と値列が互いの領域へ重ならないよう宣言します。 */
+    internal const val VALUE_ROW_RESERVED_WIDTH = 0.58
+
+    /** 値行の予約高さです。複合表示の最小行ピッチ(0.033)内に収まる高さです。 */
+    internal const val VALUE_ROW_RESERVED_HEIGHT = 0.03
 
     /** 旧ホバー文を宣言仕様へ変換します。置換先は宣言ノード ID 基準で解決します。 */
     internal fun hoverSpecOf(hover: GestureGuiHoverText): GestureGuiHover = GestureGuiHover(
@@ -298,57 +316,102 @@ object DeclarativeSettings {
                 GestureLowerPanel.SETTINGS_TAB_WIDTH,
                 tab.selected,
             )
-            nodes += GestureGuiBlock(
-                blockData = tab.background,
+            nodes += tabCardOverlay(
+                frame = frame,
+                elementId = tab.elementId ?: "lower-tab:$index",
+                labelId = tab.elementId?.let { "$it-label" } ?: "tab-$index",
+                label = tab.label,
+                background = tab.background,
                 outline = tab.outline,
-                width = GestureGuiSizeSpec.Fixed(width),
-                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-                id = tab.elementId ?: "lower-tab:$index",
-                actionId = tab.elementId ?: "lower-tab:$index",
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 hover = tab.attentionHover?.let(::hoverSpecOf),
-                absolute = placed(frame, cx, cy, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-            )
-            nodes += GestureGuiText(
-                text = tab.label,
-                size = 0.0055,
-                lineWidth = 90,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = tab.elementId?.let { "$it-label" } ?: "tab-$index",
-                width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, 1.0, 0.0055 * 3.0),
+                cx = cx,
+                cy = cy,
+                width = width,
             )
         }
         executionTab?.let { tab ->
             // 実行位置行は幅を広げるアニメーションを行わず、選択色・ホバー・注意表示だけを残します。
-            val width = GestureLowerPanel.SETTINGS_TAB_WIDTH
-            val cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X
-            nodes += GestureGuiBlock(
-                blockData = tab.background,
+            nodes += tabCardOverlay(
+                frame = frame,
+                elementId = tab.elementId ?: "lower-tab:exec",
+                labelId = tab.elementId?.let { "$it-label" } ?: "tab-exec",
+                label = tab.label,
+                background = tab.background,
                 outline = tab.outline,
-                width = GestureGuiSizeSpec.Fixed(width),
-                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-                id = tab.elementId ?: "lower-tab:exec",
-                actionId = tab.elementId ?: "lower-tab:exec",
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 hover = tab.attentionHover?.let(::hoverSpecOf),
-                absolute = placed(frame, cx, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
-            )
-            nodes += GestureGuiText(
-                text = tab.label,
-                size = 0.0055,
-                lineWidth = 90,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = tab.elementId?.let { "$it-label" } ?: "tab-exec",
-                width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y - 0.02, 1.0, 0.0055 * 3.0),
+                cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+                cy = GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y,
+                width = GestureLowerPanel.SETTINGS_TAB_WIDTH,
             )
         }
     }
 
-    /** 設定項目なしの案内文を配置します。固定操作は tabsSection 側で配置します。 */
+    /**
+     * タブ1枚（背景＋文言＋操作面）です。
+     *
+     * 文言は操作ノードの子要素として持ちます。兄弟ノードへ並べると予約領域の重なり
+     * 診断が「背景と文言を重ねる通常表現」と「別要素への干渉」を区別できないため、
+     * 親子関係で表します。
+     * カードが選択で右へ伸びても文言中心は列基準の位置へ固定するため、文言だけは
+     * 絶対配置の子として基準Xへ置きます。タブ列は補完で寸法・色の遷移を見せるため、
+     * 子の表示物へ interpolationTicks = 0 は付けません。
+     */
+    private fun tabCardOverlay(
+        frame: ContentFrame,
+        elementId: String,
+        labelId: String,
+        label: Component,
+        background: BlockData,
+        outline: GestureGuiOutline?,
+        hover: GestureGuiHover?,
+        cx: Double,
+        cy: Double,
+        width: Double,
+    ): GestureGuiOverlay {
+        val cardFrame = ContentFrame(
+            minX = cx - width / 2.0,
+            maxY = cy + GestureLowerPanel.SETTINGS_TAB_HEIGHT / 2.0,
+        )
+        return GestureGuiOverlay(
+            children = listOf(
+                GestureGuiBlock(
+                    blockData = background,
+                    outline = outline,
+                    width = GestureGuiSizeSpec.Auto,
+                    height = GestureGuiSizeSpec.Auto,
+                    id = "$elementId-bg",
+                ),
+                GestureGuiText(
+                    text = label,
+                    size = 0.0055,
+                    lineWidth = 90,
+                    alignment = GestureGuiTextAlignment.CENTER,
+                    id = labelId,
+                    // 文言は中央揃えのため、予約幅をタブ幅へ狭めても表示位置は変わりません。
+                    width = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_WIDTH),
+                    // 文字量測定の高さ(0.055)をそのまま予約すると次段タブの操作面へ食い込むため、
+                    // カード下端までの高さへ明示します。中央揃えのため表示位置はアンカー不変です。
+                    height = GestureGuiSizeSpec.Fixed(0.06),
+                    absolute = placed(
+                        cardFrame,
+                        GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+                        cy - 0.02,
+                        GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                        0.06,
+                    ),
+                ),
+            ),
+            width = GestureGuiSizeSpec.Fixed(width),
+            height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            id = elementId,
+            actionId = elementId,
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            hover = hover,
+            absolute = placed(frame, cx, cy, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+        )
+    }
+
+    /** 案内文を配置します。固定操作は tabsSection 側で配置します。 */
     fun hintSection(
         nodes: MutableList<GestureGuiNode>,
         frame: ContentFrame,
@@ -356,18 +419,21 @@ object DeclarativeSettings {
         x: Double = GestureChoicePane.PARENT.centerX,
         y: Double = 0.20,
         id: String = "lower-hint",
+        size: Double = 0.010,
+        lineWidth: Int = 160,
     ) {
         nodes += GestureGuiText(
             text = hint,
             // タブ列以外は補完なしで即時反映します。
             interpolationTicks = 0,
-            size = 0.010,
-            lineWidth = 160,
+            size = size,
+            lineWidth = lineWidth,
             alignment = GestureGuiTextAlignment.CENTER,
             id = id,
             width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, x, y, 1.0, 0.010 * 3.0),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.04),
+            absolute = placed(frame, x, y, 1.0, 0.04),
         )
     }
 
@@ -388,8 +454,9 @@ object DeclarativeSettings {
             alignment = GestureGuiTextAlignment.CENTER,
             id = GestureLowerPanel.SETTING_DESCRIPTION_HOVER_ID,
             width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, centerX, hoverY, 1.0, 0.0043 * 3.0),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.03),
+            absolute = placed(frame, centerX, hoverY, 1.0, 0.03),
         )
         detail?.let {
             nodes += GestureGuiText(
@@ -400,8 +467,9 @@ object DeclarativeSettings {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "setting-description-detail",
                 width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, centerX, it.y, 1.0, 0.0041 * 3.0),
+                // 予約高さを明示し、文字量測定の高さが隣接する候補行へ広がらないようにします。
+                height = GestureGuiSizeSpec.Fixed(it.reservedHeight),
+                absolute = placed(frame, centerX, it.y, 1.0, it.reservedHeight),
             )
         }
     }
@@ -423,9 +491,10 @@ object DeclarativeSettings {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "${row.id}-label",
                 // 2列はそれぞれの予約幅を明示し、文字が短くても値欄の領域へ重ねません。
-                width = GestureGuiSizeSpec.Fixed(0.58),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, labelX, row.y, 1.0, 0.0060 * 3.0),
+                // 予約箱は行アンカー中心・宣言幅と同じ寸法です（不一致だと中心がずれます）。
+                width = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_WIDTH),
+                height = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_HEIGHT),
+                absolute = placed(frame, labelX, row.y, VALUE_ROW_RESERVED_WIDTH, VALUE_ROW_RESERVED_HEIGHT),
             )
             nodes += GestureGuiText(
                 text = row.value,
@@ -434,9 +503,9 @@ object DeclarativeSettings {
                 lineWidth = 170,
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "${row.id}-value",
-                width = GestureGuiSizeSpec.Fixed(0.58),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, valueX, row.y, 1.0, 0.0060 * 3.0),
+                width = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_WIDTH),
+                height = GestureGuiSizeSpec.Fixed(VALUE_ROW_RESERVED_HEIGHT),
+                absolute = placed(frame, valueX, row.y, VALUE_ROW_RESERVED_WIDTH, VALUE_ROW_RESERVED_HEIGHT),
             )
         }
     }
@@ -455,17 +524,13 @@ object DeclarativeSettings {
         cards: List<SettingsChoiceCard>,
     ) {
         cards.forEach { card ->
-            nodes += GestureGuiBlock(
-                blockData = card.background,
-                // 選択肢の切替時に旧カードの表示位置が残らないよう即時反映します。
-                interpolationTicks = 0,
-                width = GestureGuiSizeSpec.Fixed(card.w),
-                height = GestureGuiSizeSpec.Fixed(card.h),
-                outline = card.outline?.let { GestureGuiOutline(it) },
-                id = card.elementId,
+            nodes += labeledCardOverlay(
+                frame = frame,
+                nodeId = card.elementId,
                 actionId = if (card.enabled) card.elementId else null,
-                acceptedGestures = if (card.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
+                gestures = if (card.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
                 consumeInput = !card.enabled,
+                guard = null,
                 hover = card.hover?.let {
                     hoverSpecOf(it).copy(
                         replacement = if (card.replacesDescription) {
@@ -475,18 +540,16 @@ object DeclarativeSettings {
                         },
                     )
                 },
-                absolute = placed(frame, card.cx, card.cy, card.w, card.h),
-            )
-            nodes += GestureGuiText(
-                text = card.label,
-                interpolationTicks = 0,
-                size = card.labelSize,
-                lineWidth = card.labelWidth,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = "${card.elementId}-label",
-                width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
+                background = card.background,
+                outline = card.outline,
+                cx = card.cx,
+                cy = card.cy,
+                w = card.w,
+                h = card.h,
+                label = card.label,
+                labelSize = card.labelSize,
+                labelWidth = card.labelWidth,
+                labelDy = card.labelDy,
             )
         }
     }
@@ -622,6 +685,9 @@ object DeclarativeSettings {
                 ),
             )
         }
+        // ページ表示は左右矢印の操作面と重ならないよう、両矢印の内側の隙間へ収めます。
+        // 文言は中央揃えのため、枠を狭めても表示位置は変わりません。
+        val statusWidth = ((arrowOffset - arrowWidth / 2.0) * 2.0 - 0.002).coerceAtLeast(0.01)
         nodes += GestureGuiText(
             text = status,
             interpolationTicks = 0,
@@ -629,9 +695,10 @@ object DeclarativeSettings {
             lineWidth = 80,
             alignment = GestureGuiTextAlignment.CENTER,
             id = "$idPrefix-page-status",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, centerX, centerY, 1.0, 0.004 * 3.0),
+            width = GestureGuiSizeSpec.Fixed(statusWidth),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.02),
+            absolute = placed(frame, centerX, centerY, statusWidth, 0.02),
         )
     }
 
@@ -669,35 +736,99 @@ object DeclarativeSettings {
         // 背景と文言のIDは要素ID由来とし、同一visualTagの再利用による重複診断を防ぎます。
         // 要素なし（無効ページャ等）はvisualTag由来のままですが、呼び出し側でtargetPage等を含めて一意化しています。
         val baseId = card.elementId ?: "${card.visualTag}-bg"
-        nodes += GestureGuiBlock(
-            blockData = card.background,
-            // 操作面・確認面はタブ列と異なり補完なしで即時反映します。
-            interpolationTicks = 0,
-            width = GestureGuiSizeSpec.Fixed(card.w),
-            height = GestureGuiSizeSpec.Fixed(card.h),
-            outline = card.outline?.let { GestureGuiOutline(it) },
-            id = baseId,
-            actionId = card.elementId,
-            acceptedGestures = card.gestures,
+        nodes += labeledCardOverlay(
+            frame = frame,
+            nodeId = baseId,
+            actionId = card.actionId ?: card.elementId,
+            gestures = card.gestures,
             consumeInput = card.consume,
-            gestureGuard = card.guard,
+            guard = card.guard,
             hover = card.hover?.let(::hoverSpecOf),
-            absolute = placed(frame, card.cx, card.cy, card.w, card.h),
+            background = card.background,
+            outline = card.outline,
+            cx = card.cx,
+            cy = card.cy,
+            w = card.w,
+            h = card.h,
+            label = card.label,
+            labelSize = card.labelSize,
+            labelWidth = card.labelWidth,
+            labelDy = card.labelDy,
         )
-        card.label?.let { label ->
-            nodes += GestureGuiText(
-                text = label,
-                interpolationTicks = 0,
-                size = card.labelSize,
-                lineWidth = card.labelWidth,
-                alignment = GestureGuiTextAlignment.CENTER,
-                id = "$baseId-label",
-                width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
-                absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
-            )
-        }
     }
+
+    /**
+     * 「背景カード＋中央揃え文言」の操作面です。
+     *
+     * 文言はカードの子要素として持ちます。文言を兄弟ノードとして横へ並べると、
+     * 予約領域の重なり診断（OVERLAPPING_CONTENT）が「背景と文言を重ねる通常表現」と
+     * 「別要素への干渉」を区別できないため、親子関係で表します。
+     * 中央揃えからの垂直ずらし（labelDy）は上下余白の差で表します。
+     * 操作面のID・受理 gesture・ガード・ホバーはカード側ノードが持ち、
+     * 子の背景・文言は表示専用です。
+     */
+    private fun labeledCardOverlay(
+        frame: ContentFrame,
+        nodeId: String,
+        actionId: String?,
+        gestures: Set<GestureGuiGesture>,
+        consumeInput: Boolean,
+        guard: ((Player, GestureGuiGesture) -> Boolean)?,
+        hover: GestureGuiHover?,
+        background: BlockData,
+        outline: BlockData?,
+        cx: Double,
+        cy: Double,
+        w: Double,
+        h: Double,
+        label: Component?,
+        labelSize: Double,
+        labelWidth: Int,
+        labelDy: Double,
+    ): GestureGuiOverlay = GestureGuiOverlay(
+        children = buildList {
+            add(
+                GestureGuiBlock(
+                    blockData = background,
+                    // 操作面・確認面はタブ列と異なり補完なしで即時反映します。
+                    interpolationTicks = 0,
+                    width = GestureGuiSizeSpec.Auto,
+                    height = GestureGuiSizeSpec.Auto,
+                    outline = outline?.let { GestureGuiOutline(it) },
+                    id = "$nodeId-bg",
+                ),
+            )
+            label?.let {
+                add(
+                    GestureGuiText(
+                        text = it,
+                        interpolationTicks = 0,
+                        size = labelSize,
+                        lineWidth = labelWidth,
+                        alignment = GestureGuiTextAlignment.CENTER,
+                        id = "$nodeId-label",
+                        // 文言中央をカード中心から labelDy だけ動かします。
+                        // Overlay内は中央揃えが基準のため、上下余白の差がずらし量になります。
+                        margin = GestureGuiEdgeInsets(
+                            top = (-2.0 * labelDy).coerceAtLeast(0.0),
+                            bottom = (2.0 * labelDy).coerceAtLeast(0.0),
+                        ),
+                    ),
+                )
+            }
+        },
+        width = GestureGuiSizeSpec.Fixed(w),
+        height = GestureGuiSizeSpec.Fixed(h),
+        id = nodeId,
+        actionId = actionId,
+        acceptedGestures = gestures,
+        consumeInput = consumeInput,
+        gestureGuard = guard,
+        hover = hover,
+        absolute = placed(frame, cx, cy, w, h),
+        mainArrangement = GestureGuiMainArrangement.CENTER,
+        crossAlignment = GestureGuiCrossAlignment.CENTER,
+    )
 
     /** プログラム全体設定（ノード未選択時）の1枚です。背景・図柄・2行文言・操作面を配置します。 */
     fun scriptSettingSection(
@@ -708,9 +839,65 @@ object DeclarativeSettings {
         // プログラム全体設定はタブではないため、未完了でも警告表示を付けません。
         // 未完了の状態名はホバーで伝え、警告表示の対象はノード設定タブへ限定します（旧実装どおり）。
         // ノード ID は要素 ID と同一にし、操作振分けの照合対象を維持します。
-        nodes += GestureGuiBlock(
-            blockData = card.background,
-            interpolationTicks = 0,
+        // 背景・図柄・文言は操作ノードの子要素として持ちます。兄弟へ並べると
+        // 予約領域の重なり診断が通常表現と干渉を区別できないため、親子関係で表します。
+        val cardFrame = ContentFrame(
+            minX = card.cx - card.w / 2.0,
+            maxY = card.cy + SCRIPT_CARD_HEIGHT / 2.0,
+        )
+        nodes += GestureGuiOverlay(
+            children = buildList {
+                add(
+                    GestureGuiBlock(
+                        blockData = card.background,
+                        interpolationTicks = 0,
+                        width = GestureGuiSizeSpec.Auto,
+                        height = GestureGuiSizeSpec.Auto,
+                        id = "${card.elementId}-bg",
+                    ),
+                )
+                card.icon?.let { icon ->
+                    add(
+                        GestureGuiItem(
+                            item = icon,
+                            interpolationTicks = 0,
+                            scale = 0.08,
+                            width = GestureGuiSizeSpec.Fixed(0.08),
+                            height = GestureGuiSizeSpec.Fixed(0.08),
+                            id = "${card.elementId}-icon",
+                            absolute = placed(cardFrame, card.cx - card.w / 2.0 + 0.07, card.cy, 0.08, 0.08),
+                        ),
+                    )
+                }
+                add(
+                    GestureGuiText(
+                        text = Component.text(card.label),
+                        interpolationTicks = 0,
+                        size = 0.0052,
+                        lineWidth = 120,
+                        alignment = GestureGuiTextAlignment.CENTER,
+                        id = "${card.elementId}-label",
+                        // 文言は中央揃えのため、予約幅をカード幅へ揃えても表示位置は変わりません。
+                        // 2行分の予約高さは、上下の文言どうしが食い込まない範囲に抑えます。
+                        width = GestureGuiSizeSpec.Fixed(card.w),
+                        height = GestureGuiSizeSpec.Fixed(0.03),
+                        absolute = placed(cardFrame, card.cx, card.cy - 0.025, card.w, 0.03),
+                    ),
+                )
+                add(
+                    GestureGuiText(
+                        text = card.value,
+                        interpolationTicks = 0,
+                        size = 0.0044,
+                        lineWidth = 170,
+                        alignment = GestureGuiTextAlignment.CENTER,
+                        id = "${card.elementId}-value",
+                        width = GestureGuiSizeSpec.Fixed(card.w),
+                        height = GestureGuiSizeSpec.Fixed(0.03),
+                        absolute = placed(cardFrame, card.cx, card.cy + 0.015, card.w, 0.03),
+                    ),
+                )
+            },
             width = GestureGuiSizeSpec.Fixed(card.w),
             height = GestureGuiSizeSpec.Fixed(SCRIPT_CARD_HEIGHT),
             id = card.elementId,
@@ -720,62 +907,6 @@ object DeclarativeSettings {
             hover = card.attentionHover?.let(::hoverSpecOf),
             absolute = placed(frame, card.cx, card.cy, card.w, SCRIPT_CARD_HEIGHT),
         )
-        card.icon?.let { icon ->
-            nodes += GestureGuiItem(
-                item = icon,
-                interpolationTicks = 0,
-                scale = 0.08,
-                width = GestureGuiSizeSpec.Fixed(0.08),
-                height = GestureGuiSizeSpec.Fixed(0.08),
-                id = "${card.elementId}-icon",
-                absolute = placed(frame, card.cx - card.w / 2.0 + 0.07, card.cy, 0.08, 0.08),
-            )
-        }
-        nodes += GestureGuiText(
-            text = Component.text(card.label),
-            interpolationTicks = 0,
-            size = 0.0052,
-            lineWidth = 120,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "${card.elementId}-label",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, card.cx, card.cy - 0.025, 1.0, 0.0052 * 3.0),
-        )
-        nodes += GestureGuiText(
-            text = card.value,
-            interpolationTicks = 0,
-            size = 0.0044,
-            lineWidth = 170,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "${card.elementId}-value",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, card.cx, card.cy + 0.015, 1.0, 0.0044 * 3.0),
-        )
-    }
-
-    /** プログラム全体設定画面の文書です。案内文言と4枚のカードからなります。 */
-    fun scriptSettingsDocument(
-        hint: Component,
-        cards: List<ScriptSettingCard>,
-        panel: GestureGuiPanel = GestureGuiPanel(),
-    ): GestureGuiDocument {
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = hint,
-            interpolationTicks = 0,
-            size = 0.008,
-            lineWidth = 230,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "lower-hint",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, 0.27, 1.0, 0.008 * 3.0),
-        )
-        cards.forEach { scriptSettingSection(nodes, frame, it) }
-        return document(nodes, panel)
     }
 
     fun document(nodes: List<GestureGuiNode>, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =

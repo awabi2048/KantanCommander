@@ -445,7 +445,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             ?.let { KcI18n.text(player, it.key) }
             ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         CommandType.DISK_CALL ->
-            KcI18n.text(player, if (node.snapshot == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
+            KcI18n.text(player, if (node.string("diskId").isBlank()) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
         CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.FOR_START ->
             "×${node.string("count", "1")}"

@@ -5,6 +5,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.html.GestureGuiHtmlEnvironment
+import com.awabi2048.ccsystem.api.gesturegui.html.GestureGuiHtmlResult
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutFacade
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiColumn
@@ -16,6 +17,7 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiOverlay
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiRow
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiViewport
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 宣言文書から低レベル表示・操作面への共通橋渡しです。
@@ -25,6 +27,20 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiViewport
  * 解決・変換の診断は呼び出し側へ返し、表示崩れの混入を機械的に検出できます。
  */
 object KantanLayoutBridge {
+    /** 骨格座標はHTMLから一度だけ解決します。画面側にleft/topの写しを置きません。 */
+    fun regionFrames(resourcePath: String, panel: GestureGuiPanel, ids: Set<String>): Map<String, ContentFrame> =
+        regionFrameCache.getOrPut(Triple(resourcePath, panel, ids.toSet())) {
+            val parsed = GestureGuiLayoutFacade.parseHtmlResource(
+                resourcePath, KantanLayoutBridge::class.java.classLoader, regionEnvironment,
+                panel = panel,
+            )
+            require(parsed.diagnostics.isEmpty()) { "骨格の解析に失敗しました: ${parsed.diagnostics}" }
+            com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiScaffold.namedRegions(parsed.document, ids)
+                .mapValues { (_, bounds) -> ContentFrame(bounds.minX, bounds.maxY) }
+        }
+
+    private val regionFrameCache = ConcurrentHashMap<Triple<String, GestureGuiPanel, Set<String>>, Map<String, ContentFrame>>()
+
     /** 橋渡しの出力である要素・表示・診断の一覧です。 */
     data class Compiled(
         val elements: List<GestureGuiElement>,
@@ -109,14 +125,207 @@ object KantanLayoutBridge {
         )
     }
 
+    /**
+     * JAR 同梱の `.html` リソースを解析から診断付きコンパイルまで一続きで処理します。
+     *
+     * マークアップは `gesture-gui` 配下の `.html` リソースに保持し、Kotlin 側での文字列生成はしません。
+     * cc-system 同梱の基底スタイルシート（語彙 class）を既定で適用します。
+     * それ以外の振る舞いは [compileHtml] と同一です。
+     *
+     * 件数や内容が実行時に決まる一覧（カード・タブ・ページャ等）は、マークアップ側が
+     * 配置済みの空容器（ID 付き `div` 等）だけを持ち、[injections] で要素 ID を指定して
+     * ノードを注入します。注入ノードの要素 ID は呼び出し側が意味値を付けられるため、
+     * `lower-type:<key>` のようなデータ入り ID をそのまま維持できます。
+     *
+     * @param resourcePath クラスパス上のリソース位置です（例 `"gesture-gui/confirm.html"`）。
+     * @param injections 注入先の容器 ID から、追加する子ノード一覧への対応表です。
+     *   容器の既存子ノードは残りません。
+     */
+    fun compileHtmlResource(
+        resourcePath: String,
+        environment: GestureGuiHtmlEnvironment,
+        onAction: (GestureGuiActionContext) -> Unit,
+        documentName: String = resourcePath.substringAfterLast('/'),
+        panel: GestureGuiPanel = GestureGuiPanel(),
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        extraActionIds: Set<String> = emptySet(),
+        customRenderers: Map<String, com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomRenderer> = emptyMap(),
+        injections: Map<String, List<GestureGuiNode>> = emptyMap(),
+    ): Compiled {
+        val parsed = GestureGuiLayoutFacade.parseHtmlResource(
+            resourcePath,
+            KantanLayoutBridge::class.java.classLoader,
+            environment,
+            documentName,
+            panel,
+        )
+        val document = injections.entries.fold(parsed.document) { doc, (containerId, children) ->
+            withChildrenInjected(doc, containerId, children)
+        }
+        val actions = collectActions(document.root) + extraActionIds
+        val resolved = GestureGuiLayoutFacade.layout(
+            document,
+            knownActionIds = actions,
+            source = documentName,
+        )
+        val compiled = GestureGuiLayoutFacade.compile(
+            resolved,
+            screenId = "kantan-html-bridge",
+            actionHandlers = actions.associateWith { onAction },
+            customRenderers = customRenderers,
+            source = documentName,
+        )
+        val diagnostics = (parsed.diagnostics + compiled.diagnostics).distinct()
+        if (diagnostics.isNotEmpty()) onDiagnostics(diagnostics)
+        return Compiled(
+            elements = compiled.view.definition.elements,
+            visuals = compiled.view.visuals,
+            diagnostics = diagnostics,
+        )
+    }
+
+    /**
+     * 注入容器だけを持つ骨格リソースを、解析キャッシュ付きで解決・変換します。
+     *
+     * 文言・素材を環境解決する要素（`<p>` / `<button>` 等）を持たず、ID 付きの
+     * 空容器だけを持つ骨格に限ります。解析結果は環境に依存しない不変文書となるため、
+     * (resourcePath, panel) で共有し、頻繁な再生成（毎tickの状態画面等）でも
+     * 解析コストを重ねません。環境解決を持つ骨格は [compileHtmlResource] を使います。
+     */
+    fun compileScaffoldResource(
+        resourcePath: String,
+        injections: Map<String, List<GestureGuiNode>>,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        panel: GestureGuiPanel = GestureGuiPanel(),
+    ): Compiled {
+        val documentName = resourcePath.substringAfterLast('/')
+        val parsed = scaffoldParseCache.getOrPut(resourcePath to panel) {
+            GestureGuiLayoutFacade.parseHtmlResource(
+                resourcePath,
+                KantanLayoutBridge::class.java.classLoader,
+                scaffoldEnvironment,
+                documentName,
+                panel,
+            )
+        }
+        val document = injections.entries.fold(parsed.document) { doc, (containerId, children) ->
+            withChildrenInjected(doc, containerId, children)
+        }
+        val actions = collectActions(document.root)
+        val resolved = GestureGuiLayoutFacade.layout(
+            document,
+            knownActionIds = actions,
+            source = documentName,
+        )
+        val compiled = GestureGuiLayoutFacade.compile(
+            resolved,
+            screenId = "kantan-html-bridge",
+            actionHandlers = actions.associateWith { onAction },
+            source = documentName,
+        )
+        val diagnostics = (parsed.diagnostics + compiled.diagnostics).distinct()
+        if (diagnostics.isNotEmpty()) onDiagnostics(diagnostics)
+        return Compiled(
+            elements = compiled.view.definition.elements,
+            visuals = compiled.view.visuals,
+            diagnostics = diagnostics,
+        )
+    }
+
+    /** 環境非依存骨格の解析結果です。文書は不変のためそのまま共有できます。 */
+    private val scaffoldParseCache = ConcurrentHashMap<Pair<String, GestureGuiPanel>, GestureGuiHtmlResult>()
+
+    /**
+     * 容器のみ骨格の解析用環境です。
+     *
+     * `<div>`・`<section>` の容器と位置指定だけを持つ骨格は、解析時に素材・
+     * 文言・文字サイズの解決を行いません。到達しない解決口は骨格の契約違反と
+     * してエラーにし、Bukkit 非稼働の単体テストでも解析を共有できるようにします。
+     * 文言・hover・可否の既定はインターフェース既定（素の文言・なし・許可）です。
+     */
+    private val scaffoldEnvironment = object : GestureGuiHtmlEnvironment {
+        private fun unsupported(id: String?): Nothing =
+            error("容器のみ骨格へ環境解決要素は定義できません: ${id ?: "(無名)"}")
+
+        override fun buttonBackground(background: String?, classes: Set<String>, id: String?): org.bukkit.block.data.BlockData =
+            unsupported(id)
+
+        override fun containerBackground(background: String, classes: Set<String>, id: String?): org.bukkit.block.data.BlockData? =
+            unsupported(id)
+
+        override fun outlineBlock(classes: Set<String>, id: String?): org.bukkit.block.data.BlockData? =
+            unsupported(id)
+
+        override fun blockData(material: String, classes: Set<String>, id: String?): org.bukkit.block.data.BlockData =
+            unsupported(id)
+
+        override fun itemStack(reference: String, classes: Set<String>, id: String?): org.bukkit.inventory.ItemStack =
+            unsupported(id)
+
+        override fun textSize(tag: String, classes: Set<String>, id: String?): Double =
+            unsupported(id)
+    }
+
+    // 領域の解決では固定配置のラベルを描画しません。文字サイズだけを純粋値で解決し、
+    // 空容器と同じくサーバー素材へのアクセスなしで座標を取得します。
+    private val regionEnvironment = object : GestureGuiHtmlEnvironment by scaffoldEnvironment {
+        override fun textSize(tag: String, classes: Set<String>, id: String?): Double = 0.006
+    }
+
+    /**
+     * 文書内の指定 ID を持つ容器へ子ノードを注入した文書を返します。
+     *
+     * マークアップの静的構造と実行時決定の一覧内容を分離するための移植口です。
+     * 注入先が見つからない場合は誤った ID を見逃さないようエラーとします。
+     */
+    fun withChildrenInjected(
+        document: GestureGuiDocument,
+        containerId: String,
+        children: List<GestureGuiNode>,
+    ): GestureGuiDocument {
+        var injected = false
+
+        fun withChildren(node: GestureGuiNode, newChildren: List<GestureGuiNode>): GestureGuiNode = when (node) {
+            is GestureGuiBox -> node.copy(children = newChildren)
+            is GestureGuiColumn -> node.copy(children = newChildren)
+            is GestureGuiRow -> node.copy(children = newChildren)
+            is GestureGuiGrid -> node.copy(children = newChildren)
+            is GestureGuiOverlay -> node.copy(children = newChildren)
+            else -> error("ID $containerId は子要素を持てないノードです: ${node::class.simpleName}")
+        }
+
+        fun visit(node: GestureGuiNode): GestureGuiNode {
+            if (node.id == containerId) {
+                injected = true
+                return withChildren(node, children)
+            }
+            return when (node) {
+                is GestureGuiBox -> node.copy(children = node.children.map(::visit))
+                is GestureGuiColumn -> node.copy(children = node.children.map(::visit))
+                is GestureGuiRow -> node.copy(children = node.children.map(::visit))
+                is GestureGuiGrid -> node.copy(children = node.children.map(::visit))
+                is GestureGuiOverlay -> node.copy(children = node.children.map(::visit))
+                is GestureGuiViewport -> node.copy(content = visit(node.content))
+                else -> node
+            }
+        }
+
+        val newRoot = visit(document.root)
+        require(injected) { "注入先の容器 ID が文書内に見つかりません: $containerId" }
+        return document.copy(root = newRoot)
+    }
+
     /** 文書内の action ID を重複なく集めます。 */
     fun collectActions(root: GestureGuiNode): Set<String> {
         val actions = linkedSetOf<String>()
-        fun visit(node: GestureGuiNode) {
+        val queue = ArrayDeque<GestureGuiNode>()
+        queue.addLast(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
             node.actionId?.let(actions::add)
-            childrenOf(node).forEach(::visit)
+            childrenOf(node).forEach(queue::addLast)
         }
-        visit(root)
         return actions
     }
 

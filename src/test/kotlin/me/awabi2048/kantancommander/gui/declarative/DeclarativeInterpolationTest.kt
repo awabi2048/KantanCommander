@@ -2,8 +2,13 @@ package me.awabi2048.kantancommander.gui.declarative
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiColumn
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiGrid
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiItem
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiOverlay
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiRow
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
 import net.kyori.adventure.text.Component
@@ -35,6 +40,16 @@ class DeclarativeInterpolationTest {
         else -> null
     }
 
+    /** 表示物ノードへ潜って列挙します（カードの背景＋文言はOverlayの子です）。 */
+    private fun leafNodes(node: GestureGuiNode): List<GestureGuiNode> = when (node) {
+        is GestureGuiBox -> node.children.flatMap(::leafNodes)
+        is GestureGuiColumn -> node.children.flatMap(::leafNodes)
+        is GestureGuiRow -> node.children.flatMap(::leafNodes)
+        is GestureGuiGrid -> node.children.flatMap(::leafNodes)
+        is GestureGuiOverlay -> node.children.flatMap(::leafNodes)
+        else -> listOf(node)
+    }
+
     @Test
     fun `only tab column keeps presentation complement`() {
         val tabs = listOf(
@@ -50,7 +65,7 @@ class DeclarativeInterpolationTest {
         val tabNodes = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.tabColumnSection(tabNodes, contentFrame(panel), tabs)
         // タブ列は演出用の補完を受けるため未指定のままにします。
-        tabNodes.forEach { assertNull(ticks(it), "tab node must keep null complement: ${it.id}") }
+        tabNodes.flatMap(::leafNodes).forEach { assertNull(ticks(it), "tab node must keep null complement: ${it.id}") }
 
         val instantNodes = mutableListOf<GestureGuiNode>()
         val frame = contentFrame(panel)
@@ -107,6 +122,6 @@ class DeclarativeInterpolationTest {
             status = Component.text("1/1"),
         )
         // タブ列以外は補完なし（0）で即時反映します。
-        instantNodes.forEach { assertEquals(0, ticks(it), "non-tab node must be instant: ${it.id}") }
+        instantNodes.flatMap(::leafNodes).forEach { assertEquals(0, ticks(it), "non-tab node must be instant: ${it.id}") }
     }
 }

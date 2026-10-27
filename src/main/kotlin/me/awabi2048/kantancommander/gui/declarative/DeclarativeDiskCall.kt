@@ -1,14 +1,16 @@
 package me.awabi2048.kantancommander.gui.declarative
 
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
-import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutDiagnostic
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiTheme
+import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiThemes
 import me.awabi2048.kantancommander.gui.GestureChoicePane
 import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
-import me.awabi2048.kantancommander.gui.GestureLowerPanel
 import me.awabi2048.kantancommander.gui.GestureSettingChildLayoutPolicy
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -65,35 +67,18 @@ object DeclarativeDiskCall {
         GestureSettingChildLayoutPolicy.topPageSizeFor(1) /
             GestureSettingChildLayoutPolicy.COLUMN_COUNT
 
-    fun settingsDocument(
+    fun settingsCompiled(
         data: DiskCallSettingsData,
+        onAction: (GestureGuiActionContext) -> Unit,
+        onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
         panel: GestureGuiPanel = GestureGuiPanel(),
-    ): GestureGuiDocument {
+        theme: GestureGuiTheme = GestureGuiThemes.standard(),
+    ): KantanLayoutBridge.Compiled {
         val pane = GestureChoicePane.CHILD
-        val frame = contentFrame(panel)
-        val nodes = mutableListOf<GestureGuiNode>()
-        nodes += GestureGuiText(
-            text = data.title,
-            // タブ列以外は補完なしで即時反映します。
-            interpolationTicks = 0,
-            size = 0.0060,
-            lineWidth = 200,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "disk-call-title",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.0, GestureLowerPanel.CHILD_HEADER_Y, 1.0, 0.0060 * 3.0),
-        )
-        DeclarativeSettings.descriptionSection(
-            nodes,
-            frame,
-            body = data.body,
-            detail = null,
-            centerX = pane.centerX,
-            hoverY = GestureLowerPanel.CHILD_HOVER_Y,
-        )
+        val regions = DeclarativeChildScreen.regions(panel)
+        val content = mutableListOf<GestureGuiNode>()
         if (data.arguments.isEmpty()) {
-            nodes += GestureGuiText(
+            content += GestureGuiText(
                 text = data.emptyArgs,
                 interpolationTicks = 0,
                 size = 0.0052,
@@ -101,21 +86,22 @@ object DeclarativeDiskCall {
                 alignment = GestureGuiTextAlignment.CENTER,
                 id = "disk-call-empty",
                 width = GestureGuiSizeSpec.Fixed(1.0),
-                height = GestureGuiSizeSpec.Auto,
+                // 予約箱の中心がアンカーになるよう高さを明示します。
+                height = GestureGuiSizeSpec.Fixed(0.03),
                 absolute = placed(
-                    frame,
+                    regions.content,
                     pane.centerX,
                     GestureSettingChildLayoutPolicy.TOP_CHOICE_Y,
                     1.0,
-                    0.0052 * 3.0,
+                    0.03,
                 ),
             )
         } else {
             // 引数カードは列幅のまま中央に置く1列一覧です。行位置だけを
             // 設定候補と同じ上段ピッチへ揃えます。
             DeclarativeSettings.choiceCardsSection(
-                nodes,
-                frame,
+                content,
+                regions.content,
                 cards = data.arguments.mapIndexed { index, argument ->
                     SettingsChoiceCard(
                         elementId = "lower-disk-arg:${argument.name}",
@@ -138,11 +124,12 @@ object DeclarativeDiskCall {
                 },
             )
         }
+        val footerLeft = mutableListOf<GestureGuiNode>()
         if (data.pageCount > 1) {
             // 下端操作行はページャー＝左列・戻る＝右列の共通規則です。
             DeclarativeSettings.pagerSection(
-                nodes,
-                frame,
+                footerLeft,
+                regions.footerLeft,
                 idPrefix = "disk-call",
                 elementPrefix = "lower-disk-arg-page",
                 page = data.page,
@@ -164,29 +151,32 @@ object DeclarativeDiskCall {
                 arrowWidth = pane.pagerArrowWidth,
             )
         }
-        // 戻り値行は下揃え1行の共通位置へ置き、その行見出しは上段との境界位置
-        // （境界線と同じ高さ）へ置いて区切りを兼ねます。
+        // 戻り値行は下揃え1行の共通位置（帯領域）へ置きます。行見出しは行の
+        // 中央より上では上段・帯のカードと予約領域が衝突するため、帯行の
+        // 左側空き領域へ置きます（行の左端見出し）。
         val returnRowY = GestureSettingChildLayoutPolicy.bottomY(0, 1)
-        nodes += GestureGuiText(
+        val band = mutableListOf<GestureGuiNode>()
+        band += GestureGuiText(
             text = data.returnLabel,
             interpolationTicks = 0,
             size = 0.0045,
             lineWidth = 200,
             alignment = GestureGuiTextAlignment.CENTER,
             id = "disk-call-return-label",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
+            width = GestureGuiSizeSpec.Fixed(0.50),
+            // 予約箱の中心がアンカーになるよう高さを明示します。
+            height = GestureGuiSizeSpec.Fixed(0.02),
             absolute = placed(
-                frame,
-                pane.centerX,
-                GestureSettingChildLayoutPolicy.groupDividerY(1),
-                1.0,
-                0.0045 * 3.0,
+                regions.band,
+                -0.71,
+                returnRowY,
+                0.50,
+                0.02,
             ),
         )
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            band,
+            regions.band,
             SettingsActionCard(
                 elementId = "lower-disk-return-scope",
                 label = data.returnScopeLabel,
@@ -204,8 +194,8 @@ object DeclarativeDiskCall {
             ),
         )
         DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
+            band,
+            regions.band,
             SettingsActionCard(
                 elementId = "lower-disk-return-name",
                 label = data.returnNameLabel,
@@ -222,14 +212,26 @@ object DeclarativeDiskCall {
                 visualTag = "disk-call-return-name",
             ),
         )
+        val footerRight = mutableListOf<GestureGuiNode>()
         DeclarativeSettings.backSection(
-            nodes,
-            frame,
+            footerRight,
+            regions.footerRight,
             label = data.backLabel,
             background = data.backBackground,
             centerX = pane.backX,
             width = pane.backWidth,
         )
-        return DeclarativeSettings.document(nodes, panel)
+        return DeclarativeChildScreen.compile(
+            title = data.title,
+            description = data.body,
+            content = content,
+            band = band,
+            footerLeft = footerLeft,
+            footerRight = footerRight,
+            onAction = onAction,
+            onDiagnostics = onDiagnostics,
+            panel = panel,
+            theme = theme,
+        )
     }
 }

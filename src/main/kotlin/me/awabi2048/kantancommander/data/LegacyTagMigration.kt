@@ -54,7 +54,6 @@ internal object LegacyTagMigration {
                 }
                 rewriteConfiguredMarks(node)
             }
-            normalizeGraph(node["snapshot"]?.takeIf { it.isJsonObject }?.asJsonObject)
             normalizeGraph(node["foldedGraph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         }
     }

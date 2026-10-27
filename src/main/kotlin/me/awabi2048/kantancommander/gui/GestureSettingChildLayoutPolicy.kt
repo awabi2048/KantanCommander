@@ -49,11 +49,14 @@ internal object GestureSettingChildLayoutPolicy {
         require(topRowsPerPage > 0) {
             "下揃え候補が戻る領域または見出し領域へ入り、設定候補の配置を確保できません。"
         }
-        val topPageSize = topRowsPerPage * COLUMN_COUNT
-        val pageCount = ((topChoiceCount + topPageSize - 1) / topPageSize).coerceAtLeast(1)
-        val page = requestedPage.coerceIn(0, pageCount - 1)
-        val topStart = page * topPageSize
-        val topEnd = (topStart + topPageSize).coerceAtMost(topChoiceCount)
+        val planned = com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiPagination.plan(
+            topChoiceCount, topRowsPerPage, COLUMN_COUNT, requestedPage,
+        )
+        val topPageSize = planned.pageSize
+        val pageCount = planned.count
+        val page = planned.index
+        val topStart = planned.start
+        val topEnd = planned.endExclusive
 
         return Page(
             index = page,

@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
@@ -14,6 +15,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -34,6 +36,37 @@ import java.util.logging.LogRecord
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
+
+    @Test
+    fun `正本の引数変更後はキャッシュ内の呼出元も拒否する`() {
+        val store = ScriptStore(temp.resolve("signature-change"), Logger.getAnonymousLogger())
+        val callee = store.createPlacement("B")
+        val caller = store.createPlacement("A")
+        val call = GraphEditor.append(caller.graph, CommandType.DISK_CALL)
+        call.params["diskId"] = callee.id.toString()
+        store.save(caller)
+        callee.arguments = listOf(me.awabi2048.kantancommander.model.DiskArgument("added"))
+        store.save(callee)
+        val errors = ExecutableScriptValidator.validate(requireNotNull(store.load(caller.id)), diskResolver = store::load)
+        assertTrue(errors.any { it.code == ErrorCode.DISK_CALL_SIGNATURE_MISMATCH })
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(2)
+    fun `循環FORを含む受付形式JSONは起動時に隔離する`() {
+        val dir = temp.resolve("cyclic-for").also(File::mkdirs)
+        val start = CommandType.FOR_START.newNode()
+        val end = CommandType.FOR_END.newNode()
+        start.pairedNodeId = end.id
+        end.pairedNodeId = start.id
+        start.trueNext = start.id
+        val script = DiskScript(name = "broken", graph = CommandGraph(start.id, linkedMapOf(start.id to start, end.id to end)))
+        dir.resolve("${script.id}.json").writeText(GsonBuilder().create().toJson(script))
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        assertNull(store.load(script.id))
+        assertFalse(dir.resolve("${script.id}.json").exists())
+    }
+
 
     @Test
     fun `legacy kind-only condition migrates to its subject`() {
@@ -349,6 +382,85 @@ class ScriptStoreTest {
             first.id.toString(),
             loaded.graph.nodes.values.single().string("diskId"),
         )
+    }
+
+    @Test
+    fun `mutual call disks load without recursive compilation`() {
+        // 旧実装は `call` 解決のたびに対象を含む全ディスクをフルコンパイルし、
+        // 相互参照の `.kcp` 読込で無限再帰となり、起動時のStackOverflowErrorが
+        // プラグイン全体を無効化していました。宣言索引による解決では、
+        // 読込が他ディスクの読込を連鎖させません。
+        val dir = temp.resolve("mutual-call").also(File::mkdirs)
+        val aId = UUID.randomUUID()
+        val bId = UUID.randomUUID()
+        dir.resolve("$aId.kcp").writeText("program \"a\";\ncall \"b\";\n", Charsets.UTF_8)
+        dir.resolve("$bId.kcp").writeText("program \"b\";\ncall \"a\";\n", Charsets.UTF_8)
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+
+        val a = requireNotNull(store.load(aId))
+        val b = requireNotNull(store.load(bId))
+        assertEquals(bId.toString(), a.graph.nodes.values.single().string("diskId"))
+        assertEquals(aId.toString(), b.graph.nodes.values.single().string("diskId"))
+        // 循環呼出しは読込ではなく検証層が diskId 経路で報告します。
+        val errors = ExecutableScriptValidator.validate(a, diskResolver = { store.load(it) })
+        assertTrue(errors.any { it.message.contains("循環") }, errors.joinToString(" | ") { it.message })
+    }
+
+    @Test
+    fun `self call disk loads without recursive compilation`() {
+        val dir = temp.resolve("self-call").also(File::mkdirs)
+        val id = UUID.randomUUID()
+        dir.resolve("$id.kcp").writeText("program \"self\";\ncall \"self\";\n", Charsets.UTF_8)
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+
+        val loaded = requireNotNull(store.load(id))
+        assertEquals(id.toString(), loaded.graph.nodes.values.single().string("diskId"))
+        val errors = ExecutableScriptValidator.validate(loaded, diskResolver = { store.load(it) })
+        assertTrue(errors.any { it.message.contains("循環") }, errors.joinToString(" | ") { it.message })
+    }
+
+    @Test
+    fun `long call chain loads without recursive compilation`() {
+        // 推移的な呼出し解決は `call` ごとに残り全件の読込を繰り返していました。
+        // 索引解決では連鎖長に関わらず各ディスクを1回だけ読みます。
+        val dir = temp.resolve("call-chain").also(File::mkdirs)
+        val ids = (1..32).map { UUID.randomUUID() }
+        ids.forEachIndexed { index, id ->
+            val next = ids.getOrNull(index + 1)
+            val body = if (next != null) "call \"disk-${index + 1}\";" else "wait(1);"
+            dir.resolve("$id.kcp").writeText("program \"disk-$index\";\n$body\n", Charsets.UTF_8)
+        }
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+
+        assertEquals(ids.size, store.listAll().size)
+        ids.forEachIndexed { index, id ->
+            val loaded = requireNotNull(store.load(id))
+            val call = loaded.graph.nodes.values.singleOrNull { it.type == CommandType.DISK_CALL }
+            if (index == ids.lastIndex) {
+                assertNull(call)
+            } else {
+                assertEquals(ids[index + 1].toString(), call?.string("diskId"))
+            }
+        }
+    }
+
+    @Test
+    fun `corrupt kcp is isolated from loadable siblings`() {
+        // 1ファイルの破損は他のディスクの読込を止めません。
+        val dir = temp.resolve("corrupt-mixed").also(File::mkdirs)
+        val validId = UUID.randomUUID()
+        val corruptId = UUID.randomUUID()
+        dir.resolve("$validId.kcp").writeText("program \"ok\";\nwait(1);\n", Charsets.UTF_8)
+        dir.resolve("$corruptId.kcp").writeText("not a program at all {{{", Charsets.UTF_8)
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+
+        assertEquals(listOf(validId), store.listAll().map { it.id })
+        assertNotNull(store.load(validId))
+        assertNull(store.load(corruptId))
     }
 
     @Test
@@ -670,15 +782,21 @@ class ScriptStoreTest {
     }
 
     @Test
-    fun `invalid copied disk graph is rejected recursively`() {
+    fun `disk call to missing disk reports dangling reference on validation`() {
+        // DISK_CALL は diskId 参照です。参照先の欠落は構造エラーではなく、
+        // 保存可能なまま検証層が DANGLING_REFERENCE として報告します。
         val store = ScriptStore(temp.resolve("structured"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "nested")
         val call = CommandType.DISK_CALL.newNode()
-        val missing = UUID.randomUUID()
-        call.snapshot = CommandGraph(missing, linkedMapOf())
+        call.params["diskId"] = UUID.randomUUID().toString()
         script.graph = CommandGraph(call.id, linkedMapOf(call.id to call))
+        store.save(script)
 
-        assertThrows(IllegalArgumentException::class.java) { store.save(script) }
+        val errors = ExecutableScriptValidator.validate(
+            script,
+            diskResolver = { id -> store.load(id) },
+        )
+        assertTrue(errors.any { it.code == ErrorCode.DANGLING_REFERENCE })
     }
 
     @Test
