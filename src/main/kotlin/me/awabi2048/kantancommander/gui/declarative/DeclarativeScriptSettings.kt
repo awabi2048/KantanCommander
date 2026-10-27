@@ -17,23 +17,16 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 internal object DeclarativeScriptSettings {
     const val RESOURCE_PATH = "gesture-gui/script-settings.html"
 
-    /**
-     * 骨格の各注入領域が覆う画面内範囲です。`placed` のオフセット変換基準として使います。
-     *
-     * 各値は script-settings.html の `position: absolute` オフセットと対応します
-     * （領域の左上 = 内容域原点 + markup の left/top）。マークアップ側の位置を
-     * 変えるときは、こちらの換算値も同じだけ動かしてください。
-     */
-    class RegionFrames(frame: ContentFrame) {
-        /** 案内文言（markup: left 0 / top 0.20）。画面の上段中央です。 */
-        val hint = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.20)
-
-        /** 設定カード列（markup: left 0 / top 0.30）。2列×2行のカードを置きます。 */
-        val cards = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.30)
+    /** HTMLで解決した名前付き領域です。位置・寸法はHTMLだけで管理します。 */
+    class RegionFrames(frames: Map<String, ContentFrame>) {
+        val hint = frames.getValue("script-hint")
+        val cards = frames.getValue("script-cards")
     }
 
-    /** 骨格の各注入領域の枠を求めます。 */
-    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(contentFrame(panel))
+    /** 領域座標は共有Scaffold APIを通して取得します。 */
+    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(
+        KantanLayoutBridge.regionFrames(RESOURCE_PATH, panel, setOf("script-hint", "script-cards")),
+    )
 
     /**
      * 骨格へ各領域のノードを注入し、解決・変換まで一続きで処理します。

@@ -495,7 +495,7 @@ class DslPrinterTest {
             """.trimIndent()
         val resolver: (String) -> DslDiskLink? = { name -> if (name == "sub") link else null }
         // DISK_CALL の検証には参照先の正本が要るため、ID解決のスタブを渡します。
-        val calleeStub = DiskScript(name = "sub")
+        val calleeStub = DiskScript(name = "sub", arguments = link.arguments)
         val diskResolver: (java.util.UUID) -> DiskScript? = { if (it == link.diskId) calleeStub else null }
         val printer = DslPrinter(diskNameResolver = { if (it == link.diskId) "sub" else it.toString() })
         val r1 = DslCompiler(emptyMap(), resolver).compile(DslParser.parse(src))

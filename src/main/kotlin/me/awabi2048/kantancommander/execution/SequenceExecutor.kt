@@ -28,6 +28,7 @@ import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.ExecutionVariables
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.matchesDiskArguments
 import me.awabi2048.kantancommander.model.normalizedTemporaryName
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -973,7 +974,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             return done(false)
         }
         val callee = diskId?.let { plugin.scripts.load(it) }
-        if (callee == null) {
+        if (callee == null || !node.matchesDiskArguments(callee.arguments)) {
             session.lastFailureReason = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH.code
             session.lastFailureCode = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
             return done(false)

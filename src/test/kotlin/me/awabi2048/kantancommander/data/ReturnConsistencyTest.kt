@@ -117,6 +117,10 @@ class ReturnConsistencyTest {
             // DISK_CALL は diskId 参照です。参照先は検証時の diskResolver で解決します。
             params["diskId"] = callee.id.toString()
             params["declaredArgs"] = declared
+            // 呼出先の正本にも同じ契約を持たせ、戻り値の検証まで到達させます。
+            callee.arguments = declared.split(',').filter(String::isNotBlank).map {
+                me.awabi2048.kantancommander.model.DiskArgument(it.substringBefore(':'), ValueType.valueOf(it.substringAfter(':')))
+            }
             params["arg_total"] = argValue
             params["returnScope"] = VariableScope.EXECUTION.name
             params["returnName"] = "recv"

@@ -17,32 +17,19 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 internal object DeclarativeParentScreen {
     const val RESOURCE_PATH = "gesture-gui/parent-screen.html"
 
-    /**
-     * 骨格の各注入領域が覆う画面内範囲です。`placed` のオフセット変換基準として使います。
-     *
-     * 各値は parent-screen.html の `position: absolute` オフセットと対応します
-     * （領域の左上 = 内容域原点 + markup の left/top）。マークアップ側の位置を
-     * 変えるときは、こちらの換算値も同じだけ動かしてください。
-     */
-    class RegionFrames(frame: ContentFrame) {
-        /** 左タブ列（markup: left 0 / top 0）。全高を覆い、列下端の固定操作も含みます。 */
-        val tabs = ContentFrame(minX = frame.minX, maxY = frame.maxY)
-
-        /** 見出し（markup: left 0.55 / top 0）。常設説明・詳細案内・現在値行を置きます。 */
-        val header = ContentFrame(minX = frame.minX + 0.55, maxY = frame.maxY)
-
-        /** 本文（markup: left 0.55 / top 0.3453）。候補カード・入力カード・境界線を置きます。 */
-        val content = ContentFrame(minX = frame.minX + 0.55, maxY = frame.maxY - 0.3453)
-
-        /** 帯（markup: left 0.55 / top 0.7253）。下端操作行の直上へ下揃え候補を置きます。 */
-        val band = ContentFrame(minX = frame.minX + 0.55, maxY = frame.maxY - 0.7253)
-
-        /** 下端操作行（markup: left 0.55 / top 0.8453）。ページャ・戻る・確定を置きます。 */
-        val footer = ContentFrame(minX = frame.minX + 0.55, maxY = frame.maxY - 0.8453)
+    /** HTMLで解決した名前付き領域です。位置・寸法はHTMLだけで管理します。 */
+    class RegionFrames(frames: Map<String, ContentFrame>) {
+        val tabs = frames.getValue("parent-tabs")
+        val header = frames.getValue("parent-header")
+        val content = frames.getValue("parent-content")
+        val band = frames.getValue("parent-band")
+        val footer = frames.getValue("parent-footer")
     }
 
-    /** 骨格の各注入領域の枠を求めます。 */
-    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(contentFrame(panel))
+    /** 領域座標は共有Scaffold APIを通して取得します。 */
+    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(
+        KantanLayoutBridge.regionFrames(RESOURCE_PATH, panel, setOf("parent-tabs", "parent-header", "parent-content", "parent-band", "parent-footer")),
+    )
 
     /**
      * 親画面骨格へ各領域のノードを注入し、解決・変換まで一続きで処理します。

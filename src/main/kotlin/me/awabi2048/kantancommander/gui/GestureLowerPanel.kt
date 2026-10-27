@@ -838,8 +838,9 @@ class GestureLowerPanel(
         val entries = node?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }.orEmpty()
         // 1ページ件数は共通ポリシーから決めます（ページャー帯1行分を予約した上段行数）。
         val pageSize = GestureSettingChildLayoutPolicy.topPageSizeFor(1)
-        val pageCount = ((entries.size + pageSize - 1) / pageSize).coerceAtLeast(1)
-        val page = state.tagPage.coerceIn(0, pageCount - 1)
+        val planned = com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiPagination.plan(entries.size, pageSize, requestedPage = state.tagPage)
+        val pageCount = planned.count
+        val page = planned.index
         return finishTagListChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTagEntries.tagCompiled(
                 me.awabi2048.kantancommander.gui.declarative.TagListData(
@@ -963,8 +964,9 @@ class GestureLowerPanel(
         }
         // 1ページ件数は共通ポリシーから決めます（ページャー帯1行分を予約した上段行数）。
         val pageSize = GestureSettingChildLayoutPolicy.topPageSizeFor(1)
-        val pageCount = (entries.size + pageSize - 1) / pageSize
-        val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        val planned = com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiPagination.plan(entries.size, pageSize, requestedPage = state.variablePage)
+        val pageCount = planned.count
+        val page = planned.index
         val usageScan = state.placement?.world
             ?.let { worldName -> plugin.findWorldVariableUsagesSafely(worldName, entries.keys) }
             ?: WorldVariableUsageScanResult(emptyMap(), complete = true)
@@ -1150,8 +1152,9 @@ class GestureLowerPanel(
         val arguments = node?.declaredArguments().orEmpty()
         // 1ページ件数は宣言側が共通ポリシーから決めた行数と一致させます。
         val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskCall.ARG_PAGE_SIZE
-        val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
-        val page = state.diskCallArgsPage.coerceIn(0, pageCount - 1)
+        val planned = com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiPagination.plan(arguments.size, pageSize, requestedPage = state.diskCallArgsPage)
+        val pageCount = planned.count
+        val page = planned.index
         val returnName = node?.string("returnName").orEmpty()
         val returnScope = node?.string("returnScope").orEmpty().ifBlank { VariableScope.EXECUTION.name }
         return finishVariablesChild(
@@ -1597,8 +1600,9 @@ class GestureLowerPanel(
         val arguments = script?.arguments.orEmpty()
         // 1ページ件数は宣言側が共通ポリシーから決めた行数と一致させます。
         val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskSettings.ARG_ROW_PAGE_SIZE
-        val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
-        val page = state.diskSettingsArgsPage.coerceIn(0, pageCount - 1)
+        val planned = com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiPagination.plan(arguments.size, pageSize, requestedPage = state.diskSettingsArgsPage)
+        val pageCount = planned.count
+        val page = planned.index
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskSettings.settingsCompiled(
                 me.awabi2048.kantancommander.gui.declarative.DiskSettingsData(

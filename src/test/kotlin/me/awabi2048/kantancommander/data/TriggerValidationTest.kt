@@ -143,6 +143,7 @@ class TriggerValidationTest {
             params["operator"] = "=="
             params["value"] = "%{count}%"
         }
+        callee.arguments = listOf(me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER))
         val caller = script {}
         GraphEditor.append(caller.graph, CommandType.DISK_CALL).apply {
             params["diskId"] = callee.id.toString()

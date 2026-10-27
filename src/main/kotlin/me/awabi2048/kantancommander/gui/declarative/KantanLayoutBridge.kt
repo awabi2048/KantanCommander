@@ -27,6 +27,20 @@ import java.util.concurrent.ConcurrentHashMap
  * 解決・変換の診断は呼び出し側へ返し、表示崩れの混入を機械的に検出できます。
  */
 object KantanLayoutBridge {
+    /** 骨格座標はHTMLから一度だけ解決します。画面側にleft/topの写しを置きません。 */
+    fun regionFrames(resourcePath: String, panel: GestureGuiPanel, ids: Set<String>): Map<String, ContentFrame> =
+        regionFrameCache.getOrPut(Triple(resourcePath, panel, ids.toSet())) {
+            val parsed = GestureGuiLayoutFacade.parseHtmlResource(
+                resourcePath, KantanLayoutBridge::class.java.classLoader, regionEnvironment,
+                panel = panel,
+            )
+            require(parsed.diagnostics.isEmpty()) { "骨格の解析に失敗しました: ${parsed.diagnostics}" }
+            com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiScaffold.namedRegions(parsed.document, ids)
+                .mapValues { (_, bounds) -> ContentFrame(bounds.minX, bounds.maxY) }
+        }
+
+    private val regionFrameCache = ConcurrentHashMap<Triple<String, GestureGuiPanel, Set<String>>, Map<String, ContentFrame>>()
+
     /** 橋渡しの出力である要素・表示・診断の一覧です。 */
     data class Compiled(
         val elements: List<GestureGuiElement>,
@@ -251,6 +265,12 @@ object KantanLayoutBridge {
 
         override fun textSize(tag: String, classes: Set<String>, id: String?): Double =
             unsupported(id)
+    }
+
+    // 領域の解決では固定配置のラベルを描画しません。文字サイズだけを純粋値で解決し、
+    // 空容器と同じくサーバー素材へのアクセスなしで座標を取得します。
+    private val regionEnvironment = object : GestureGuiHtmlEnvironment by scaffoldEnvironment {
+        override fun textSize(tag: String, classes: Set<String>, id: String?): Double = 0.006
     }
 
     /**

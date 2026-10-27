@@ -20,26 +20,17 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 internal object DeclarativeTestScreen {
     const val RESOURCE_PATH = "gesture-gui/test-screen.html"
 
-    /**
-     * 骨格の各注入領域が覆う画面内範囲です。`placed` のオフセット変換基準として使います。
-     *
-     * 各値は test-screen.html の `position: absolute` オフセットと対応します
-     * （領域の左上 = 内容域原点 + markup の left/top）。マークアップ側の位置を
-     * 変えるときは、こちらの換算値も同じだけ動かしてください。
-     */
-    class RegionFrames(frame: ContentFrame) {
-        /** 見出し（markup: left 0 / top 0.08）。タイトル・説明の文言行です。 */
-        val header = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.08)
-
-        /** 本文（markup: left 0 / top 0.30）。切替カード・状態行・結果行です。 */
-        val content = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.30)
-
-        /** 下端操作行（markup: left 0 / top 0.62）。開始・取消・案内・完了です。 */
-        val footer = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.62)
+    /** HTMLで解決した名前付き領域です。位置・寸法はHTMLだけで管理します。 */
+    class RegionFrames(frames: Map<String, ContentFrame>) {
+        val header = frames.getValue("test-header")
+        val content = frames.getValue("test-content")
+        val footer = frames.getValue("test-footer")
     }
 
-    /** 骨格の各注入領域の枠を求めます。 */
-    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(contentFrame(panel))
+    /** 領域座標は共有Scaffold APIを通して取得します。 */
+    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(
+        KantanLayoutBridge.regionFrames(RESOURCE_PATH, panel, setOf("test-header", "test-content", "test-footer")),
+    )
 
     /**
      * 骨格へ各領域のノードを注入し、解決・変換まで一続きで処理します。

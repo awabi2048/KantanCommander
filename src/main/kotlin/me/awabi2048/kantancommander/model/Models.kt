@@ -89,6 +89,19 @@ fun encodeDeclaredArguments(arguments: List<DiskArgument>): String =
     arguments.joinToString(",") { "${it.name}:${it.type.name}" }
 
 /**
+ * 呼出し側が設定した引数契約と現在の正本を照合します。
+ * 名前付き引数のため順序だけの変更は許可し、追加・削除・改名・型変更は拒否します。
+ * 検証後の待機中に正本が編集される場合もあるため、実行境界でも同じ判定を使います。
+ */
+fun CommandNode.matchesDiskArguments(arguments: List<DiskArgument>): Boolean {
+    val declared = declaredArguments()
+    val entries = string("declaredArgs").split(',').filter(String::isNotBlank)
+    return declared.size == entries.size && declared.size == arguments.size &&
+        declared.map { it.name }.toSet().size == declared.size &&
+        declared.associate { it.name to it.type } == arguments.associate { it.name to it.type }
+}
+
+/**
  * 配置されたかんたんコマンダー制御ブロックからディスクへ出力できる内容があるかを判定します。
  *
  * 内容は「ノード・呼出し引数・既定以外の起動方法」のいずれかを持つこととし、

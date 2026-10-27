@@ -26,6 +26,28 @@ import java.util.UUID
 
 class ExecutableScriptValidatorTest {
     @Test
+    fun `引数契約は追加削除改名型変更を拒否し並べ替えだけ許可する`() {
+        val a = me.awabi2048.kantancommander.model.DiskArgument("a", ValueType.NUMBER)
+        val b = me.awabi2048.kantancommander.model.DiskArgument("b", ValueType.STRING)
+        val caller = DiskScript(name = "A")
+        val call = GraphEditor.append(caller.graph, CommandType.DISK_CALL)
+        val callee = DiskScript(name = "B", arguments = listOf(a, b))
+        call.params["diskId"] = callee.id.toString()
+        call.params["declaredArgs"] = "a:NUMBER,b:STRING"
+        call.params["arg_a"] = "1"
+        call.params["arg_b"] = "text"
+        val cases = listOf(listOf(a), listOf(a, b, a.copy(name = "c")), listOf(a.copy(name = "renamed"), b), listOf(a.copy(type = ValueType.STRING), b))
+        for (arguments in cases) {
+            callee.arguments = arguments
+            assertTrue(ExecutableScriptValidator.validate(caller, diskResolver = { callee }).any {
+                it.code == ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
+            })
+        }
+        callee.arguments = listOf(b, a)
+        assertTrue(ExecutableScriptValidator.validate(caller, diskResolver = { callee }).isEmpty())
+    }
+
+    @Test
     fun `incomplete command settings fail execution preflight`() {
         val script = DiskScript(name = "incomplete")
         GraphEditor.append(script.graph, CommandType.DISK_CALL)

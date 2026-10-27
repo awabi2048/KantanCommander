@@ -186,7 +186,7 @@ internal object GestureCommandPickerLayoutPolicy {
 
     fun pageCount(candidateCount: Int): Int {
         require(candidateCount >= 0) { "候補数は0以上で指定してください: $candidateCount" }
-        return ((candidateCount + PAGE_SIZE - 1) / PAGE_SIZE).coerceAtLeast(1)
+        return com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiPagination.plan(candidateCount, PAGE_SIZE).count
     }
 
     fun rowCount(candidateCount: Int): Int {

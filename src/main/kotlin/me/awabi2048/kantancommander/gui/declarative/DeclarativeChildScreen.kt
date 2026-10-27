@@ -20,29 +20,18 @@ import net.kyori.adventure.text.Component
 internal object DeclarativeChildScreen {
     const val RESOURCE_PATH = "gesture-gui/child-screen.html"
 
-    /**
-     * 骨格の各注入領域が覆う画面内範囲です。`placed` のオフセット変換基準として使います。
-     *
-     * 各値は child-screen.html の `position: absolute` オフセットと対応します
-     * （領域の左上 = 内容域原点 + markup の left/top）。マークアップ側の位置を
-     * 変えるときは、こちらの換算値も同じだけ動かしてください。
-     */
-    class RegionFrames(frame: ContentFrame) {
-        /** 本文領域（markup: left 0 / top 0.3553）。全幅・上端は先頭候補行の上端です。 */
-        val content = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.3553)
-
-        /** 帯（markup: left 0.5257 / top 0.7253）。ページャ・戻り値行など、下端操作行の直上です。 */
-        val band = ContentFrame(minX = frame.minX + 0.5257, maxY = frame.maxY - 0.7253)
-
-        /** 下端左セル（markup: left 0.0257 / top 0.8653）。主操作またはページャを置きます。 */
-        val footerLeft = ContentFrame(minX = frame.minX + 0.0257, maxY = frame.maxY - 0.8653)
-
-        /** 下端右セル（markup: left 1.0857 / top 0.8653）。戻る・取消を置きます。 */
-        val footerRight = ContentFrame(minX = frame.minX + 1.0857, maxY = frame.maxY - 0.8653)
+    /** HTMLで解決した名前付き領域です。位置・寸法はHTMLだけで管理します。 */
+    class RegionFrames(frames: Map<String, ContentFrame>) {
+        val content = frames.getValue("child-content")
+        val band = frames.getValue("child-band")
+        val footerLeft = frames.getValue("child-footer-left")
+        val footerRight = frames.getValue("child-footer-right")
     }
 
-    /** 骨格の各注入領域の枠を求めます。 */
-    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(contentFrame(panel))
+    /** 領域座標は共有Scaffold APIを通して取得します。 */
+    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(
+        KantanLayoutBridge.regionFrames(RESOURCE_PATH, panel, setOf("child-content", "child-band", "child-footer-left", "child-footer-right")),
+    )
 
     /**
      * 子画面骨格へ各領域のノードを注入し、解決・変換まで一続きで処理します。

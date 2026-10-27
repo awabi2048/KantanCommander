@@ -21,26 +21,17 @@ import com.awabi2048.ccsystem.api.gesturegui.theme.GestureGuiThemes
 internal object DeclarativeSettingChoicesChild {
     const val RESOURCE_PATH = "gesture-gui/setting-choices-child.html"
 
-    /**
-     * 骨格の各注入領域が覆う画面内範囲です。`placed` のオフセット変換基準として使います。
-     *
-     * 各値は setting-choices-child.html の `position: absolute` オフセットと対応します
-     * （領域の左上 = 内容域原点 + markup の left/top）。マークアップ側の位置を
-     * 変えるときは、こちらの換算値も同じだけ動かしてください。
-     */
-    class RegionFrames(frame: ContentFrame) {
-        /** 見出し区画（markup: left 0 / top 0）。内容域原点と同じ左上を持ちます。 */
-        val header = ContentFrame(minX = frame.minX, maxY = frame.maxY)
-
-        /** 候補区画（markup: left 0 / top 0.3553）。上段・下揃えのカードと群境界線を置きます。 */
-        val cards = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.3553)
-
-        /** 操作行（markup: left 0 / top 0.8653）。左列にページャ、右列に戻るを置きます。 */
-        val footer = ContentFrame(minX = frame.minX, maxY = frame.maxY - 0.8653)
+    /** HTMLで解決した名前付き領域です。位置・寸法はHTMLだけで管理します。 */
+    class RegionFrames(frames: Map<String, ContentFrame>) {
+        val header = frames.getValue("setting-choice-header")
+        val cards = frames.getValue("setting-choice-cards")
+        val footer = frames.getValue("setting-choice-footer")
     }
 
-    /** 骨格の各注入領域の枠を求めます。 */
-    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(contentFrame(panel))
+    /** 領域座標は共有Scaffold APIを通して取得します。 */
+    fun regions(panel: GestureGuiPanel): RegionFrames = RegionFrames(
+        KantanLayoutBridge.regionFrames(RESOURCE_PATH, panel, setOf("setting-choice-header", "setting-choice-cards", "setting-choice-footer")),
+    )
 
     /**
      * 骨格へ各区画のノードを注入し、解析・解決・コンパイルまで一続きで処理します。

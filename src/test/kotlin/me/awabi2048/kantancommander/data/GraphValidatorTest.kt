@@ -8,6 +8,20 @@ import java.util.UUID
 
 class GraphValidatorTest {
     @Test
+    @org.junit.jupiter.api.Timeout(2)
+    fun `循環FORは所属スタックを増殖させず拒否する`() {
+        val start = CommandType.FOR_START.newNode()
+        val end = CommandType.FOR_END.newNode()
+        start.pairedNodeId = end.id
+        end.pairedNodeId = start.id
+        start.trueNext = start.id
+        val graph = CommandGraph(start.id, linkedMapOf(start.id to start, end.id to end))
+        assertTrue(GraphValidator.validateStructured(graph).any {
+            it.code == me.awabi2048.kantancommander.error.ErrorCode.GRAPH_CYCLE
+        })
+    }
+
+    @Test
     fun `paired true straight false branch and merge is valid`() {
         val condition = CommandType.CONDITION.newNode()
         val trueNode = CommandType.DISPLAY_TEXT.newNode()

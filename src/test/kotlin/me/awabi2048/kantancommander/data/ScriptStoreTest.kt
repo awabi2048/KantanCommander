@@ -38,6 +38,37 @@ class ScriptStoreTest {
     lateinit var temp: File
 
     @Test
+    fun `正本の引数変更後はキャッシュ内の呼出元も拒否する`() {
+        val store = ScriptStore(temp.resolve("signature-change"), Logger.getAnonymousLogger())
+        val callee = store.createPlacement("B")
+        val caller = store.createPlacement("A")
+        val call = GraphEditor.append(caller.graph, CommandType.DISK_CALL)
+        call.params["diskId"] = callee.id.toString()
+        store.save(caller)
+        callee.arguments = listOf(me.awabi2048.kantancommander.model.DiskArgument("added"))
+        store.save(callee)
+        val errors = ExecutableScriptValidator.validate(requireNotNull(store.load(caller.id)), diskResolver = store::load)
+        assertTrue(errors.any { it.code == ErrorCode.DISK_CALL_SIGNATURE_MISMATCH })
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(2)
+    fun `循環FORを含む受付形式JSONは起動時に隔離する`() {
+        val dir = temp.resolve("cyclic-for").also(File::mkdirs)
+        val start = CommandType.FOR_START.newNode()
+        val end = CommandType.FOR_END.newNode()
+        start.pairedNodeId = end.id
+        end.pairedNodeId = start.id
+        start.trueNext = start.id
+        val script = DiskScript(name = "broken", graph = CommandGraph(start.id, linkedMapOf(start.id to start, end.id to end)))
+        dir.resolve("${script.id}.json").writeText(GsonBuilder().create().toJson(script))
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        assertNull(store.load(script.id))
+        assertFalse(dir.resolve("${script.id}.json").exists())
+    }
+
+
+    @Test
     fun `legacy kind-only condition migrates to its subject`() {
         // issue #27: 旧 `kind` のみの保存は読込時に判定対象へ正本化し、
         // 従来と同じ条件判定として実行・検証できるようにします。

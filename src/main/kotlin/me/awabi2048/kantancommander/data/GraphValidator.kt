@@ -155,7 +155,11 @@ object GraphValidator {
                 stack.addLast(Triple(id, depth, true))
                 node?.outgoing()?.asReversed()?.forEach { stack.addLast(Triple(it, nextDepth, false)) }
             }
-            validateStructuredControl(graph, entry, errors)
+            // 循環を含むグラフでは所属スタックが周回ごとに増えるため、
+            // 所属検証へ進めません。構造検証で確定した循環をここで遮断します。
+            if (errors.none { it.code == ErrorCode.GRAPH_CYCLE || it.code == ErrorCode.GRAPH_DEPTH_EXCEEDED }) {
+                validateStructuredControl(graph, entry, errors)
+            }
             (graph.nodes.keys - visited).forEach { errors.add(ErrorCode.GRAPH_UNREACHABLE, it, "到達不能ノードがあります: $it") }
         }
     }
@@ -166,6 +170,9 @@ object GraphValidator {
         errors: MutableList<GraphStructuralError>,
     ) {
         val visited = mutableSetOf<Pair<UUID, List<UUID>>>()
+        // 分岐ごとに異なる所属スタックを作る破損データも、ノード数に比例した
+        // 予算で打ち切ります。Int乗算のオーバーフローで上限を失わないようLongです。
+        val maximumStates = graph.nodes.size.toLong() * (graph.nodes.size.coerceAtMost(64) + 1)
         // for所属スタックを持ち回る走査です。ノード連鎖の長さだけ深くなる
         // 再帰を明示スタックへ置き換えています。（id, forStack）単位の
         // 訪問管理は元の再帰と同じで、訪問順は結果へ影響しません。
@@ -174,6 +181,10 @@ object GraphValidator {
         while (stack.isNotEmpty()) {
             val (id, forStack) = stack.removeLast()
             if (id == null || !visited.add(id to forStack)) continue
+            if (visited.size > maximumStates) {
+                errors.add(ErrorCode.GRAPH_DEPTH_EXCEEDED, id, "構造検証の探索量が安全上限を超えています")
+                return
+            }
             val node = graph.nodes[id] ?: continue
             when (node.type) {
                 CommandType.BREAK, CommandType.CONTINUE -> {
@@ -182,6 +193,11 @@ object GraphValidator {
                     }
                 }
                 CommandType.FOR_START -> {
+                    // 呼出し元の検証順序に依存せず、この走査単体でも必ず終了させます。
+                    if (node.id in forStack || forStack.size >= graph.nodes.size) {
+                        errors.add(ErrorCode.GRAPH_CYCLE, node.id, "FOR開始への循環接続があります: ${node.id}")
+                        continue
+                    }
                     val endId = node.pairedNodeId ?: continue
                     stack.addLast(node.trueNext to (forStack + node.id))
                     stack.addLast(graph.nodes[endId]?.next to forStack)

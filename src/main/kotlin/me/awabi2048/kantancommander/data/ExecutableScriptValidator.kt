@@ -53,6 +53,7 @@ import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.matchesDiskArguments
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.error.ErrorSeverity
@@ -2291,6 +2292,13 @@ object ExecutableScriptValidator {
         // 引数宣言の厳密な解釈です。不正な項目があれば拒否します。
         val rawDeclared = node.string("declaredArgs")
         val declared = node.declaredArguments()
+        if (!node.matchesDiskArguments(callee.arguments)) {
+            errors += nodeError(
+                node, path, setOf("diskId"), "呼出し先の引数定義が変更されています。呼出し設定を更新してください",
+                code = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH,
+            )
+            return
+        }
         if (rawDeclared.isNotBlank()) {
             val entries = rawDeclared.split(',').map(String::trim).filter(String::isNotBlank)
             if (declared.size != entries.size) {
