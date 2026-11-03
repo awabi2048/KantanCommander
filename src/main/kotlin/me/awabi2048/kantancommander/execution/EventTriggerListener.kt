@@ -131,8 +131,7 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
         val world = event.world
         // 起動時に未ロードだったチャンクの表示復元は、ロード確定のここで行います。
         plugin.placements.restoreChunkDisplays(world, event.chunk.x, event.chunk.z)
-        plugin.placements.all()
-            .filter { it.world == world.name && (it.x shr 4) == event.chunk.x && (it.z shr 4) == event.chunk.z }
+        plugin.placements.inChunk(world.name, event.chunk.x, event.chunk.z)
             .forEach { placement ->
                 registrationFor(placement.world, placement.x, placement.y, placement.z, placement.scriptId)
                     ?.let { index[placement.key] = it }

@@ -403,11 +403,14 @@ class KantanCommanderPlugin : JavaPlugin() {
      * チャンク単位の登録と台帳の食い違いを残しません。
      */
     internal fun refreshEventTriggerIndex() {
+        if (::placements.isInitialized) placements.rebuildChunkIndex()
+        if (::triggerListener.isInitialized) triggerListener.rebuild()
         if (::eventTriggerListener.isInitialized) eventTriggerListener.rebuild()
     }
 
     /** issue #7 のスクリプト削除時に、そのスクリプトへのイベント登録を解除します。 */
     internal fun forgetEventTriggerScript(scriptId: java.util.UUID) {
+        if (::triggerListener.isInitialized) triggerListener.forgetScript(scriptId)
         if (::eventTriggerListener.isInitialized) eventTriggerListener.forgetScript(scriptId)
     }
 

@@ -30,10 +30,12 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     private val gson = GsonBuilder().setPrettyPrinting().create()
     private val type = object : TypeToken<List<PlacementDto>>() {}.type
     private val placements = linkedMapOf<String, DiskPlacement>()
+    private var chunks: Map<Triple<String, Int, Int>, List<DiskPlacement>> = emptyMap()
 
     init {
         file.parentFile.mkdirs()
         load()
+        rebuildChunkIndex()
     }
 
     fun add(placement: DiskPlacement) {
@@ -137,6 +139,14 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun all(): List<DiskPlacement> = placements.values.toList()
 
+    /** 台帳変更を確定した境界で更新し、チャンクイベントの全件走査を避けます。 */
+    internal fun rebuildChunkIndex() {
+        chunks = placements.values.groupBy { Triple(it.world, it.x shr 4, it.z shr 4) }
+    }
+
+    internal fun inChunk(world: String, x: Int, z: Int): List<DiskPlacement> =
+        chunks[Triple(world, x, z)].orEmpty()
+
     fun removeWorld(worldName: String): List<DiskPlacement> {
         val removed = placements.values.filter { it.world == worldName }
         if (removed.isEmpty()) return emptyList()
@@ -176,9 +186,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
      */
     fun restoreChunkDisplays(world: World, chunkX: Int, chunkZ: Int) {
         val stale = mutableListOf<String>()
-        placements.values.toList().forEach { placement ->
-            if (placement.world != world.name) return@forEach
-            if ((placement.x shr 4) != chunkX || (placement.z shr 4) != chunkZ) return@forEach
+        inChunk(world.name, chunkX, chunkZ).forEach { placement ->
             restoreDisplayFor(world, placement, stale)
         }
         if (stale.isEmpty()) return

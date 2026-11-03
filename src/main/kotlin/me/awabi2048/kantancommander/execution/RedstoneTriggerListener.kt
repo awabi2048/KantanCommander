@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.intervalTicks
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import org.bukkit.Bukkit
@@ -14,62 +15,102 @@ import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.block.BlockPhysicsEvent
 import org.bukkit.event.block.BlockPlaceEvent
+import org.bukkit.event.world.ChunkLoadEvent
+import org.bukkit.event.world.ChunkUnloadEvent
 import java.util.UUID
 
 class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Listener {
     private val runtimeState = RedstoneRuntimeState()
     private val wireTopology = RedstoneWireTopology(::isExtendedCommandBlock)
+    private data class Registration(val placement: DiskPlacement, val kind: TriggerKind, val interval: Long)
+    private val active = linkedMapOf<String, Registration>()
+    private val timers = LoadedTimerState()
 
     fun start() {
+        rebuild()
         // プラグイン再起動時も、保存済みの拡張ブロック隣接ダストだけを現行の接続仕様へ
         // 一度だけ補正してから監視を開始します。通常のダストはバニラへ任せます。
         Bukkit.getScheduler().runTask(plugin, Runnable {
             plugin.placements.all().forEach { placement ->
                 val world = Bukkit.getWorld(placement.world) ?: return@forEach
+                if (!world.isChunkLoaded(placement.x shr 4, placement.z shr 4)) return@forEach
+                if (!neighborsLoaded(world, placement.x, placement.z, 3)) return@forEach
                 wireTopology.refreshAround(world.getBlockAt(placement.x, placement.y, placement.z))
             }
         })
         Bukkit.getScheduler().runTaskTimer(plugin, Runnable(::tick), 1L, 1L)
     }
 
-    private fun tick() {
-        val now = plugin.server.currentTick.toLong()
+    /** 設定変更時だけ起動方法を取得し、毎tickのグラフ複製を避けます。 */
+    fun rebuild() {
+        val fresh = linkedMapOf<String, Registration>()
         plugin.placements.all().forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
+            if (!world.isChunkLoaded(placement.x shr 4, placement.z shr 4)) return@forEach
+            registration(placement)?.let { fresh[placement.key] = it }
+        }
+        (active.keys - fresh.keys).forEach(runtimeState::forgetPower)
+        active.clear()
+        active.putAll(fresh)
+    }
+
+    private fun registration(placement: DiskPlacement): Registration? {
+        val trigger = plugin.scripts.load(placement.scriptId)?.trigger?.normalized() ?: return null
+        if (trigger.kind == TriggerKind.EVENT) return null
+        return Registration(placement, trigger.kind, trigger.intervalTicks())
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onChunkLoad(event: ChunkLoadEvent) {
+        plugin.placements.inChunk(event.world.name, event.chunk.x, event.chunk.z).forEach { placement ->
+            registration(placement)?.let { active[placement.key] = it }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onChunkUnload(event: ChunkUnloadEvent) {
+        plugin.placements.inChunk(event.world.name, event.chunk.x, event.chunk.z).forEach { placement ->
+            active.remove(placement.key)
+            runtimeState.forgetPower(placement.key)
+        }
+    }
+
+    private fun tick() {
+        active.values.toList().forEach { registration ->
+            val placement = registration.placement
+            if (active[placement.key] != registration) return@forEach
+            val world = Bukkit.getWorld(placement.world) ?: return@forEach
+            if (!world.isChunkLoaded(placement.x shr 4, placement.z shr 4)) return@forEach
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
             if (!PlacedBlockMaterials.isPlacedBlock(block.type)) {
                 // コマンドや外部プラグインで実体だけが置き換えられた場合も、
                 // 台帳に残った特殊接続を次の監視周期でバニラ形状へ戻します。
-                wireTopology.restoreAfterExtendedRemoval(block)
+                if (neighborsLoaded(world, placement.x, placement.z, 2)) wireTopology.restoreAfterExtendedRemoval(block)
                 return@forEach
             }
-            val script = plugin.scripts.load(placement.scriptId) ?: return@forEach
-            // 隣接ブロック自身の集約電力ではなく、対象ブロックへ入力された面を読む。
-            // これによりリピーターの入力側など、出力方向でない信号を誤検知しません。
-            val powerMask = RedstoneInputReader.incomingPowerMask(block)
-            val hasPower = RedstoneInputReader.isPowered(powerMask)
-            val previous = runtimeState.observePower(placement.key, powerMask)
-            // issue #7: 起動方法は `trigger` が単一正本です。イベント起動は
-            // イベントリスナーが担当するため tick では実行しません。
-            val trigger = script.trigger.normalized()
-            val shouldRun = when (trigger.kind) {
+            val shouldRun = when (registration.kind) {
                 TriggerKind.EVENT -> false
-                TriggerKind.TIMER -> {
-                    val anchor = runtimeState.timerAnchor(script.id, now)
-                    RedstoneActivationPolicy.isIntervalElapsed(
-                        intervalTicks = trigger.intervalTicks(),
-                        currentTick = now,
-                        lastRunTick = anchor,
-                    )
+                TriggerKind.TIMER -> timers.advance(placement.key, registration.interval)
+                TriggerKind.REDSTONE -> {
+                    // 読めない面は前回値を保持し、利用可能な面は監視し続けます。
+                    // 境界の1面のために他の面まで監視停止しないことが重要です。
+                    var known = 0
+                    var mask = 0
+                    RedstoneInputReader.POWER_FACES.forEachIndexed { index, face ->
+                        val neighbor = block.getRelative(face)
+                        if (neighborsLoaded(world, neighbor.x, neighbor.z, 1)) {
+                            known = known or (1 shl index)
+                            if (neighbor.isBlockFacePowered(face)) mask = mask or (1 shl index)
+                        }
+                    }
+                    runtimeState.observePartialPower(placement.key, mask, known)
                 }
-                TriggerKind.REDSTONE ->
-                    RedstoneActivationPolicy.isRisingEdge(wasPowered = previous, isPowered = hasPower)
             }
             if (shouldRun) {
                 val normalExecution = plugin.testExecution.beginNormal(placement.key) ?: return@forEach
-                runtimeState.markRun(script.id, now)
+                if (registration.kind == TriggerKind.TIMER) timers.markRun(placement.key)
                 runCatching {
-                    plugin.executor.execute(script.id, block.location.add(0.5, 0.5, 0.5)) {
+                    plugin.executor.execute(placement.scriptId, block.location.add(0.5, 0.5, 0.5)) {
                         normalExecution.close()
                     }
                 }.onFailure { failure ->
@@ -86,12 +127,24 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         }
     }
 
+    private fun neighborsLoaded(world: org.bukkit.World, x: Int, z: Int, radius: Int): Boolean =
+        (((x - radius) shr 4)..((x + radius) shr 4)).all { chunkX ->
+            (((z - radius) shr 4)..((z + radius) shr 4)).all { chunkZ -> world.isChunkLoaded(chunkX, chunkZ) }
+        }
+
     fun resetTiming(scriptId: UUID) {
+        plugin.placements.findByScript(scriptId).forEach { timers.forget(it.key) }
         runtimeState.resetTiming(scriptId)
     }
 
     fun forget(placementKey: String, scriptId: UUID) {
+        timers.forget(placementKey)
+        active.remove(placementKey)
         runtimeState.forget(placementKey, scriptId)
+    }
+
+    fun forgetScript(scriptId: UUID) {
+        plugin.placements.findByScript(scriptId).forEach { forget(it.key, scriptId) }
     }
 
     /** 拡張ブロックに隣接するダストだけを、周囲のワールド状態から再計算します。 */
@@ -144,7 +197,7 @@ internal object RedstoneInputReader {
         block.getRelative(face).getBlockPower(face).coerceAtLeast(0)
     }
 
-    private val POWER_FACES = listOf(
+    internal val POWER_FACES = listOf(
         BlockFace.UP,
         BlockFace.DOWN,
         BlockFace.NORTH,
@@ -157,7 +210,27 @@ internal object RedstoneInputReader {
 internal class RedstoneRuntimeState {
     private val powered = mutableMapOf<String, Boolean>()
     private val masks = mutableMapOf<String, Int>()
+    private val knownMasks = mutableMapOf<String, Int>()
     private val lastRun = mutableMapOf<UUID, Long>()
+
+    fun forgetPower(placementKey: String) {
+        powered.remove(placementKey)
+        masks.remove(placementKey)
+        knownMasks.remove(placementKey)
+    }
+
+    /** 未観測面は保持し、読み取り可能になった瞬間の状態を立ち上がりに数えません。 */
+    fun observePartialPower(placementKey: String, current: Int, known: Int): Boolean {
+        val old = masks[placementKey] ?: 0
+        val previouslyKnown = knownMasks[placementKey] ?: 0
+        val newFaces = known and previouslyKnown.inv()
+        val baseline = (old and newFaces.inv()) or (current and newFaces)
+        val combined = (old and known.inv()) or (current and known)
+        masks[placementKey] = combined
+        knownMasks[placementKey] = known
+        powered[placementKey] = combined != 0
+        return baseline == 0 && combined != 0
+    }
 
     fun observePower(placementKey: String, current: Boolean): Boolean {
         return observePower(placementKey, if (current) 1 else 0)
@@ -185,10 +258,23 @@ internal class RedstoneRuntimeState {
     }
 
     fun forget(placementKey: String, scriptId: UUID) {
-        powered.remove(placementKey)
-        masks.remove(placementKey)
+        forgetPower(placementKey)
         lastRun.remove(scriptId)
     }
+}
+
+/** ロード中に監視したtickだけを積算し、アンロード中の時間を含めません。 */
+internal class LoadedTimerState {
+    private val elapsed = mutableMapOf<String, Long>()
+
+    fun advance(key: String, interval: Long): Boolean {
+        val ticks = (elapsed[key] ?: 0L) + 1L
+        elapsed[key] = ticks
+        return ticks >= interval
+    }
+
+    fun markRun(key: String) { elapsed[key] = 0L }
+    fun forget(key: String) { elapsed.remove(key) }
 }
 
 internal object RedstoneActivationPolicy {
