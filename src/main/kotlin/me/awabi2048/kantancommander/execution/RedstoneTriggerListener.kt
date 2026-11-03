@@ -65,6 +65,20 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         plugin.placements.inChunk(event.world.name, event.chunk.x, event.chunk.z).forEach { placement ->
             registration(placement)?.let { active[placement.key] = it }
         }
+        // 起動時や前回ロード時に隣接チャンク待ちで保留した接続補正も再試行します。
+        // 対象チャンクのロード完了後に実行し、別チャンクを同期ロードしません。
+        val world = event.world
+        val chunkX = event.chunk.x
+        val chunkZ = event.chunk.z
+        Bukkit.getScheduler().runTask(plugin, Runnable {
+            for (x in chunkX - 1..chunkX + 1) for (z in chunkZ - 1..chunkZ + 1) {
+                plugin.placements.inChunk(world.name, x, z).forEach { placement ->
+                    if (neighborsLoaded(world, placement.x, placement.z, 3)) {
+                        wireTopology.refreshAround(world.getBlockAt(placement.x, placement.y, placement.z))
+                    }
+                }
+            }
+        })
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -85,7 +99,7 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
             if (!PlacedBlockMaterials.isPlacedBlock(block.type)) {
                 // コマンドや外部プラグインで実体だけが置き換えられた場合も、
                 // 台帳に残った特殊接続を次の監視周期でバニラ形状へ戻します。
-                if (neighborsLoaded(world, placement.x, placement.z, 2)) wireTopology.restoreAfterExtendedRemoval(block)
+                if (neighborsLoaded(world, placement.x, placement.z, 3)) wireTopology.restoreAfterExtendedRemoval(block)
                 return@forEach
             }
             val shouldRun = when (registration.kind) {
