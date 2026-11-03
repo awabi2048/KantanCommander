@@ -70,8 +70,12 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         val world = event.world
         val chunkX = event.chunk.x
         val chunkZ = event.chunk.z
+        val nearbyChunks = (chunkX - 1..chunkX + 1).flatMap { x ->
+            (chunkZ - 1..chunkZ + 1).map { z -> x to z }
+        }
+        if (nearbyChunks.none { (x, z) -> plugin.placements.inChunk(world.name, x, z).isNotEmpty() }) return
         Bukkit.getScheduler().runTask(plugin, Runnable {
-            for (x in chunkX - 1..chunkX + 1) for (z in chunkZ - 1..chunkZ + 1) {
+            for ((x, z) in nearbyChunks) {
                 plugin.placements.inChunk(world.name, x, z).forEach { placement ->
                     if (neighborsLoaded(world, placement.x, placement.z, 3)) {
                         wireTopology.refreshAround(world.getBlockAt(placement.x, placement.y, placement.z))
