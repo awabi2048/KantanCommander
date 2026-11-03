@@ -15,6 +15,12 @@ private val HORIZONTAL_FACES = listOf(
     BlockFace.WEST,
 )
 
+/** 周辺候補収集とその隣接判定が到達し得る範囲の保守的な上限です。 */
+internal fun isTopologyAffected(x: Int, y: Int, z: Int, targetX: Int, targetY: Int, targetZ: Int): Boolean =
+    kotlin.math.abs(x.toLong() - targetX) <= 3 &&
+        kotlin.math.abs(y.toLong() - targetY) <= 1 &&
+        kotlin.math.abs(z.toLong() - targetZ) <= 3
+
 /**
  * かんたんコマンダー制御ブロックに隣接するレッドストーンダストの形状だけを補正します。
  *

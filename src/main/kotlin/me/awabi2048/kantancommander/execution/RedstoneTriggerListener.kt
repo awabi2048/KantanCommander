@@ -25,6 +25,8 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
     private data class Registration(val placement: DiskPlacement, val kind: TriggerKind, val interval: Long)
     private val active = linkedMapOf<String, Registration>()
     private val timers = LoadedTimerState()
+    private data class PendingRestore(val world: String, val x: Int, val y: Int, val z: Int)
+    private val pendingRestores = mutableMapOf<Triple<String, Int, Int>, MutableSet<PendingRestore>>()
 
     fun start() {
         rebuild()
@@ -73,7 +75,9 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         val nearbyChunks = (chunkX - 1..chunkX + 1).flatMap { x ->
             (chunkZ - 1..chunkZ + 1).map { z -> x to z }
         }
-        if (nearbyChunks.none { (x, z) -> plugin.placements.inChunk(world.name, x, z).isNotEmpty() }) return
+        val hasPlacements = nearbyChunks.any { (x, z) -> plugin.placements.inChunk(world.name, x, z).isNotEmpty() }
+        val hasRestores = nearbyChunks.any { (x, z) -> pendingRestores.containsKey(Triple(world.name, x, z)) }
+        if (!hasPlacements && !hasRestores) return
         Bukkit.getScheduler().runTask(plugin, Runnable {
             for ((x, z) in nearbyChunks) {
                 plugin.placements.inChunk(world.name, x, z).forEach { placement ->
@@ -81,6 +85,17 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
                         wireTopology.refreshAround(world.getBlockAt(placement.x, placement.y, placement.z))
                     }
                 }
+            }
+            // 撤去済み配置は台帳索引から消えているため、保留座標を別途保持します。
+            nearbyChunks.forEach { (x, z) ->
+                val key = Triple(world.name, x, z)
+                val restores = pendingRestores[key] ?: return@forEach
+                restores.removeAll { restore ->
+                    if (!neighborsLoaded(world, restore.x, restore.z, 3)) return@removeAll false
+                    wireTopology.restoreAfterExtendedRemoval(world.getBlockAt(restore.x, restore.y, restore.z))
+                    true
+                }
+                if (restores.isEmpty()) pendingRestores.remove(key)
             }
         })
     }
@@ -169,14 +184,34 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onBlockPlace(event: BlockPlaceEvent) {
         if (event.block.type != Material.REDSTONE_WIRE && !isExtendedCommandBlock(event.block)) return
+        if (!neighborsLoaded(event.block.world, event.block.x, event.block.z, 3)) return
         wireTopology.refreshAround(event.block)
     }
 
     /** バニラの物理更新で接続が再計算された場合も、意図した形状を再適用します。 */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onBlockPhysics(event: BlockPhysicsEvent) {
-        if (event.block.type != Material.REDSTONE_WIRE && !isExtendedCommandBlock(event.block)) return
-        wireTopology.refreshAround(event.block)
+        val block = event.block
+        if (block.type == Material.REDSTONE_WIRE) {
+            // refreshAround は最大で水平3・高さ1以内の拡張ブロックにしか
+            // 影響しません。通常の大規模回路は台帳索引だけで除外します。
+            if (!hasNearbyPlacement(block)) return
+        } else if (!isExtendedCommandBlock(block)) return
+        // 接続補正の近傍走査で隣の未ロードチャンクをロードしないようにします。
+        // 保留された補正は隣接チャンクのロード時に再試行されます。
+        if (!neighborsLoaded(block.world, block.x, block.z, 3)) return
+        wireTopology.refreshAround(block)
+    }
+
+    private fun hasNearbyPlacement(block: Block): Boolean {
+        for (x in ((block.x - 3) shr 4)..((block.x + 3) shr 4)) {
+            for (z in ((block.z - 3) shr 4)..((block.z + 3) shr 4)) {
+                if (plugin.placements.inChunk(block.world.name, x, z).any { placement ->
+                        isTopologyAffected(block.x, block.y, block.z, placement.x, placement.y, placement.z)
+                    }) return true
+            }
+        }
+        return false
     }
 
     private fun isExtendedCommandBlock(block: Block): Boolean =
@@ -185,7 +220,14 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
 
     /** 拡張ブロック撤去後など、イベント外から隣接ダストをバニラ形状へ戻します。 */
     internal fun refreshDustTopologyAround(block: Block) {
-        wireTopology.restoreAfterExtendedRemoval(block)
+        if (neighborsLoaded(block.world, block.x, block.z, 3)) {
+            wireTopology.restoreAfterExtendedRemoval(block)
+        } else {
+            // 周囲が揃ったとき、チャンク読込イベントから特殊接続を復旧します。
+            val key = Triple(block.world.name, block.x shr 4, block.z shr 4)
+            pendingRestores.getOrPut(key) { mutableSetOf() }
+                .add(PendingRestore(block.world.name, block.x, block.y, block.z))
+        }
     }
 
 }

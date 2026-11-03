@@ -1231,6 +1231,10 @@ class WorldEditControlBlockSyncListener(
             if (isMoveInFlight(placement.key)) continue
             if (isUndoGraceActive(placement.key)) continue
             val world = Bukkit.getWorld(placement.world) ?: continue
+            // 監視のために遠隔チャンクを同期ロードすると、負荷だけでなく
+            // ロード中だけ進むタイマーまで意図せず動かしてしまいます。
+            // 未ロード分は次にロードされた後の掃除へ委ねます。
+            if (!world.isChunkLoaded(placement.x shr 4, placement.z shr 4)) continue
             if (PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(placement.x, placement.y, placement.z).type)) continue
             runCatching {
                 removePlacementFully(world, placement)
