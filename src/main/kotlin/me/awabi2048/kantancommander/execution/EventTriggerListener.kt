@@ -203,17 +203,22 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onEntityInteract(event: PlayerInteractEntityEvent) {
+        fireEntityClick(event.player, event.rightClicked, event.hand)
+    }
+
+    /** 通常操作と提出保護による通知を同一の条件・引数で処理します。 */
+    internal fun fireEntityClick(player: Player, target: Entity, hand: EquipmentSlot) {
         // エンティティ操作も両手で届くため、ブロック操作と同じく主手だけを採用します。
-        if (event.hand != EquipmentSlot.HAND) return
+        if (hand != EquipmentSlot.HAND) return
         fire(
             EventTriggerKind.ENTITY_CLICK,
-            event.player.world,
-            actor = event.player,
+            player.world,
+            actor = player,
             arguments = mapOf(
-                EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = event.player.uniqueId),
-                EventTriggerArguments.TARGET to TypedValue(ValueType.ENTITY, entityId = event.rightClicked.uniqueId),
+                EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = player.uniqueId),
+                EventTriggerArguments.TARGET to TypedValue(ValueType.ENTITY, entityId = target.uniqueId),
             ),
-            target = event.rightClicked,
+            target = target,
             clickSide = TriggerClickSide.RIGHT,
         )
     }
