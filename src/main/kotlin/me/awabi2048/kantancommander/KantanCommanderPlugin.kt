@@ -357,8 +357,8 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(operationTool, this)
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(eventTriggerListener, this)
-        // MWM-Chanpon は任意依存のため、イベント型を参照するリスナーも有効時だけ生成します。
-        if (pm.isPluginEnabled("MWMChanpon")) {
+        // Chanpon-Utilities は任意依存のため、イベント型を参照するリスナーも有効時だけ生成します。
+        if (pm.isPluginEnabled("Chanpon-Utilities")) {
             pm.registerEvents(me.awabi2048.kantancommander.execution.ProtectedEntityClickListener(eventTriggerListener), this)
         }
         pm.registerEvents(playerFlightPermissions, this)
