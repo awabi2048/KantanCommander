@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "me.awabi2048"
-version = "26.1103.4"
+version = "26.1108.1"
 
 repositories {
     mavenLocal()
@@ -31,8 +31,9 @@ val providedDeps = listOf(
     "com.awabi2048:CC-System:26.1027.1",
     "net.dmulloy2:ProtocolLib:5.4.0",
     "com.moulberry.axiom:AxiomPaper:5.0.1",
-    "awabi2048:my-world-manager:26.905.2",
-    "me.awabi2048:MWM-Chanpon:26.905.2",
+    "awabi2048:my-world-manager:26.1108.2",
+    "me.awabi2048:chanpon-utilities:26.1106.2",
+    "me.awabi2048:MWM-Chanpon:26.1105.2",
     "jp.awabi2048:CC-Content:26.907.1",
     "org.geysermc.geyser:api:2.10.1",
 )

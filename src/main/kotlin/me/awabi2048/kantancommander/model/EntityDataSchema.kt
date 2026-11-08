@@ -1076,7 +1076,8 @@ object EntityDataSchema {
         PROPERTY_INVULNERABLE -> entity.setInvulnerable(value).let { true }
         PROPERTY_GRAVITY -> entity.setGravity(value).let { true }
         PROPERTY_GLOWING -> entity.setGlowing(value).let { true }
-        PROPERTY_ALLOW_FLIGHT -> (entity as? Player)?.let { it.allowFlight = value; true } ?: false
+        // 飛行はワールドに限定した最優先要求のため、専用サービス以外から直接変更しません。
+        PROPERTY_ALLOW_FLIGHT -> false
         PROPERTY_PERSISTENT -> entity.setPersistent(value).let { true }
         PROPERTY_ARMOR_STAND_ARMS -> (entity as? ArmorStand)?.let { it.setArms(value); true } ?: false
         PROPERTY_ARMOR_STAND_SMALL -> (entity as? ArmorStand)?.let { it.setSmall(value); true } ?: false
