@@ -84,6 +84,8 @@ class ScriptStoreTest {
         add("angle", FacingSpec(FacingKind.ROTATION, yaw = 90f, pitch = 30f))
         add("target", FacingSpec(FacingKind.TARGET,
             target = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "sample")))
+        add("copied", FacingSpec(FacingKind.COPY_ORIENTATION,
+            target = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "copy")))
         store.save(script)
         val disk = store.copyForItem(requireNotNull(store.load(script.id)))
         val loaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(disk.id))
@@ -92,6 +94,8 @@ class ScriptStoreTest {
         assertEquals(30f, node("angle").temporaryLocationFacingSpec?.pitch)
         assertEquals(FacingKind.TARGET, node("target").temporaryLocationFacingSpec?.kind)
         assertEquals("sample", node("target").temporaryLocationFacingSpec?.target?.tag)
+        assertEquals(FacingKind.COPY_ORIENTATION, node("copied").temporaryLocationFacingSpec?.kind)
+        assertEquals("copy", node("copied").temporaryLocationFacingSpec?.target?.tag)
     }
 
     @Test

@@ -1388,7 +1388,9 @@ class DslPrinter(
         private fun facingTargetExpr(spec: FacingSpec, ctor: String): String {
             val target = spec.target ?: unsupported("向き対象が未設定です")
             if (target.kind == TargetKind.TEMPORARY) unsupported("向き対象の変数参照")
-            return "$ctor(${targetArgs(target).joinToString(", ")})"
+            val targetExpression = "target(${targetArgs(target).joinToString(", ")})"
+            // orientation は対象式を引数に取るため、target の個別属性を直接渡しません。
+            return if (ctor == "orientation") "orientation($targetExpression)" else targetExpression
         }
 
         // ---- テキスト復元ユーティリティ ----
