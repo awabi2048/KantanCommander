@@ -3,12 +3,18 @@ package me.awabi2048.kantancommander.model
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.PersistedScriptValidator
+import me.awabi2048.kantancommander.data.ScriptStore
+import me.awabi2048.kantancommander.dsl.DslCompiler
+import me.awabi2048.kantancommander.dsl.DslParser
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
 import java.util.UUID
+import java.util.logging.Logger
 
 /**
  * issue #27: 判定対象（ConditionSubject）の単一正本テストです。
@@ -17,6 +23,51 @@ import java.util.UUID
  * 旧 `kind` 欄の変換処理は残さず、旧値は未設定として検証層で拒否します。
  */
 class ConditionSubjectTest {
+    @Test
+    fun `判定種類の変更時のみエンティティ指定を消去する`() {
+        for (before in listOf(ConditionSubject.PLAYER, ConditionSubject.OTHER_ENTITY)) {
+            for (after in ConditionSubject.entries) {
+                val node = CommandType.CONDITION.newNode()
+                node.setConditionSubject(before)
+                val target = TargetSpec(TargetKind.NEARBY_ENTITIES, tag = "sample")
+                node.targetSpec = target
+                node.markConfigured("target")
+
+                node.setConditionSubject(after)
+
+                if (before == after) {
+                    assertEquals(target, node.targetSpec)
+                    assertTrue(node.isExplicitlyConfigured("target"))
+                } else {
+                    assertNull(node.targetSpec, "$before から $after")
+                    assertFalse(node.isExplicitlyConfigured("target"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `判定種類の切替後は保存直後も再読込後も旧対象がない`(@TempDir temp: Path) {
+        val store = ScriptStore(temp.toFile(), Logger.getAnonymousLogger())
+        val script = store.createPlacement("repro")
+        val source = """program "repro"; if (exists(kind = "nearby_entities", type = "minecraft:zombie", tag = "sample")) { return; }"""
+        script.graph = DslCompiler().compile(DslParser.parse(source)).graph
+        store.save(script)
+        val changed = requireNotNull(store.load(script.id))
+        val node = changed.graph.nodes.values.first { it.type == CommandType.CONDITION }
+        assertEquals("sample", node.targetSpec?.tag)
+        node.setConditionSubject(ConditionSubject.CONTROL_BLOCK)
+        node.params["redstoneSignal"] = "1.."
+        store.save(changed)
+
+        assertNull(requireNotNull(store.load(script.id)).graph.nodes.values.first { it.type == CommandType.CONDITION }.targetSpec)
+        val reloaded = requireNotNull(ScriptStore(temp.toFile(), Logger.getAnonymousLogger()).load(script.id))
+        val restored = reloaded.graph.nodes.values.first { it.type == CommandType.CONDITION }
+        assertNull(restored.targetSpec)
+        restored.setConditionSubject(ConditionSubject.OTHER_ENTITY)
+        assertNull(restored.targetSpec)
+    }
+
     @Test
     fun `missing or invalid subjects resolve to null without guessing`() {
         val missing = CommandType.CONDITION.newNode().apply { params.remove("subject") }
