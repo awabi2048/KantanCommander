@@ -193,6 +193,7 @@ class DslCompiler(
         }
 
         private fun compileStmt(stmt: DslStmt): StmtChain {
+            val existingNodes = graph.nodes.keys.toSet()
             val chain = when (stmt) {
                 is DslVarDecl -> lowerVarDecl(stmt)
                 is DslAssign -> lowerAssign(stmt)
@@ -208,7 +209,14 @@ class DslCompiler(
             // 文のコメントはその文が生成する先頭ノードへ付記し、ノードが
             // 残る限り DSL 印刷で `//` 行として復元されるようにします。
             comments[stmt.pos]?.takeIf { it.isNotEmpty() }?.let { texts ->
-                chain.entry?.let { graph.nodes[it]?.comment = texts.joinToString("\n") }
+                chain.entry?.let { id -> graph.nodes[id]?.let { first ->
+                    // 条件式のために補助ノードが先行する場合、編集状態は実際の
+                    // 条件ノードへ復元し、通常コメントは先頭ノードへ保持します。
+                    val metadataType = DslNodeMetadata.nodeType(texts)
+                    val target = if (metadataType == null || first.type == metadataType) first else
+                        graph.nodes.values.firstOrNull { it.id !in existingNodes && it.type == metadataType } ?: first
+                    first.comment = DslNodeMetadata.restore(target, texts).takeIf { it.isNotEmpty() }?.joinToString("\n")
+                } }
             }
             return chain
         }

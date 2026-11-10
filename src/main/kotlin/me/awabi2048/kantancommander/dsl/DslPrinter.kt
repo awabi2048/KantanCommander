@@ -215,6 +215,7 @@ class DslPrinter(
         /** ノードへ付随する `//` コメントを文の直前へ出力します。 */
         private fun emitComments(n: CommandNode) {
             n.comment?.lines()?.forEach { text -> line(if (text.isEmpty()) "//" else "// $text") }
+            DslNodeMetadata.encode(n)?.let { line("// $it") }
         }
 
         // ---- 変数（TEMP_SET / VARIABLE） ----

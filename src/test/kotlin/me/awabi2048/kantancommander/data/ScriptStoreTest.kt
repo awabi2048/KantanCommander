@@ -9,6 +9,7 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ScriptTrigger
@@ -43,6 +44,29 @@ import java.util.logging.LogRecord
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
+
+    @Test
+    fun `既定値の明示設定と判定の非表示項目を再読込後も保持する`() {
+        val dir = temp.resolve("editor-state")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("editor")
+        val wait = GraphEditor.append(script.graph, CommandType.WAIT)
+        CommandSettingsModel.setParameter(wait, "seconds", "1")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.setConditionSubject(ConditionSubject.PLAYER)
+        condition.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        CommandSettingsModel.setParameter(condition, "sneaking", "true")
+        condition.setConditionSubject(ConditionSubject.CONTROL_BLOCK)
+        condition.params["redstoneSignal"] = "1.."
+        store.save(script)
+        val reloaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(script.id))
+        val restoredWait = reloaded.graph.nodes.values.first { it.type == CommandType.WAIT }
+        assertTrue(CommandSettingsModel.isFieldConfigured(restoredWait, "seconds"))
+        val restoredCondition = reloaded.graph.nodes.values.first { it.type == CommandType.CONDITION }
+        assertEquals("true", restoredCondition.string("sneaking"))
+        restoredCondition.setConditionSubject(ConditionSubject.PLAYER)
+        assertEquals("true", restoredCondition.string("sneaking"))
+    }
 
     @Test
     fun `位置変数の向きと対象指定はディスク出力と再読込後も保持される`() {
