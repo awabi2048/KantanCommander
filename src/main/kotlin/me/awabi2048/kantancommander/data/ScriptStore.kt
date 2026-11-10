@@ -288,6 +288,11 @@ class ScriptStore(
                     "expected=${script.revision} actual=${previous.revision}",
             )
         }
+        // 改名前の索引が有効な間に呼出し元を解決します。先に索引を更新すると、
+        // キャッシュ外の call は旧名を解決できず、改名伝播の対象から漏れます。
+        val callers = if (previous != null && previous.name != script.name) {
+            findCallers(script.id)
+        } else emptyList()
         // 保存成功ごとに単調増加させ、入力画面開始時の正本世代と比較できるようにします。
         script.revision = revisions.compute(script.id) { _, current ->
             maxOf(current ?: 0L, previous?.revision ?: script.revision).inc()
@@ -311,7 +316,7 @@ class ScriptStore(
         declIndex[script.id] = DiskDecl(script.id, canonical.name, canonical.arguments)
         editorId?.let { recordHistory(it, script.id) }
         if (previous != null && previous.name != script.name) {
-            propagateDiskRename(script.id)
+            propagateDiskRename(callers)
         }
     }
 
@@ -763,14 +768,22 @@ class ScriptStore(
      * 伝播します。DSL テキストはディスク名を正本として参照するため、保存済み
      * テキストだけを最新名へ書き換えます（グラフ・revision は変わりません）。
      */
-    private fun propagateDiskRename(renamedId: UUID) {
+    private fun findCallers(renamedId: UUID): List<DiskScript> =
         listAll().filter { candidate ->
             candidate.id != renamedId && candidate.graph.nodes.values.any {
                 it.type == CommandType.DISK_CALL &&
                     it.string("diskId") == renamedId.toString()
             }
-        }.forEach { caller ->
+        }
+
+    private fun propagateDiskRename(callers: List<DiskScript>) {
+        callers.forEach { caller ->
             withScriptLock(caller.id) {
+                // 発見後の編集や外部変更を古い複製で上書きしません。
+                if (revisions[caller.id] != caller.revision || !sourceMatchesCache(caller.id)) {
+                    logger.warning("ディスク名変更の伝播中に呼出し元が変更されました: script=${caller.id}")
+                    return@withScriptLock
+                }
                 val text = runCatching { canonicalText(canonicalized(caller)) }
                     .getOrNull() ?: return@withScriptLock
                 val target = file(caller.id)

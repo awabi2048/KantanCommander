@@ -43,6 +43,22 @@ class ScriptStoreTest {
     lateinit var temp: File
 
     @Test
+    fun `キャッシュ外の呼出し元にもディスク名変更を伝播する`() {
+        val dir = temp.resolve("rename-evicted")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val callee = store.createPlacement("callee")
+        val caller = store.createPlacement("caller")
+        GraphEditor.append(caller.graph, CommandType.DISK_CALL).params["diskId"] = callee.id.toString()
+        store.save(caller)
+        repeat(StorageLifecycle.MAX_CACHED_PROGRAMS) { store.createPlacement("filler$it") }
+        val renamed = requireNotNull(store.load(callee.id)).apply { name = "renamed" }
+        store.save(renamed)
+        assertTrue(dir.resolve("${caller.id}.kcp").readText().contains("call \"renamed\""))
+        val loaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(caller.id))
+        assertEquals(callee.id.toString(), loaded.graph.nodes.values.first { it.type == CommandType.DISK_CALL }.string("diskId"))
+    }
+
+    @Test
     fun `外部編集後の古いキャッシュ保存は拒否して外部変更を保持する`() {
         val dir = temp.resolve("external-edit")
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
