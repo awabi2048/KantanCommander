@@ -440,32 +440,33 @@ class DslPrinter(
 
         /** ASSIGN の値（型別の構造値またはテンプレート文字列）を式へ復元します。 */
         private fun assignExpr(n: CommandNode, typeName: String): String {
-            // 値が空の型付き変数は `null`（値未設定）へ写像します。string の
-            // 空文字は意味のある値なので `""` のまま残します。
-            if (n.string("value").isBlank() && typeName != "STRING") return "null"
+            // 構造化された型は value 欄ではなく各型専用欄が正本です。
+            // value だけで未設定と判定すると、ディスクの再読込時に指定が失われます。
             return when (typeName) {
             "LOCATION" -> {
                 val spec = n.temporaryLocationPositionSpec
-                    ?: return quoteTemplate(n.string("value"))
+                    ?: return n.string("value").takeIf(String::isNotBlank)?.let(::quoteTemplate) ?: "null"
                 positionExpr(spec)
             }
             "ENTITY" -> {
                 val spec = n.temporaryEntityTargetSpec
-                    ?: return quoteTemplate(n.string("value"))
+                    ?: return n.string("value").takeIf(String::isNotBlank)?.let(::quoteTemplate) ?: "null"
                 targetExpr(spec)
             }
             "ITEM" -> {
                 val ref = n.itemTempRef
                 if (ref != null) valueName(ref)
-                else itemCtor(n.string("item"), n.string("itemData").ifBlank { null })
+                else n.string("item").takeIf(String::isNotBlank)
+                    ?.let { itemCtor(it, n.string("itemData").ifBlank { null }) } ?: "null"
             }
             "BLOCK" -> {
                 val ref = n.blockTempRef
-                if (ref != null) valueName(ref) else "block(id = \"${escape(n.string("block"))}\")"
+                if (ref != null) valueName(ref)
+                else n.string("block").takeIf(String::isNotBlank)
+                    ?.let { "block(id = \"${escape(it)}\")" } ?: "null"
             }
             "STRING" -> quoteTemplate(n.string("value"))
-            "BOOLEAN" -> scalarText(n.string("value"))
-            else -> scalarText(n.string("value"))
+            else -> n.string("value").takeIf(String::isNotBlank)?.let(::scalarText) ?: "null"
             }
         }
 

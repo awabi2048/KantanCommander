@@ -3,6 +3,8 @@ package me.awabi2048.kantancommander.data
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.error.ErrorCode
+import me.awabi2048.kantancommander.gui.CommandSettingRole
+import me.awabi2048.kantancommander.gui.CommandSettingsModel
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
@@ -13,6 +15,9 @@ import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ValueType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -36,6 +41,45 @@ import java.util.logging.LogRecord
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
+
+    @Test
+    fun `構造化された変数値はディスク出力と再読込を経ても保持される`() {
+        val dir = temp.resolve("typed-disc-transfer")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val source = store.createPlacement("source")
+        fun variable(name: String, type: ValueType) = GraphEditor.append(source.graph, CommandType.TEMP_SET).also {
+            it.params["name"] = name
+            CommandSettingsModel.changeTemporaryType(it, type)
+        }
+        val entity = variable("mob", ValueType.ENTITY)
+        CommandSettingsModel.setTargetSpec(entity, CommandSettingRole.TEMPORARY_ENTITY,
+            TargetSpec(TargetKind.NEAREST_ENTITY, entityType = "minecraft:zombie", tag = "sample"))
+        val location = variable("place", ValueType.LOCATION)
+        CommandSettingsModel.setPositionSpec(location, CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+            PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0))
+        val item = variable("thing", ValueType.ITEM)
+        CommandSettingsModel.setParameter(item, "item", "minecraft:diamond")
+        val block = variable("material", ValueType.BLOCK)
+        CommandSettingsModel.setParameter(block, "block", "minecraft:stone")
+        store.save(source)
+
+        // 実際のディスク出力と同じく独立IDで保存し、キャッシュを使わずに読み直します。
+        val disk = store.copyForItem(requireNotNull(store.load(source.id)))
+        val reloaded = ScriptStore(dir, Logger.getAnonymousLogger())
+        val diskData = requireNotNull(reloaded.load(disk.id))
+        val placement = reloaded.createPlacement("destination")
+        assertEquals(true, reloaded.update(placement.id) {
+            it.graph = diskData.graph.deepCopy()
+            true
+        })
+        val actual = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(placement.id))
+        fun value(name: String) = actual.graph.nodes.values.first { it.type == CommandType.TEMP_SET && it.string("name") == name }
+        assertEquals("minecraft:zombie", value("mob").temporaryEntityTargetSpec?.entityType)
+        assertEquals("sample", value("mob").temporaryEntityTargetSpec?.tag)
+        assertEquals(1.0, value("place").temporaryLocationPositionSpec?.x)
+        assertEquals("minecraft:diamond", value("thing").string("item"))
+        assertEquals("minecraft:stone", value("material").string("block"))
+    }
 
     @Test
     fun `正本の引数変更後はキャッシュ内の呼出元も拒否する`() {
