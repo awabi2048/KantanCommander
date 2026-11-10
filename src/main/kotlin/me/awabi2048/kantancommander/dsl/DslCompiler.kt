@@ -193,6 +193,7 @@ class DslCompiler(
         }
 
         private fun compileStmt(stmt: DslStmt): StmtChain {
+            val existingNodes = graph.nodes.keys.toSet()
             val chain = when (stmt) {
                 is DslVarDecl -> lowerVarDecl(stmt)
                 is DslAssign -> lowerAssign(stmt)
@@ -208,7 +209,14 @@ class DslCompiler(
             // 文のコメントはその文が生成する先頭ノードへ付記し、ノードが
             // 残る限り DSL 印刷で `//` 行として復元されるようにします。
             comments[stmt.pos]?.takeIf { it.isNotEmpty() }?.let { texts ->
-                chain.entry?.let { graph.nodes[it]?.comment = texts.joinToString("\n") }
+                chain.entry?.let { id -> graph.nodes[id]?.let { first ->
+                    // 条件式のために補助ノードが先行する場合、編集状態は実際の
+                    // 条件ノードへ復元し、通常コメントは先頭ノードへ保持します。
+                    val metadataType = DslNodeMetadata.nodeType(texts)
+                    val target = if (metadataType == null || first.type == metadataType) first else
+                        graph.nodes.values.firstOrNull { it.id !in existingNodes && it.type == metadataType } ?: first
+                    first.comment = DslNodeMetadata.restore(target, texts).takeIf { it.isNotEmpty() }?.joinToString("\n")
+                } }
             }
             return chain
         }
@@ -263,10 +271,10 @@ class DslCompiler(
                     node.temporaryLocationPositionSpec = plan.position
                     // 検証は ROTATION の有限値を必須とするため、spec 未指定の
                     // 角度は 0 へ正規化します（DSL の location 既定向きは 0,0）。
-                    node.temporaryLocationFacingSpec = FacingSpec(
+                    node.temporaryLocationFacingSpec = if (plan.explicitFacing) plan.facing else FacingSpec(
                         FacingKind.ROTATION,
-                        yaw = plan.position.yaw ?: 0f,
-                        pitch = plan.position.pitch ?: 0f,
+                        yaw = plan.position?.yaw ?: 0f,
+                        pitch = plan.position?.pitch ?: 0f,
                     )
                 }
                 is ValuePlan.EntityValue -> {
@@ -499,6 +507,15 @@ class DslCompiler(
                 ValuePlan.Property(sourceName, expr.name, argName)
             }
             is DslCallExpr -> when (expr.name) {
+                "location_with_facing" -> {
+                    val position = expr.args.first { it.name == "position" }.value
+                    val facing = expr.args.first { it.name == "facing" }.value
+                    ValuePlan.LocationValue(
+                        position = if (position is DslNull) null else positionSpecOf(position, pre),
+                        facing = if (facing is DslNull) null else facingSpecOf(facing, pre),
+                        explicitFacing = true,
+                    )
+                }
                 "item" -> {
                     val id = literalStringArg(expr, "id")
                     val data = expr.args.firstOrNull { it.name == "data" }
@@ -1471,6 +1488,7 @@ class DslCompiler(
         private fun componentArg(expr: DslCallExpr, name: String): Pair<Double, CoordinateSemantics>? =
             expr.args.firstOrNull { it.name == name }?.let { arg ->
                 when (val v = arg.value) {
+                    is DslNull -> null
                     is DslComponentExpr -> v.value to v.semantics
                     else -> literalNumber(v) to CoordinateSemantics.ABSOLUTE
                 }
@@ -1544,8 +1562,9 @@ class DslCompiler(
 
         // ---- ユーティリティ ----
 
+        // Long へ変換すると範囲外の有限値が端値に丸められるため、十進表記で保持します。
         private fun fmt(value: Double): String =
-            if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+            java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
 
         private fun foldArith(op: DslBinaryOp, a: Double, b: Double): Double = when (op) {
             DslBinaryOp.ADD -> a + b
@@ -1671,7 +1690,11 @@ private sealed interface ValuePlan {
     /** 詳細値読出し（PROPERTY）です。 */
     data class Property(val source: String, val property: String, val arg: String?) : ValuePlan
     /** 位置（LOCATION）の構造値です。 */
-    data class LocationValue(val position: PositionSpec) : ValuePlan
+    data class LocationValue(
+        val position: PositionSpec?,
+        val facing: FacingSpec? = null,
+        val explicitFacing: Boolean = false,
+    ) : ValuePlan
     /** 対象（ENTITY）の構造値です。 */
     data class EntityValue(val target: TargetSpec) : ValuePlan
     /** アイテムの構造値です。itemTempRef か item/itemData 欄へ写像します。 */

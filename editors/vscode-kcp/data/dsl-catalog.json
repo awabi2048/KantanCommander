@@ -716,6 +716,19 @@
         }
       }
     },
+    "location_with_facing": {
+      "result": "location",
+      "args": {
+        "position": {
+          "type": "location",
+          "required": true
+        },
+        "facing": {
+          "type": "location",
+          "required": true
+        }
+      }
+    },
     "item": {
       "result": "item",
       "args": {

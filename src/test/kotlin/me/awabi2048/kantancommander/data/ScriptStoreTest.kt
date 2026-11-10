@@ -9,6 +9,7 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ScriptTrigger
@@ -18,6 +19,8 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -41,6 +44,121 @@ import java.util.logging.LogRecord
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
+
+    @Test
+    fun `既定値の明示設定と判定の非表示項目を再読込後も保持する`() {
+        val dir = temp.resolve("editor-state")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("editor")
+        val wait = GraphEditor.append(script.graph, CommandType.WAIT)
+        CommandSettingsModel.setParameter(wait, "seconds", "1")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.setConditionSubject(ConditionSubject.PLAYER)
+        condition.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        CommandSettingsModel.setParameter(condition, "sneaking", "true")
+        condition.setConditionSubject(ConditionSubject.CONTROL_BLOCK)
+        condition.params["redstoneSignal"] = "1.."
+        store.save(script)
+        val reloaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(script.id))
+        val restoredWait = reloaded.graph.nodes.values.first { it.type == CommandType.WAIT }
+        assertTrue(CommandSettingsModel.isFieldConfigured(restoredWait, "seconds"))
+        val restoredCondition = reloaded.graph.nodes.values.first { it.type == CommandType.CONDITION }
+        assertEquals("true", restoredCondition.string("sneaking"))
+        restoredCondition.setConditionSubject(ConditionSubject.PLAYER)
+        assertEquals("true", restoredCondition.string("sneaking"))
+    }
+
+    @Test
+    fun `位置変数の向きと対象指定はディスク出力と再読込後も保持される`() {
+        val dir = temp.resolve("location-facing")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("facing")
+        fun add(name: String, facing: FacingSpec) {
+            val node = GraphEditor.append(script.graph, CommandType.TEMP_SET)
+            node.params["name"] = name
+            CommandSettingsModel.changeTemporaryType(node, ValueType.LOCATION)
+            CommandSettingsModel.setPositionSpec(node, CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+                PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0))
+            CommandSettingsModel.setFacingSpec(node, facing, CommandSettingRole.TEMPORARY_LOCATION_FACING)
+        }
+        add("angle", FacingSpec(FacingKind.ROTATION, yaw = 90f, pitch = 30f))
+        add("target", FacingSpec(FacingKind.TARGET,
+            target = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "sample")))
+        store.save(script)
+        val disk = store.copyForItem(requireNotNull(store.load(script.id)))
+        val loaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(disk.id))
+        fun node(name: String) = loaded.graph.nodes.values.first { it.type == CommandType.TEMP_SET && it.string("name") == name }
+        assertEquals(90f, node("angle").temporaryLocationFacingSpec?.yaw)
+        assertEquals(30f, node("angle").temporaryLocationFacingSpec?.pitch)
+        assertEquals(FacingKind.TARGET, node("target").temporaryLocationFacingSpec?.kind)
+        assertEquals("sample", node("target").temporaryLocationFacingSpec?.target?.tag)
+    }
+
+    @Test
+    fun `入力途中の座標は再読込してもゼロにならない`() {
+        val dir = temp.resolve("partial-coordinate")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("partial")
+        val node = GraphEditor.append(script.graph, CommandType.TEMP_SET)
+        node.params["name"] = "place"
+        CommandSettingsModel.changeTemporaryType(node, ValueType.LOCATION)
+        CommandSettingsModel.setPositionSpec(node, CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+            PositionSpec(PositionKind.COORDINATES, x = null, y = 2.0, z = 3.0))
+        store.save(script)
+        val loaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(script.id))
+        val position = loaded.graph.nodes.values.first { it.type == CommandType.TEMP_SET }.temporaryLocationPositionSpec
+        assertNull(position?.x)
+        assertEquals(2.0, position?.y)
+        assertEquals(3.0, position?.z)
+    }
+
+    @Test
+    fun `キャッシュ外の呼出し元にもディスク名変更を伝播する`() {
+        val dir = temp.resolve("rename-evicted")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val callee = store.createPlacement("callee")
+        val caller = store.createPlacement("caller")
+        GraphEditor.append(caller.graph, CommandType.DISK_CALL).params["diskId"] = callee.id.toString()
+        store.save(caller)
+        repeat(StorageLifecycle.MAX_CACHED_PROGRAMS) { store.createPlacement("filler$it") }
+        val renamed = requireNotNull(store.load(callee.id)).apply { name = "renamed" }
+        store.save(renamed)
+        assertTrue(dir.resolve("${caller.id}.kcp").readText().contains("call \"renamed\""))
+        val loaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(caller.id))
+        assertEquals(callee.id.toString(), loaded.graph.nodes.values.first { it.type == CommandType.DISK_CALL }.string("diskId"))
+    }
+
+    @Test
+    fun `外部編集後の古いキャッシュ保存は拒否して外部変更を保持する`() {
+        val dir = temp.resolve("external-edit")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("original")
+        val oldRevision = requireNotNull(store.load(script.id)).revision
+        val file = dir.resolve("${script.id}.kcp")
+        file.writeText(file.readText().replace("original", "external"))
+        assertNull(store.update(script.id, expectedRevision = oldRevision) {
+            GraphEditor.append(it.graph, CommandType.WAIT)
+            true
+        })
+        assertTrue(file.readText().contains("external"))
+        val latest = requireNotNull(store.load(script.id))
+        assertEquals("external", latest.name)
+        assertNotEquals(oldRevision, latest.revision)
+    }
+
+    @Test
+    fun `キャッシュ追い出し後も世代が再利用されず古い変更を拒否する`() {
+        val store = ScriptStore(temp.resolve("revision-eviction"), Logger.getAnonymousLogger())
+        val script = store.createPlacement("original")
+        val stale = requireNotNull(store.load(script.id)).revision
+        repeat(StorageLifecycle.MAX_CACHED_PROGRAMS) { store.createPlacement("filler$it") }
+        assertEquals(stale, requireNotNull(store.load(script.id)).revision)
+        assertEquals(true, store.update(script.id) { it.name = "newer"; true })
+        assertNull(store.update(script.id, expectedRevision = stale) { it.name = "stale"; true })
+        repeat(StorageLifecycle.MAX_CACHED_PROGRAMS) { store.createPlacement("later$it") }
+        assertThrows(java.util.ConcurrentModificationException::class.java) { store.save(script) }
+        assertEquals("newer", requireNotNull(store.load(script.id)).name)
+    }
 
     @Test
     fun `構造化された変数値はディスク出力と再読込を経ても保持される`() {

@@ -215,6 +215,7 @@ class DslPrinter(
         /** ノードへ付随する `//` コメントを文の直前へ出力します。 */
         private fun emitComments(n: CommandNode) {
             n.comment?.lines()?.forEach { text -> line(if (text.isEmpty()) "//" else "// $text") }
+            DslNodeMetadata.encode(n)?.let { line("// $it") }
         }
 
         // ---- 変数（TEMP_SET / VARIABLE） ----
@@ -444,9 +445,15 @@ class DslPrinter(
             // value だけで未設定と判定すると、ディスクの再読込時に指定が失われます。
             return when (typeName) {
             "LOCATION" -> {
-                val spec = n.temporaryLocationPositionSpec
-                    ?: return n.string("value").takeIf(String::isNotBlank)?.let(::quoteTemplate) ?: "null"
-                positionExpr(spec)
+                val position = n.temporaryLocationPositionSpec
+                val facing = n.temporaryLocationFacingSpec
+                if (position == null && facing == null) {
+                    return n.string("value").takeIf(String::isNotBlank)?.let(::quoteTemplate) ?: "null"
+                }
+                // 位置と向きは独立した設定です。片方だけを出力すると再読込時に
+                // 他方が既定角度へ戻るため、それぞれを明示的に保存します。
+                "location_with_facing(position = ${position?.let(::positionExpr) ?: "null"}, " +
+                    "facing = ${facing?.let(::facingExpr) ?: "null"})"
             }
             "ENTITY" -> {
                 val spec = n.temporaryEntityTargetSpec
@@ -1250,7 +1257,15 @@ class DslPrinter(
                 val relRot = spec.semanticsYaw != CoordinateSemantics.ABSOLUTE ||
                     spec.semanticsPitch != CoordinateSemantics.ABSOLUTE
                 val hasRot = spec.yaw != null || spec.pitch != null
+                val incomplete = spec.x == null || spec.y == null || spec.z == null
                 when {
+                    incomplete -> buildList {
+                        add("x = ${spec.x?.let { component(it, spec.semanticsX) } ?: "null"}")
+                        add("y = ${spec.y?.let { component(it, spec.semanticsY) } ?: "null"}")
+                        add("z = ${spec.z?.let { component(it, spec.semanticsZ) } ?: "null"}")
+                        spec.yaw?.let { add("yaw = ${component(it, spec.semanticsYaw)}") }
+                        spec.pitch?.let { add("pitch = ${component(it, spec.semanticsPitch)}") }
+                    }.joinToString(", ", prefix = "location(", postfix = ")")
                     !relative && !hasRot ->
                         "location(x = ${num(spec.x)}, y = ${num(spec.y)}, z = ${num(spec.z)})"
                     !relative && !relRot ->
@@ -1458,7 +1473,10 @@ class DslPrinter(
 
         private fun num(v: Number?): String {
             val d = v?.toDouble() ?: 0.0
-            return if (d % 1.0 == 0.0) d.toLong().toString() else d.toString()
+            // Long 変換は範囲外の有限値を端値へ丸めるため、十進数として出力します。
+            // DSL の数値リテラルは指数表記を持たないので通常の小数表記にします。
+            require(d.isFinite()) { "有限でない数値は保存できません: $d" }
+            return java.math.BigDecimal.valueOf(d).stripTrailingZeros().toPlainString()
         }
 
         private fun escape(text: String): String = buildString {

@@ -566,6 +566,20 @@ class DslChecker(
     }
 
     private fun checkCallExpr(expr: DslCallExpr): ValueType = when (expr.name) {
+        "location_with_facing" -> {
+            val args = expr.args.associateBy { it.name }
+            if (expr.args.size != 2 || args.keys != setOf("position", "facing")) {
+                error(expr.pos, "location_with_facing は position と facing を指定してください")
+            }
+            for (arg in expr.args) {
+                if (arg.value is DslNull) continue
+                val type = checkExpr(arg.value)
+                if (type != ValueType.LOCATION && type != ValueType.ENTITY) {
+                    error(arg.pos, "${arg.name} は位置または対象を指定してください")
+                }
+            }
+            ValueType.LOCATION
+        }
         "location" -> {
             // yaw/pitch だけの指定は向き（ROTATION）の省略形です。
             // 座標成分が1つでもあれば通常の位置指定として x/y/z を必須にします。
@@ -725,6 +739,8 @@ class DslChecker(
             if (arg.name == null) error(arg.pos, "コンストラクタの引数は名前付きが必須です")
             val argSpec = spec[arg.name] ?: error(arg.pos, "不明な引数名 '${arg.name}' です（${spec.keys.joinToString("/")}）")
             if (!seen.add(arg.name)) error(arg.pos, "引数 '${arg.name}' が重複しています")
+            // 位置入力途中の空欄を 0 に変えず DSL へ往復させます。
+            if (expr.name == "location" && arg.value is DslNull) return@forEach
             val type = checkExpr(arg.value)
             if (type != argSpec.type) {
                 error(arg.pos, "引数 '${arg.name}' は ${argSpec.type.dslName()} 型が必要です")

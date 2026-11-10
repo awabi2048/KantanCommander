@@ -103,6 +103,10 @@ class ScriptStore(
      * プログラム単位のread-modify-write全体を直列化します。
      */
     private val scriptLocks = ConcurrentHashMap<UUID, ReentrantLock>()
+    /** キャッシュ追い出し後も世代を維持し、古い入力の世代番号が再利用されることを防ぎます。 */
+    private val revisions = ConcurrentHashMap<UUID, Long>()
+    /** キャッシュ作成時の正本内容。外部エディタの変更を古い画面から上書きしません。 */
+    private val sourceHashes = ConcurrentHashMap<UUID, String>()
     /** 関係JSONを複数の保存処理から同時に更新しても、片方の履歴を失わないためのロックです。 */
     private val relationLock = ReentrantLock()
 
@@ -241,6 +245,7 @@ class ScriptStore(
     ): T? = withScriptLock(id) {
         mutationGuard(id, editorId, ScriptMutationOperation.UPDATE)
         val script = cached(id)?.deepCopy() ?: return@withScriptLock null
+        if (!sourceMatchesCache(id)) return@withScriptLock null
         if (expectedRevision != null && script.revision != expectedRevision) {
             return@withScriptLock null
         }
@@ -268,19 +273,30 @@ class ScriptStore(
 
     @Suppress("DEPRECATION")
     private fun saveLocked(script: DiskScript, editorId: UUID?) {
+        if (!sourceMatchesCache(script.id)) {
+            throw java.util.ConcurrentModificationException("プログラムが外部から更新されました: id=${script.id}")
+        }
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
         require(script.revision >= 0L) { "unsupported negative script revision" }
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
-        val previous = cache[script.id]
+        // 追い出し済みでも正本と世代を読み直し、古いコピーの直接保存を拒否します。
+        val previous = cached(script.id)
         if (previous != null && script.revision != previous.revision) {
             throw java.util.ConcurrentModificationException(
                 "プログラムディスクが別の編集で更新されています: id=${script.id} " +
                     "expected=${script.revision} actual=${previous.revision}",
             )
         }
+        // 改名前の索引が有効な間に呼出し元を解決します。先に索引を更新すると、
+        // キャッシュ外の call は旧名を解決できず、改名伝播の対象から漏れます。
+        val callers = if (previous != null && previous.name != script.name) {
+            findCallers(script.id)
+        } else emptyList()
         // 保存成功ごとに単調増加させ、入力画面開始時の正本世代と比較できるようにします。
-        script.revision = (previous?.revision ?: script.revision).inc()
+        script.revision = revisions.compute(script.id) { _, current ->
+            maxOf(current ?: 0L, previous?.revision ?: script.revision).inc()
+        }!!
         // `.kcp`（純粋DSLテキスト）が正本です。折り畳みはGUIの表示状態なので
         // 展開してから正規形へ印刷し、コメントは文へ所属する形で保持します。
         val canonical = canonicalized(script)
@@ -291,6 +307,7 @@ class ScriptStore(
         if (!target.isFile || target.readText(Charsets.UTF_8) != text) {
             atomicWrite(target, text)
         }
+        sourceHashes[script.id] = sourceHash(target)
         // 同名の旧JSONが残っていれば、移行済み入力として整理します。
         legacyJsonFile(script.id).takeIf { it.isFile }?.let(::archiveLegacyJson)
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
@@ -299,7 +316,7 @@ class ScriptStore(
         declIndex[script.id] = DiskDecl(script.id, canonical.name, canonical.arguments)
         editorId?.let { recordHistory(it, script.id) }
         if (previous != null && previous.name != script.name) {
-            propagateDiskRename(script.id)
+            propagateDiskRename(callers)
         }
     }
 
@@ -581,6 +598,10 @@ class ScriptStore(
             declIndex.remove(id)
             return null
         }
+        val currentHash = sourceHash(target)
+        if (sourceHashes[id]?.let { it != currentHash } == true) {
+            revisions.compute(id) { _, revision -> (revision ?: 0L).inc() }
+        }
         val fingerprint = RejectedFileFingerprint.from(target)
         rejectedFiles[id]?.let { rejected ->
             if (rejected == fingerprint) return null
@@ -601,6 +622,9 @@ class ScriptStore(
             return null
         }
         rejectedFiles.remove(id)
+        // ファイル自体に世代はないため、再読込時はストア内の最新世代を復元します。
+        loaded.revision = revisions.getOrPut(id) { loaded.revision }
+        sourceHashes[id] = currentHash
         cache[id] = loaded
         declIndex[id] = DiskDecl(id, loaded.name, loaded.arguments)
         return loaded
@@ -610,6 +634,21 @@ class ScriptStore(
         // グラフの独立コピーは CommandGraph.deepCopy が内部グラフも含めて行います。
         graph = graph.deepCopy(),
     )
+
+    /** 更新境界で正本の内容を照合します。通常の高頻度読込ではファイルを読みません。 */
+    private fun sourceMatchesCache(id: UUID): Boolean {
+        val expected = sourceHashes[id] ?: return true
+        val current = sourceFile(id)?.let { runCatching { sourceHash(it) }.getOrNull() }
+        if (current == expected) return true
+        cache.remove(id)
+        sourceHashes.remove(id)
+        revisions.compute(id) { _, revision -> (revision ?: 0L).inc() }
+        return false
+    }
+
+    private fun sourceHash(file: File): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     /** `.kcp`（純粋DSLテキスト）の正本ファイルです。 */
     private fun file(id: UUID) = dir.resolve("$id.kcp")
@@ -729,19 +768,28 @@ class ScriptStore(
      * 伝播します。DSL テキストはディスク名を正本として参照するため、保存済み
      * テキストだけを最新名へ書き換えます（グラフ・revision は変わりません）。
      */
-    private fun propagateDiskRename(renamedId: UUID) {
+    private fun findCallers(renamedId: UUID): List<DiskScript> =
         listAll().filter { candidate ->
             candidate.id != renamedId && candidate.graph.nodes.values.any {
                 it.type == CommandType.DISK_CALL &&
                     it.string("diskId") == renamedId.toString()
             }
-        }.forEach { caller ->
+        }
+
+    private fun propagateDiskRename(callers: List<DiskScript>) {
+        callers.forEach { caller ->
             withScriptLock(caller.id) {
+                // 発見後の編集や外部変更を古い複製で上書きしません。
+                if (revisions[caller.id] != caller.revision || !sourceMatchesCache(caller.id)) {
+                    logger.warning("ディスク名変更の伝播中に呼出し元が変更されました: script=${caller.id}")
+                    return@withScriptLock
+                }
                 val text = runCatching { canonicalText(canonicalized(caller)) }
                     .getOrNull() ?: return@withScriptLock
                 val target = file(caller.id)
                 if (target.isFile && target.readText(Charsets.UTF_8) == text) return@withScriptLock
                 atomicWrite(target, text)
+                sourceHashes[caller.id] = sourceHash(target)
             }
         }
     }
