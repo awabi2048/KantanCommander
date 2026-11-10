@@ -43,6 +43,24 @@ class ScriptStoreTest {
     lateinit var temp: File
 
     @Test
+    fun `外部編集後の古いキャッシュ保存は拒否して外部変更を保持する`() {
+        val dir = temp.resolve("external-edit")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("original")
+        val oldRevision = requireNotNull(store.load(script.id)).revision
+        val file = dir.resolve("${script.id}.kcp")
+        file.writeText(file.readText().replace("original", "external"))
+        assertNull(store.update(script.id, expectedRevision = oldRevision) {
+            GraphEditor.append(it.graph, CommandType.WAIT)
+            true
+        })
+        assertTrue(file.readText().contains("external"))
+        val latest = requireNotNull(store.load(script.id))
+        assertEquals("external", latest.name)
+        assertNotEquals(oldRevision, latest.revision)
+    }
+
+    @Test
     fun `キャッシュ追い出し後も世代が再利用されず古い変更を拒否する`() {
         val store = ScriptStore(temp.resolve("revision-eviction"), Logger.getAnonymousLogger())
         val script = store.createPlacement("original")
@@ -51,6 +69,8 @@ class ScriptStoreTest {
         assertEquals(stale, requireNotNull(store.load(script.id)).revision)
         assertEquals(true, store.update(script.id) { it.name = "newer"; true })
         assertNull(store.update(script.id, expectedRevision = stale) { it.name = "stale"; true })
+        repeat(StorageLifecycle.MAX_CACHED_PROGRAMS) { store.createPlacement("later$it") }
+        assertThrows(java.util.ConcurrentModificationException::class.java) { store.save(script) }
         assertEquals("newer", requireNotNull(store.load(script.id)).name)
     }
 

@@ -105,6 +105,8 @@ class ScriptStore(
     private val scriptLocks = ConcurrentHashMap<UUID, ReentrantLock>()
     /** キャッシュ追い出し後も世代を維持し、古い入力の世代番号が再利用されることを防ぎます。 */
     private val revisions = ConcurrentHashMap<UUID, Long>()
+    /** キャッシュ作成時の正本内容。外部エディタの変更を古い画面から上書きしません。 */
+    private val sourceHashes = ConcurrentHashMap<UUID, String>()
     /** 関係JSONを複数の保存処理から同時に更新しても、片方の履歴を失わないためのロックです。 */
     private val relationLock = ReentrantLock()
 
@@ -243,6 +245,7 @@ class ScriptStore(
     ): T? = withScriptLock(id) {
         mutationGuard(id, editorId, ScriptMutationOperation.UPDATE)
         val script = cached(id)?.deepCopy() ?: return@withScriptLock null
+        if (!sourceMatchesCache(id)) return@withScriptLock null
         if (expectedRevision != null && script.revision != expectedRevision) {
             return@withScriptLock null
         }
@@ -270,11 +273,15 @@ class ScriptStore(
 
     @Suppress("DEPRECATION")
     private fun saveLocked(script: DiskScript, editorId: UUID?) {
+        if (!sourceMatchesCache(script.id)) {
+            throw java.util.ConcurrentModificationException("プログラムが外部から更新されました: id=${script.id}")
+        }
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
         require(script.revision >= 0L) { "unsupported negative script revision" }
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
-        val previous = cache[script.id]
+        // 追い出し済みでも正本と世代を読み直し、古いコピーの直接保存を拒否します。
+        val previous = cached(script.id)
         if (previous != null && script.revision != previous.revision) {
             throw java.util.ConcurrentModificationException(
                 "プログラムディスクが別の編集で更新されています: id=${script.id} " +
@@ -295,6 +302,7 @@ class ScriptStore(
         if (!target.isFile || target.readText(Charsets.UTF_8) != text) {
             atomicWrite(target, text)
         }
+        sourceHashes[script.id] = sourceHash(target)
         // 同名の旧JSONが残っていれば、移行済み入力として整理します。
         legacyJsonFile(script.id).takeIf { it.isFile }?.let(::archiveLegacyJson)
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
@@ -585,6 +593,10 @@ class ScriptStore(
             declIndex.remove(id)
             return null
         }
+        val currentHash = sourceHash(target)
+        if (sourceHashes[id]?.let { it != currentHash } == true) {
+            revisions.compute(id) { _, revision -> (revision ?: 0L).inc() }
+        }
         val fingerprint = RejectedFileFingerprint.from(target)
         rejectedFiles[id]?.let { rejected ->
             if (rejected == fingerprint) return null
@@ -607,6 +619,7 @@ class ScriptStore(
         rejectedFiles.remove(id)
         // ファイル自体に世代はないため、再読込時はストア内の最新世代を復元します。
         loaded.revision = revisions.getOrPut(id) { loaded.revision }
+        sourceHashes[id] = currentHash
         cache[id] = loaded
         declIndex[id] = DiskDecl(id, loaded.name, loaded.arguments)
         return loaded
@@ -616,6 +629,21 @@ class ScriptStore(
         // グラフの独立コピーは CommandGraph.deepCopy が内部グラフも含めて行います。
         graph = graph.deepCopy(),
     )
+
+    /** 更新境界で正本の内容を照合します。通常の高頻度読込ではファイルを読みません。 */
+    private fun sourceMatchesCache(id: UUID): Boolean {
+        val expected = sourceHashes[id] ?: return true
+        val current = sourceFile(id)?.let { runCatching { sourceHash(it) }.getOrNull() }
+        if (current == expected) return true
+        cache.remove(id)
+        sourceHashes.remove(id)
+        revisions.compute(id) { _, revision -> (revision ?: 0L).inc() }
+        return false
+    }
+
+    private fun sourceHash(file: File): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     /** `.kcp`（純粋DSLテキスト）の正本ファイルです。 */
     private fun file(id: UUID) = dir.resolve("$id.kcp")
@@ -748,6 +776,7 @@ class ScriptStore(
                 val target = file(caller.id)
                 if (target.isFile && target.readText(Charsets.UTF_8) == text) return@withScriptLock
                 atomicWrite(target, text)
+                sourceHashes[caller.id] = sourceHash(target)
             }
         }
     }
