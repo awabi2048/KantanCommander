@@ -1458,7 +1458,10 @@ class DslPrinter(
 
         private fun num(v: Number?): String {
             val d = v?.toDouble() ?: 0.0
-            return if (d % 1.0 == 0.0) d.toLong().toString() else d.toString()
+            // Long 変換は範囲外の有限値を端値へ丸めるため、十進数として出力します。
+            // DSL の数値リテラルは指数表記を持たないので通常の小数表記にします。
+            require(d.isFinite()) { "有限でない数値は保存できません: $d" }
+            return java.math.BigDecimal.valueOf(d).stripTrailingZeros().toPlainString()
         }
 
         private fun escape(text: String): String = buildString {

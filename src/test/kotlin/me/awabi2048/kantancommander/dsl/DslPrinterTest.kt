@@ -21,6 +21,15 @@ import org.junit.jupiter.api.assertThrows
  * （canonical 形へ再印刷しても変わらないこと）を確認します。
  */
 class DslPrinterTest {
+    @Test
+    fun `整数範囲を超える有限値も保存して再読込できる`() {
+        val text = roundTrip("""
+            program "t";
+            var amount: number = 100000000000000000000;
+        """.trimIndent())
+        assertTrue(text.contains("100000000000000000000"), text)
+    }
+
     private fun compile(
         src: String,
         worldTypes: Map<String, ValueType> = emptyMap(),

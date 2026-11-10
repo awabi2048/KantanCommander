@@ -1544,8 +1544,9 @@ class DslCompiler(
 
         // ---- ユーティリティ ----
 
+        // Long へ変換すると範囲外の有限値が端値に丸められるため、十進表記で保持します。
         private fun fmt(value: Double): String =
-            if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+            java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
 
         private fun foldArith(op: DslBinaryOp, a: Double, b: Double): Double = when (op) {
             DslBinaryOp.ADD -> a + b
