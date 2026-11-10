@@ -90,6 +90,17 @@ object DslCatalogGenerator {
                 })
             }
             add("location", ctorSpec(DslChecker.LOCATION_ARGS, "location"))
+            add("location_with_facing", JsonObject().apply {
+                addProperty("result", "location")
+                add("args", JsonObject().apply {
+                    listOf("position", "facing").forEach { name ->
+                        add(name, JsonObject().apply {
+                            addProperty("type", "location")
+                            addProperty("required", true)
+                        })
+                    }
+                })
+            })
             add("item", ctorSpec(DslChecker.ITEM_ARGS, "item"))
             add("block", ctorSpec(DslChecker.BLOCK_ARGS, "block"))
             add("target", ctorSpec(DslChecker.TARGET_ARGS, "entity"))

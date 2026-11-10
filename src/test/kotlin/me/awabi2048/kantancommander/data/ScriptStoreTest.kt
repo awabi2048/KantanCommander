@@ -18,6 +18,8 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -41,6 +43,32 @@ import java.util.logging.LogRecord
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
+
+    @Test
+    fun `位置変数の向きと対象指定はディスク出力と再読込後も保持される`() {
+        val dir = temp.resolve("location-facing")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("facing")
+        fun add(name: String, facing: FacingSpec) {
+            val node = GraphEditor.append(script.graph, CommandType.TEMP_SET)
+            node.params["name"] = name
+            CommandSettingsModel.changeTemporaryType(node, ValueType.LOCATION)
+            CommandSettingsModel.setPositionSpec(node, CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+                PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0))
+            CommandSettingsModel.setFacingSpec(node, facing, CommandSettingRole.TEMPORARY_LOCATION_FACING)
+        }
+        add("angle", FacingSpec(FacingKind.ROTATION, yaw = 90f, pitch = 30f))
+        add("target", FacingSpec(FacingKind.TARGET,
+            target = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "sample")))
+        store.save(script)
+        val disk = store.copyForItem(requireNotNull(store.load(script.id)))
+        val loaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(disk.id))
+        fun node(name: String) = loaded.graph.nodes.values.first { it.type == CommandType.TEMP_SET && it.string("name") == name }
+        assertEquals(90f, node("angle").temporaryLocationFacingSpec?.yaw)
+        assertEquals(30f, node("angle").temporaryLocationFacingSpec?.pitch)
+        assertEquals(FacingKind.TARGET, node("target").temporaryLocationFacingSpec?.kind)
+        assertEquals("sample", node("target").temporaryLocationFacingSpec?.target?.tag)
+    }
 
     @Test
     fun `入力途中の座標は再読込してもゼロにならない`() {

@@ -765,6 +765,20 @@ export class Checker {
 
     private checkCallExpr(expr: DslCallExpr): V {
         switch (expr.name) {
+            case "location_with_facing": {
+                const names = new Set(expr.args.map((a) => a.name));
+                if (expr.args.length !== 2 || !names.has("position") || !names.has("facing")) {
+                    this.error(expr.pos, "location_with_facing は position と facing を指定してください");
+                }
+                for (const arg of expr.args) {
+                    if (arg.value.kind === "null") continue;
+                    const type = this.checkExpr(arg.value);
+                    if (type !== "location" && type !== "entity") {
+                        this.error(arg.pos, `${arg.name} は位置または対象を指定してください`);
+                    }
+                }
+                return "location";
+            }
             case "location": {
                 // yaw/pitch だけの指定は向き（ROTATION）の省略形です。
                 // 座標成分が1つでもあれば通常の位置指定として x/y/z を必須にします。
@@ -845,6 +859,8 @@ export class Checker {
         for (const arg of expr.args) {
             if (arg.name === null) this.error(arg.pos, "条件呼出しの引数は名前付きが必須です");
             if (!seen.add(arg.name)) this.error(arg.pos, `引数 '${arg.name}' が重複しています`);
+            // Kotlin側と同様、入力途中の位置の空欄を保持します。
+            if (expr.name === "location" && arg.value.kind === "null") continue;
             // `arg = null` はその条件欄の未設定を表します。
             if (arg.value.kind === "null") continue;
             if (arg.name === "target") {

@@ -444,9 +444,15 @@ class DslPrinter(
             // value だけで未設定と判定すると、ディスクの再読込時に指定が失われます。
             return when (typeName) {
             "LOCATION" -> {
-                val spec = n.temporaryLocationPositionSpec
-                    ?: return n.string("value").takeIf(String::isNotBlank)?.let(::quoteTemplate) ?: "null"
-                positionExpr(spec)
+                val position = n.temporaryLocationPositionSpec
+                val facing = n.temporaryLocationFacingSpec
+                if (position == null && facing == null) {
+                    return n.string("value").takeIf(String::isNotBlank)?.let(::quoteTemplate) ?: "null"
+                }
+                // 位置と向きは独立した設定です。片方だけを出力すると再読込時に
+                // 他方が既定角度へ戻るため、それぞれを明示的に保存します。
+                "location_with_facing(position = ${position?.let(::positionExpr) ?: "null"}, " +
+                    "facing = ${facing?.let(::facingExpr) ?: "null"})"
             }
             "ENTITY" -> {
                 val spec = n.temporaryEntityTargetSpec

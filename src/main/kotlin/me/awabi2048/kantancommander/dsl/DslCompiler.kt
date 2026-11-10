@@ -263,10 +263,10 @@ class DslCompiler(
                     node.temporaryLocationPositionSpec = plan.position
                     // 検証は ROTATION の有限値を必須とするため、spec 未指定の
                     // 角度は 0 へ正規化します（DSL の location 既定向きは 0,0）。
-                    node.temporaryLocationFacingSpec = FacingSpec(
+                    node.temporaryLocationFacingSpec = if (plan.explicitFacing) plan.facing else FacingSpec(
                         FacingKind.ROTATION,
-                        yaw = plan.position.yaw ?: 0f,
-                        pitch = plan.position.pitch ?: 0f,
+                        yaw = plan.position?.yaw ?: 0f,
+                        pitch = plan.position?.pitch ?: 0f,
                     )
                 }
                 is ValuePlan.EntityValue -> {
@@ -499,6 +499,15 @@ class DslCompiler(
                 ValuePlan.Property(sourceName, expr.name, argName)
             }
             is DslCallExpr -> when (expr.name) {
+                "location_with_facing" -> {
+                    val position = expr.args.first { it.name == "position" }.value
+                    val facing = expr.args.first { it.name == "facing" }.value
+                    ValuePlan.LocationValue(
+                        position = if (position is DslNull) null else positionSpecOf(position, pre),
+                        facing = if (facing is DslNull) null else facingSpecOf(facing, pre),
+                        explicitFacing = true,
+                    )
+                }
                 "item" -> {
                     val id = literalStringArg(expr, "id")
                     val data = expr.args.firstOrNull { it.name == "data" }
@@ -1673,7 +1682,11 @@ private sealed interface ValuePlan {
     /** 詳細値読出し（PROPERTY）です。 */
     data class Property(val source: String, val property: String, val arg: String?) : ValuePlan
     /** 位置（LOCATION）の構造値です。 */
-    data class LocationValue(val position: PositionSpec) : ValuePlan
+    data class LocationValue(
+        val position: PositionSpec?,
+        val facing: FacingSpec? = null,
+        val explicitFacing: Boolean = false,
+    ) : ValuePlan
     /** 対象（ENTITY）の構造値です。 */
     data class EntityValue(val target: TargetSpec) : ValuePlan
     /** アイテムの構造値です。itemTempRef か item/itemData 欄へ写像します。 */
