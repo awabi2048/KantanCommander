@@ -654,13 +654,18 @@ fun CommandNode.conditionSubject(): ConditionSubject? =
         ?.let { runCatching { ConditionSubject.valueOf(it) }.getOrNull() }
 
 /**
- * 判定対象を設定します。`subject` 欄だけを書き換えます。
+ * 判定対象を設定します。
  *
  * 残存する旧 `kind` 欄があれば除去し、単一正本にします。
- * 対象固有の詳細欄（sneaking/item/variable/operator/value/block 等）は削除せず保持します。
- * 評価・検証側で現在の判定対象に関係ない欄は無視するため、対象切替えでの入力消失を防ぎます。
+ * 種類変更時は旧エンティティ指定を消去します。現在の判定に使わない対象指定は
+ * DSLへ出力されないため、キャッシュにだけ残すと再読込前後で表示が変わります。
+ * 同じ種類の再選択では、設定済みの対象を維持します。
  */
 fun CommandNode.setConditionSubject(subject: ConditionSubject) {
+    if (conditionSubject() != subject) {
+        targetSpec = null
+        clearConfigured("target")
+    }
     params["subject"] = subject.name
     params.remove("kind")
     markConfigured("subject")
