@@ -43,6 +43,24 @@ class ScriptStoreTest {
     lateinit var temp: File
 
     @Test
+    fun `入力途中の座標は再読込してもゼロにならない`() {
+        val dir = temp.resolve("partial-coordinate")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = store.createPlacement("partial")
+        val node = GraphEditor.append(script.graph, CommandType.TEMP_SET)
+        node.params["name"] = "place"
+        CommandSettingsModel.changeTemporaryType(node, ValueType.LOCATION)
+        CommandSettingsModel.setPositionSpec(node, CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+            PositionSpec(PositionKind.COORDINATES, x = null, y = 2.0, z = 3.0))
+        store.save(script)
+        val loaded = requireNotNull(ScriptStore(dir, Logger.getAnonymousLogger()).load(script.id))
+        val position = loaded.graph.nodes.values.first { it.type == CommandType.TEMP_SET }.temporaryLocationPositionSpec
+        assertNull(position?.x)
+        assertEquals(2.0, position?.y)
+        assertEquals(3.0, position?.z)
+    }
+
+    @Test
     fun `キャッシュ外の呼出し元にもディスク名変更を伝播する`() {
         val dir = temp.resolve("rename-evicted")
         val store = ScriptStore(dir, Logger.getAnonymousLogger())

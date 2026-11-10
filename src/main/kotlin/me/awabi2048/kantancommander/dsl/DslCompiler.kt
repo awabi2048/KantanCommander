@@ -1471,6 +1471,7 @@ class DslCompiler(
         private fun componentArg(expr: DslCallExpr, name: String): Pair<Double, CoordinateSemantics>? =
             expr.args.firstOrNull { it.name == name }?.let { arg ->
                 when (val v = arg.value) {
+                    is DslNull -> null
                     is DslComponentExpr -> v.value to v.semantics
                     else -> literalNumber(v) to CoordinateSemantics.ABSOLUTE
                 }

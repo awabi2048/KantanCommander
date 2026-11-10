@@ -1250,7 +1250,15 @@ class DslPrinter(
                 val relRot = spec.semanticsYaw != CoordinateSemantics.ABSOLUTE ||
                     spec.semanticsPitch != CoordinateSemantics.ABSOLUTE
                 val hasRot = spec.yaw != null || spec.pitch != null
+                val incomplete = spec.x == null || spec.y == null || spec.z == null
                 when {
+                    incomplete -> buildList {
+                        add("x = ${spec.x?.let { component(it, spec.semanticsX) } ?: "null"}")
+                        add("y = ${spec.y?.let { component(it, spec.semanticsY) } ?: "null"}")
+                        add("z = ${spec.z?.let { component(it, spec.semanticsZ) } ?: "null"}")
+                        spec.yaw?.let { add("yaw = ${component(it, spec.semanticsYaw)}") }
+                        spec.pitch?.let { add("pitch = ${component(it, spec.semanticsPitch)}") }
+                    }.joinToString(", ", prefix = "location(", postfix = ")")
                     !relative && !hasRot ->
                         "location(x = ${num(spec.x)}, y = ${num(spec.y)}, z = ${num(spec.z)})"
                     !relative && !relRot ->
