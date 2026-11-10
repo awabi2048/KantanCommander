@@ -103,6 +103,8 @@ class ScriptStore(
      * プログラム単位のread-modify-write全体を直列化します。
      */
     private val scriptLocks = ConcurrentHashMap<UUID, ReentrantLock>()
+    /** キャッシュ追い出し後も世代を維持し、古い入力の世代番号が再利用されることを防ぎます。 */
+    private val revisions = ConcurrentHashMap<UUID, Long>()
     /** 関係JSONを複数の保存処理から同時に更新しても、片方の履歴を失わないためのロックです。 */
     private val relationLock = ReentrantLock()
 
@@ -280,7 +282,9 @@ class ScriptStore(
             )
         }
         // 保存成功ごとに単調増加させ、入力画面開始時の正本世代と比較できるようにします。
-        script.revision = (previous?.revision ?: script.revision).inc()
+        script.revision = revisions.compute(script.id) { _, current ->
+            maxOf(current ?: 0L, previous?.revision ?: script.revision).inc()
+        }!!
         // `.kcp`（純粋DSLテキスト）が正本です。折り畳みはGUIの表示状態なので
         // 展開してから正規形へ印刷し、コメントは文へ所属する形で保持します。
         val canonical = canonicalized(script)
@@ -601,6 +605,8 @@ class ScriptStore(
             return null
         }
         rejectedFiles.remove(id)
+        // ファイル自体に世代はないため、再読込時はストア内の最新世代を復元します。
+        loaded.revision = revisions.getOrPut(id) { loaded.revision }
         cache[id] = loaded
         declIndex[id] = DiskDecl(id, loaded.name, loaded.arguments)
         return loaded

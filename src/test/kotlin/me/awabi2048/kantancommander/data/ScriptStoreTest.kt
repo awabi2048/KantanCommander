@@ -43,6 +43,18 @@ class ScriptStoreTest {
     lateinit var temp: File
 
     @Test
+    fun `キャッシュ追い出し後も世代が再利用されず古い変更を拒否する`() {
+        val store = ScriptStore(temp.resolve("revision-eviction"), Logger.getAnonymousLogger())
+        val script = store.createPlacement("original")
+        val stale = requireNotNull(store.load(script.id)).revision
+        repeat(StorageLifecycle.MAX_CACHED_PROGRAMS) { store.createPlacement("filler$it") }
+        assertEquals(stale, requireNotNull(store.load(script.id)).revision)
+        assertEquals(true, store.update(script.id) { it.name = "newer"; true })
+        assertNull(store.update(script.id, expectedRevision = stale) { it.name = "stale"; true })
+        assertEquals("newer", requireNotNull(store.load(script.id)).name)
+    }
+
+    @Test
     fun `構造化された変数値はディスク出力と再読込を経ても保持される`() {
         val dir = temp.resolve("typed-disc-transfer")
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
