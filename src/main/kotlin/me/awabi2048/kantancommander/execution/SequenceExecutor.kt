@@ -637,10 +637,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 )
             }
             CommandType.VARIABLE -> {
-                val success = executeVariable(
-                    node,
-                    session,
-            )
+                // 実体を失った一時参照は、通常の操作と同じく対象なしとして扱います。
+                if (hasUnavailableTemporaryReference(node, session)) {
+                    session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_TEMPORARY_SKIPPED)
+                    session.lastFailureReason = ErrorCode.TEMPORARY_UNRESOLVED.code
+                    session.lastFailureCode = ErrorCode.TEMPORARY_UNRESOLVED
+                    next(node.next, NodeExecutionOutcome.SKIPPED)
+                    return
+                }
+                val success = executeVariable(node, session)
                 if (success) session.previousContext = effectiveContext(session)
                 session.lastDetail = if (success) {
                     detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_VARIABLE_SUCCESS)
@@ -1192,13 +1197,24 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val effectiveOrigin = origins.firstOrNull() ?: session.origin
         // issue #29: 複数位置の試行記録です。位置依存の実行だけが使います。
         val attempts = MultiAttemptRecorder()
+        // 正常な検索０件は無操作ですが、解決エラーは原因を残して失敗させます。
+        val targetRequired = node.type in setOf(
+            CommandType.TELEPORT, CommandType.GIVE_ITEM, CommandType.ENTITY_ACTION,
+            CommandType.ENTITY_OPERATION, CommandType.DISPLAY_TEXT, CommandType.APPLY_EFFECT,
+            CommandType.ENTITY_DELETE,
+        ) || (node.type == CommandType.PLACE_ITEM &&
+            PlaceItemDestination.from(node.string("placeDestination")) != PlaceItemDestination.BLOCK_CONTAINER)
+        if (targetRequired && targets.isEmpty()) return session.lastFailureCode == null
         val success = when (node.type) {
             CommandType.TELEPORT -> {
                 if (targets.isEmpty()) return false
-                val destination = node.destinationTargetSpec
-                    ?.let { resolveTargetSpec(it, session, effectiveContext)?.location }
-                    ?: node.destinationSpec?.let { resolvePosition(it, session, effectiveContext) }
-                    ?: return false
+                // 対象を移動先に指定した場合も、正常な検索０件は無操作です。
+                val destination = if (node.destinationTargetSpec != null) {
+                    resolveTargetSpec(node.destinationTargetSpec!!, session, effectiveContext)?.location
+                        ?: return (session.lastFailureCode == null)
+                } else {
+                    node.destinationSpec?.let { resolvePosition(it, session, effectiveContext) } ?: return false
+                }
                 (node.destinationFacingSpec ?: effectiveContext?.facing)?.let {
                     applyFacing(destination, it, effectiveContext, session)
                 }
@@ -1230,7 +1246,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 when (node.string("action", "ride")) {
                     "ride" -> {
                         val vehicle = resolveTarget(effectiveContext, node.secondaryTargetSpec, session)
-                            ?: return false
+                            ?: return (session.lastFailureCode == null)
                         targets.all(vehicle::addPassenger)
                     }
                     "dismount" -> targets.all(Entity::leaveVehicle)
@@ -3011,7 +3027,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): Boolean = runCatching {
         val spec = node.targetSpec ?: return false
         val targets = resolveTargetSpecs(spec, session, session.context)
-        if (targets.isEmpty()) return false
+        // 正常な検索０件は無操作とし、検索条件の解決失敗は維持します。
+        if (targets.isEmpty()) return session.lastFailureCode == null
         val name = node.string("name")
         val store = plugin.entityVariables
         when (operation) {
